@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Step, ToolStep } from '../../turns'
-import { groupSteps, REDACTED_THINKING, splitWork, type ThoughtStep } from './groupSteps'
+import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep } from './groupSteps'
 
 function tool(id: string, name = 'read', entryId: string | null = id): ToolStep {
   return { id, entryId, kind: 'tool', callId: id, name, arguments: {}, status: 'running', result: null, output: [] }
@@ -50,20 +50,32 @@ test('only adjacent same-name tools and adjacent thinking merge, preserving boun
   assert.deepEqual(groupSteps([read, write, read]), [read, write, read])
 })
 
-test('the answer follows grouped work only once the turn ends', () => {
-  const text: Step = { id: 't', entryId: 't', kind: 'text', text: 'x' }
-  const steps = groupSteps([thinking('thought', 'Thinking'), text, tool('a'), tool('b'), text])
-  const split = splitWork(steps, false)
-  assert.deepEqual(
-    split.work.map((step) => step.kind),
-    ['thinking', 'text', 'toolGroup']
-  )
-  assert.deepEqual(
-    split.answer.map((step) => step.kind),
-    ['text']
-  )
-  assert.deepEqual(splitWork(steps, true), { work: steps, answer: [] })
-  assert.deepEqual(splitWork([text], false), { work: [], answer: [text] })
+test('visible messages end each work fold, preserving the entire turn sequence', () => {
+  const intro: Step = { id: 'intro', entryId: 'intro', kind: 'text', text: 'Looking into it' }
+  const update: Step = { id: 'update', entryId: 'update', kind: 'text', text: 'Found it' }
+  const answer: Step = { id: 'answer', entryId: null, kind: 'text', text: 'Done' }
+  const steps = groupSteps([intro, thinking('thought', 'Thinking'), tool('a'), tool('b'), update, tool('c'), answer])
+  assert.deepEqual(segmentSteps(steps), [
+    intro,
+    { kind: 'work', id: 'work:thought', steps: steps.slice(1, 3) },
+    update,
+    { kind: 'work', id: 'work:c', steps: steps.slice(4, 5) },
+    answer
+  ])
+  assert.deepEqual(segmentSteps([]), [])
+  assert.deepEqual(segmentSteps([intro, answer]), [intro, answer])
+})
+
+test('notices and summaries stay visible at their original positions', () => {
+  for (const boundary of boundaries) {
+    const first = tool('a')
+    const last = tool('b')
+    assert.deepEqual(segmentSteps(groupSteps([first, boundary, last])), [
+      { kind: 'work', id: 'work:a', steps: [first] },
+      boundary,
+      { kind: 'work', id: 'work:b', steps: [last] }
+    ])
+  }
 })
 
 test('streaming growth keeps the first call group id and child identities', () => {

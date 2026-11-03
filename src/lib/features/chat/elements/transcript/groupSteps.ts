@@ -39,17 +39,20 @@ export function groupSteps(steps: Step[]): TranscriptStep[] {
   return grouped
 }
 
-/**
- * Work is everything up to the last tool call or thought; the answer is what the agent said after it.
- * A running turn has no answer yet, since a later tool call can still turn its latest text into work.
- */
-export function splitWork(
-  steps: TranscriptStep[],
-  running: boolean
-): { work: TranscriptStep[]; answer: TranscriptStep[] } {
-  if (running) return { work: steps, answer: [] }
-  const last = steps.findLastIndex(
-    (step) => step.kind === 'tool' || step.kind === 'toolGroup' || step.kind === 'thinking'
-  )
-  return { work: steps.slice(0, last + 1), answer: steps.slice(last + 1) }
+export type WorkSegment = { kind: 'work'; id: string; steps: TranscriptStep[] }
+export type TranscriptSegment = TranscriptStep | WorkSegment
+
+/** Fold contiguous work only. Visible messages stay in order and end the current fold, even while streaming. */
+export function segmentSteps(steps: TranscriptStep[]): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = []
+  for (const step of steps) {
+    if (step.kind === 'tool' || step.kind === 'toolGroup' || step.kind === 'thinking') {
+      const previous = segments.at(-1)
+      if (previous?.kind === 'work') previous.steps.push(step)
+      else segments.push({ kind: 'work', id: `work:${step.id}`, steps: [step] })
+    } else {
+      segments.push(step)
+    }
+  }
+  return segments
 }

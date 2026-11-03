@@ -3,17 +3,11 @@
   import { StatusDot } from '$lib/components/ui/status-dot'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import * as Message from '$lib/features/chat/elements/message'
-  import { formatCost, formatCount, formatDuration, formatTokens } from '$lib/features/chat/format'
-  import { turnDurationMs, type ToolStep, type Turn } from '$lib/features/chat/turns'
+  import { formatCost, formatDuration, formatTokens } from '$lib/features/chat/format'
+  import { turnDurationMs, type Turn } from '$lib/features/chat/turns'
+  import { modelName } from '$lib/features/sessions/query'
   import type { BlockView } from '$lib/features/chat/view'
-  import {
-    TriangleAlertIcon,
-    ChevronRightIcon,
-    CircleXIcon,
-    CopyIcon,
-    GitForkIcon,
-    InfoIcon
-  } from '@hugeicons/core-free-icons'
+  import { TriangleAlertIcon, CircleXIcon, CopyIcon, GitForkIcon, InfoIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { copyToClipboard } from '$lib/utils/clipboard'
   import { cn } from '$lib/utils/cn'
@@ -21,7 +15,8 @@
   import ToolBlock from './ToolBlock.svelte'
   import SummaryBlock from './SummaryBlock.svelte'
   import ToolGroup from './ToolGroup.svelte'
-  import { groupSteps, splitWork, type TranscriptStep } from './groupSteps'
+  import WorkBlock from './WorkBlock.svelte'
+  import { groupSteps, segmentSteps, type TranscriptStep } from './groupSteps'
 
   let {
     turn,
@@ -45,48 +40,13 @@
     onOpenLocation: (path: string, line?: number) => void
   } = $props()
 
-  const viewId = $derived(`turn:${turn.id}`)
-  const open = $derived((overrides[viewId] ?? expansion) !== 'collapsed')
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
   const duration = $derived(turnDurationMs(turn, now))
-  const split = $derived(splitWork(groupSteps(turn.steps), turn.running))
-  const work = $derived(split.work)
-  const answer = $derived(split.answer)
+  const segments = $derived(segmentSteps(groupSteps(turn.steps)))
   const asking = $derived(new Set(controller.state?.live.questions.map((questions) => questions.callId)))
-  // Folded work still shows what needs the user (a pending question) and, while running, what the agent says.
-  const shown = $derived(
-    open
-      ? work
-      : work.filter((step) =>
-          step.kind === 'text'
-            ? turn.running
-            : step.kind === 'tool'
-              ? asking.has(step.callId)
-              : step.kind === 'toolGroup'
-                ? step.calls.some((call) => asking.has(call.callId))
-                : step.kind !== 'thinking'
-        )
-  )
-  const calls = $derived(turn.steps.filter((step): step is ToolStep => step.kind === 'tool'))
-  const failed = $derived(calls.filter((call) => call.status === 'error').length)
-  const thoughts = $derived(work.filter((step) => step.kind === 'thinking').length)
-  const summary = $derived(
-    [
-      turn.running ? 'Working' : '',
-      turn.running && duration !== null ? formatDuration(duration) : '',
-      calls.length ? formatCount(calls.length, 'tool call') : '',
-      thoughts ? formatCount(thoughts, 'thought') : ''
-    ]
-      .filter(Boolean)
-      .join(' · ')
-  )
-  // Copy the reply; a turn stopped before answering still copies whatever it said.
-  const copyText = $derived(
-    (answer.some((step) => step.kind === 'text') ? answer : work)
-      .flatMap((step) => (step.kind === 'text' ? [step.text] : []))
-      .join('\n\n')
-  )
+  // All visible messages belong to one reply, with one copy/fork/details footer.
+  const copyText = $derived(turn.steps.flatMap((step) => (step.kind === 'text' ? [step.text] : [])).join('\n\n'))
   const usage = $derived.by(() => {
     if (!turn.assistants.length) return ''
     const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
@@ -145,31 +105,29 @@
   {/if}
 {/snippet}
 
-<div data-slot="agent-block" class="flex min-w-0 flex-col gap-3 py-2">
-  {#if turn.running || work.length}
-    <button
-      type="button"
-      aria-expanded={open}
-      disabled={!work.length}
-      onclick={() => onView(viewId, open ? 'collapsed' : 'preview')}
-      class="flex items-center gap-2 self-start rounded text-sm text-muted transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none enabled:cursor-pointer enabled:hover:text-fg"
-    >
-      {#if turn.running}<StatusDot tone="working" size="sm" />{/if}
-      <span class="tabular-nums">{summary}</span>
-      {#if failed}<span class="text-danger">{failed} failed</span>{/if}
-      {#if work.length}<Icon
-          icon={ChevronRightIcon}
-          size={14}
-          class={cn('transition-transform', open && 'rotate-90')}
-        />{/if}
-    </button>
-  {/if}
-  {#if shown.length}
-    <div class={cn('flex min-w-0 flex-col gap-3', open && 'border-l border-edge pl-3')}>
-      {#each shown as step (step.id)}{@render render(step)}{/each}
+<div data-slot="agent-block" class="group/message flex min-w-0 flex-col gap-3 py-2">
+  {#each segments as segment, index (segment.id)}
+    {#if segment.kind === 'work'}
+      <WorkBlock
+        {segment}
+        running={turn.running && index === segments.length - 1}
+        {duration}
+        {expansion}
+        {overrides}
+        {asking}
+        {onView}
+        {render}
+      />
+    {:else}
+      {@render render(segment)}
+    {/if}
+  {/each}
+  {#if turn.running && segments.at(-1)?.kind !== 'work'}
+    <div class="flex items-center gap-2 text-sm text-muted">
+      <StatusDot tone="working" size="sm" />
+      <span class="tabular-nums">Working{duration !== null ? ` · ${formatDuration(duration)}` : ''}</span>
     </div>
   {/if}
-  {#each answer as step (step.id)}{@render render(step)}{/each}
   {#each notices as notice}
     <div class={cn('flex items-start gap-2 text-sm', notice.danger ? 'text-danger' : 'text-warning')}>
       <Icon icon={notice.danger ? CircleXIcon : TriangleAlertIcon} size={14} class="shrink-0" />
@@ -177,7 +135,9 @@
     </div>
   {/each}
   {#if !turn.running}
-    <div class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle">
+    <div
+      class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/message:opacity-100 [@media(hover:hover)]:group-hover/message:opacity-100"
+    >
       {#if lastAssistant}
         <IconButton tooltip="Copy" class="shrink-0 text-subtle" onclick={() => void copyToClipboard(copyText)}
           ><Icon icon={CopyIcon} size={14} /></IconButton
@@ -201,7 +161,7 @@
       {/if}
       {#if lastAssistant}
         <span class="ml-1 truncate font-mono text-xs text-muted" title={lastAssistant.body.model}
-          >{lastAssistant.body.model}</span
+          >{modelName(lastAssistant.body.model)}:{turn.config.thinking ?? 'unknown'}</span
         >
       {/if}
     </div>

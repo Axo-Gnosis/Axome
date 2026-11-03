@@ -54,7 +54,7 @@
   })
 </script>
 
-<div data-slot="tool-group" data-collapsed={view === 'collapsed'} class="min-w-0">
+<div data-slot="tool-group" data-view-id={viewId} data-collapsed={view === 'collapsed'} class="min-w-0">
   <ToolFrame
     {header}
     {view}

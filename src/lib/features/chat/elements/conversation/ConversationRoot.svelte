@@ -1,5 +1,12 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import { tick, type Snippet } from 'svelte'
+  import {
+    captureScrollAnchor,
+    ExpansionAnchor,
+    captureToggleAnchor,
+    restoreScrollAnchor,
+    type ScrollAnchor
+  } from './scrollAnchor'
   import { IconButton } from '$lib/components/ui/button'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
@@ -7,50 +14,165 @@
 
   let { children, footer }: { children?: Snippet; footer?: Snippet } = $props()
 
-  let viewport: HTMLDivElement
+  let viewport: HTMLDivElement | undefined
+  let transcript: HTMLDivElement | undefined
+  let composer: HTMLDivElement | undefined
   let atBottom = $state(true)
+  let anchor: ScrollAnchor | null = null
+  const expansionAnchor = new ExpansionAnchor()
+  let changing = false
+  let revision = 0
+  let userScrolling = false
+  let dragging = false
+  let scrollIdle: ReturnType<typeof setTimeout> | undefined
+
+  function endUserScroll() {
+    clearTimeout(scrollIdle)
+    userScrolling = false
+    dragging = false
+  }
+
+  function beginUserScroll() {
+    userScrolling = true
+    clearTimeout(scrollIdle)
+    if (!dragging) scrollIdle = setTimeout(endUserScroll, 250)
+  }
 
   function updateAtBottom() {
+    // Browser clamping, resizing, and our own corrections also emit scroll events.
+    // Only navigation initiated by the user can choose a new reading/expansion anchor.
+    if (!viewport?.isConnected || !userScrolling || changing) return
     atBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 32
+    anchor = atBottom || !transcript ? null : captureScrollAnchor(viewport, transcript)
+    expansionAnchor.reset()
+    beginUserScroll()
+  }
+
+  // Layout changes are not user scrolling. Ignore the scroll event caused by our correction.
+  function restorePosition() {
+    if (!viewport?.isConnected || userScrolling) return
+    if (anchor) restoreScrollAnchor(viewport, anchor)
+    else if (atBottom) viewport.scrollTop = viewport.scrollHeight
+  }
+
+  /** Toggling changes layout, not reading position. Reuse the bulk anchor until the user scrolls. */
+  export async function preserveScroll(change: () => void, stepId?: string): Promise<void> {
+    if (!viewport?.isConnected || !transcript?.isConnected) {
+      change()
+      return
+    }
+    const scroller = viewport
+    const content = transcript
+    const target = stepId ? transcript.querySelector<HTMLElement>(`[data-view-id="${CSS.escape(stepId)}"]`) : null
+    endUserScroll()
+    if (target) {
+      anchor = captureToggleAnchor(viewport, target)
+      expansionAnchor.reset()
+    } else {
+      anchor = expansionAnchor.capture(viewport, transcript, composer)
+    }
+    atBottom = false
+    changing = true
+    const current = ++revision
+    try {
+      change()
+      await tick()
+      if (current === revision && viewport === scroller && transcript === content) restorePosition()
+    } finally {
+      if (current === revision) changing = false
+    }
   }
 
   export function scrollToBottom(): void {
+    endUserScroll()
+    expansionAnchor.reset()
+    anchor = null
     atBottom = true
-    if (viewport) viewport.scrollTop = viewport.scrollHeight
+    if (viewport) restorePosition()
   }
 
   export function scrollPage(direction: 1 | -1): void {
-    if (!viewport) return
+    if (!viewport?.isConnected) return
+    beginUserScroll()
     viewport.scrollBy({ top: direction * viewport.clientHeight * 0.9 })
     updateAtBottom()
   }
 
   // Watches the whole column, so a growing transcript or composer both keep the view pinned.
   function pinToBottom(column: HTMLDivElement) {
+    // Child attachments can run before the parent's bind:this assignment.
+    const scroller = column.parentElement
+    if (!scroller) return
+    let active = true
+    const events = new AbortController()
+    const options = { passive: true, capture: true, signal: events.signal }
+    scroller.addEventListener('wheel', beginUserScroll, options)
+    scroller.addEventListener(
+      'pointerdown',
+      (event) => {
+        // Touch panning and scrollbar dragging, not clicks on expansion buttons.
+        if (event.pointerType !== 'touch' && event.target !== scroller) return
+        dragging = true
+        beginUserScroll()
+      },
+      options
+    )
+    const release = () => {
+      if (!dragging) return
+      dragging = false
+      beginUserScroll()
+    }
+    window.addEventListener('pointerup', release, options)
+    window.addEventListener('pointercancel', release, options)
+    scroller.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return
+        if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return
+        const target = event.target instanceof Element ? event.target : null
+        if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+        if (event.key === ' ' && target?.closest('button, a, [role="button"]')) return
+        beginUserScroll()
+      },
+      options
+    )
     scrollToBottom()
     const observer = new ResizeObserver(() => {
-      if (atBottom) viewport.scrollTop = viewport.scrollHeight
+      if (active && viewport === scroller) restorePosition()
     })
     observer.observe(column)
-    return () => observer.disconnect()
+    observer.observe(scroller)
+    return () => {
+      active = false
+      observer.disconnect()
+      events.abort()
+      endUserScroll()
+      expansionAnchor.reset()
+      revision++
+      changing = false
+      anchor = null
+    }
   }
 </script>
 
 <!-- One scroller; the footer sticks inside the same column, so both share its width and scrollbar. -->
 <div
   data-slot="conversation"
+  role="region"
+  aria-label="Conversation"
   bind:this={viewport}
-  class="min-h-0 flex-1 overflow-y-auto px-4"
+  class="min-h-0 flex-1 overflow-y-auto px-4 [overflow-anchor:none]"
   onscroll={updateAtBottom}
 >
   <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
-    <div class="flex flex-1 flex-col justify-end gap-4 pt-4 pb-2">
+    <div bind:this={transcript} class="flex flex-1 flex-col justify-end gap-4 pt-4 pb-2">
       {#if children}{@render children()}{/if}
     </div>
     <!-- before: fades the transcript as it scrolls under; at the bottom there is nothing under it, so it hides and
          the last line can sit close. The ground shadow covers the subpixel gap under the sticky edge without
          adding scroll height the way an overflowing box would. -->
     <div
+      bind:this={composer}
       class={cn(
         'before:duration-fast sticky bottom-0 bg-ground pb-4 shadow-[0_4px_0_var(--color-ground)] before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-10 before:bg-linear-to-t before:from-ground before:from-25% before:to-transparent before:transition-opacity',
         atBottom && 'before:opacity-0'

@@ -18,7 +18,7 @@
   } = $props()
 </script>
 
-<div data-slot="summary-block" class="min-w-0">
+<div data-slot="summary-block" data-view-id={step.id} class="min-w-0">
   <Button
     type="button"
     variant="text"

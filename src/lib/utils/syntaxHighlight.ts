@@ -1,4 +1,5 @@
 import type { BundledLanguage, Highlighter, ThemedToken } from 'shiki'
+import { cachedCodeTokens } from './codeTokenCache'
 
 export const SHIKI_THEME_NAME = 'axome'
 let highlighterPromise: Promise<Highlighter> | null = null
@@ -16,7 +17,9 @@ export function getHighlighter(): Promise<Highlighter> {
 }
 
 /** Tokenize with a lazily loaded bundled grammar; null when Shiki has none for `language`. */
-export async function codeTokens(code: string, language: string): Promise<ThemedToken[][] | null> {
+export const codeTokens = cachedCodeTokens(tokenizeCode)
+
+async function tokenizeCode(code: string, language: string): Promise<ThemedToken[][] | null> {
   const highlighter = await getHighlighter()
   // This lazy boundary keeps Shiki's grammar registry out of startup; only known languages load it.
   const { bundledLanguages, bundledLanguagesAlias } = await import('shiki')

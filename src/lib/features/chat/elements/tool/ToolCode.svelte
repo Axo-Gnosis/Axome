@@ -52,15 +52,34 @@
 
   $effect(() => {
     const source = shown
+    const file = path
+    const folder = folderPath
+    const element = content
+    if (!element) return
     let cancelled = false
-    void contextHighlights(source, path, folderPath).then(
-      (tokens) => {
-        if (!cancelled) highlighted = { rows: source, tokens }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Paint plaintext first, and do not tokenize off-screen output during bulk expansion.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return
+        observer.disconnect()
+        timer = setTimeout(() => {
+          if (cancelled) return
+          void contextHighlights(source, file, folder).then(
+            (tokens) => {
+              if (!cancelled) highlighted = { rows: source, tokens }
+            },
+            (cause) => console.warn('Code syntax highlighting failed', cause)
+          )
+        }, 0)
       },
-      (cause) => console.warn('Code syntax highlighting failed', cause)
+      { root: element.closest('[data-slot="conversation"]'), rootMargin: '400px' }
     )
+    observer.observe(element)
     return () => {
       cancelled = true
+      clearTimeout(timer)
+      observer.disconnect()
     }
   })
 
@@ -126,23 +145,20 @@
               emphasis?.get(row) ?? (highlighted?.rows === shown ? highlighted.tokens.get(index) : undefined)
             )}
             <span data-slot="diff-code" class="block min-w-0 pl-[1ch] wrap-anywhere whitespace-pre-wrap [tab-size:3]"
-              >{#each parts.indent as whitespace}<span
-                  class={cn('relative inline-block', whitespace === '\t' ? 'w-[3ch]' : 'w-[1ch]')}
-                  >{whitespace}<svg
-                    class="pointer-events-none absolute inset-0 h-[1lh] w-full text-subtle opacity-65 select-none"
-                    aria-hidden="true"
-                    viewBox="0 0 12 16"
-                    preserveAspectRatio="none"
-                    ><g fill="none" stroke="currentColor" stroke-width="1"
-                      >{#if whitespace === '\t'}<path d="M3 8h6m-2-2 2 2-2 2" />{:else}<circle
-                          cx="6"
-                          cy="8"
-                          r="0.6"
-                          fill="currentColor"
-                          stroke="none"
-                        />{/if}</g
-                    ></svg
-                  ></span
+              >{#each parts.indent.match(/ +|\t/g) ?? [] as whitespace}<span
+                  class="relative inline-block text-subtle opacity-65"
+                  style:width={whitespace === '\t' ? '3ch' : `${whitespace.length}ch`}
+                  style:background-image={whitespace === '\t'
+                    ? undefined
+                    : 'radial-gradient(circle, currentColor 0.6px, transparent 0.8px)'}
+                  style:background-size="1ch 1lh"
+                  >{whitespace}{#if whitespace === '\t'}<svg
+                      class="pointer-events-none absolute inset-0 h-[1lh] w-full select-none"
+                      aria-hidden="true"
+                      viewBox="0 0 12 16"
+                      preserveAspectRatio="none"
+                      ><path fill="none" stroke="currentColor" stroke-width="1" d="M3 8h6m-2-2 2 2-2 2" /></svg
+                    >{/if}</span
                 >{/each}{#each parts.tokens as token}<span
                   class={token.changed
                     ? 'text-surface group-data-[kind=add]:bg-success group-data-[kind=del]:bg-danger'

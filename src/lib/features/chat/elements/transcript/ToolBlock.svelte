@@ -49,7 +49,7 @@
   const expand = () => onView(call.id, 'full')
 </script>
 
-<div data-slot="tool-block" data-collapsed={view === 'collapsed'} class="min-w-0">
+<div data-slot="tool-block" data-view-id={call.id} data-collapsed={view === 'collapsed'} class="min-w-0">
   <ToolFrame {header} {view} {nested} {onOpenLocation} onToggle={toggle}>
     {#if call.name === 'ask' && activeQuestions}
       <AskCard

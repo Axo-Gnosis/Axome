@@ -47,6 +47,7 @@
 <!-- Collapsed line and expanded markdown share line height and padding so expanding never shifts a line that fit. -->
 <div
   data-slot="thinking-block"
+  data-view-id={thought.id}
   data-collapsed={view === 'collapsed'}
   class="min-w-0 font-mono text-xs leading-normal text-muted italic"
 >

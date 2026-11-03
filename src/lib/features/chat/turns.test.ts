@@ -136,7 +136,7 @@ test('leading content has no fabricated user and leading model selections are dr
   assert.equal(turns[1].id, user.id)
 })
 
-test('picker steps fold into the net change carried by the next user message', () => {
+test('turn settings retain unchanged reasoning and ignore later picker changes', () => {
   const thinking = (id: string, level: 'low' | 'medium' | 'high') =>
     entry(id, { kind: 'thinkingChange', thinking: level })
   const turns = transcriptTurns(
@@ -157,12 +157,32 @@ test('picker steps fold into the net change carried by the next user message', (
   assert.deepEqual(
     turns.map((turn) => turn.config),
     [
-      { model: null, thinking: null },
+      { model: 'test/model', thinking: 'low' },
       { model: null, thinking: 'high' },
-      { model: null, thinking: null }
+      { model: null, thinking: 'high' }
     ]
   )
   assert.ok(turns.every((turn) => turn.steps.every((step) => step.kind === 'text')))
+})
+
+test('assistant settings reflect recorded reasoning, including off and mid-turn changes', () => {
+  const [turn] = transcriptTurns(
+    [
+      user,
+      entry('off', { kind: 'thinkingChange', thinking: 'off' }),
+      work,
+      entry('high', { kind: 'thinkingChange', thinking: 'high' }),
+      message,
+      entry('next', { kind: 'thinkingChange', thinking: 'low' })
+    ],
+    null,
+    live
+  )
+  assert.deepEqual(turn.config, { model: 'test/model', thinking: 'high' })
+  const [off] = transcriptTurns([entry('off', { kind: 'thinkingChange', thinking: 'off' }), user, message], null, live)
+  assert.equal(off.config.thinking, 'off')
+  const [unknown] = transcriptTurns([user, message], null, { ...live, thinking: 'high' })
+  assert.equal(unknown.config.thinking, null)
 })
 
 test('replayed turns retain text without an invented run end', () => {

@@ -114,7 +114,11 @@
   }
 
   function onView(stepId: string, view: BlockView) {
-    overrides[stepId] = view
+    const change = () => {
+      overrides[stepId] = view
+    }
+    if (conversation) void conversation.preserveScroll(change, stepId)
+    else change()
   }
 
   function onKeyAction(event: KeyboardEvent) {
@@ -139,10 +143,15 @@
       case 'openModel':
         if (!modelDisabled) modelOpen = true
         break
-      case 'cycleExpansion':
-        expansion = expansion === 'collapsed' ? 'preview' : expansion === 'preview' ? 'full' : 'collapsed'
-        overrides = {}
+      case 'cycleExpansion': {
+        const change = () => {
+          expansion = expansion === 'collapsed' ? 'preview' : expansion === 'preview' ? 'full' : 'collapsed'
+          overrides = {}
+        }
+        if (conversation) void conversation.preserveScroll(change)
+        else change()
         break
+      }
       case 'pageUp':
         conversation?.scrollPage(-1)
         break
@@ -203,7 +212,7 @@
         </div>
       {/if}
       {#each turns as turn (turn.id)}
-        {#if turn.user}<UserBlock entry={turn.user} config={turn.config} {controller} {canBranch} />{/if}
+        {#if turn.user}<UserBlock entry={turn.user} {controller} {canBranch} />{/if}
         {#if turn.steps.length || turn.running || turn.end}
           <AgentBlock
             {turn}

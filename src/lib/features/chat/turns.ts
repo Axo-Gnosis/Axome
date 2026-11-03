@@ -21,7 +21,7 @@ export type Step =
         | { kind: 'thinking'; text: string; redacted: boolean }
         | Extract<ChatEntryBody, { kind: 'notice' | 'compaction' | 'branchSummary' }>
       ))
-/** Model and thinking that changed since the previous user message; null where unchanged. */
+/** Recorded settings for this turn; null when absent from the transcript. */
 export type TurnConfig = { model: string | null; thinking: ChatThinking | null }
 export type Turn = {
   id: string
@@ -43,22 +43,12 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
   }
   const runs = new Map(live.tools.map((run) => [run.callId, run]))
   let current: Turn | undefined
-  // axo logs every picker step; only the net settings a message was sent with matter.
   const settings: TurnConfig = { model: null, thinking: null }
-  let sent: TurnConfig | null = null
   function start(user: UserEntry | null, timestamp: string | null = user?.timestamp ?? null): Turn {
-    const config: TurnConfig = { model: null, thinking: null }
-    if (user) {
-      if (sent) {
-        if (settings.model !== sent.model) config.model = settings.model
-        if (settings.thinking !== sent.thinking) config.thinking = settings.thinking
-      }
-      sent = { ...settings }
-    }
     const turn: Turn = {
       id: user?.id ?? 'turn:0',
       user,
-      config,
+      config: { ...settings },
       steps: [],
       assistants: [],
       end: null,
@@ -110,6 +100,7 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     current.endedAt = entry.timestamp
     if (body.kind === 'toolResult') continue
     if (body.kind === 'assistant') {
+      current.config = { model: body.model, thinking: settings.thinking }
       current.assistants.push(entry as AssistantEntry)
       blocks(current, body.blocks, entry.id)
     } else if (body.kind === 'runEnd') current.end = body

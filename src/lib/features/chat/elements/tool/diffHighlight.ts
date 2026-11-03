@@ -49,16 +49,21 @@ export function wordHighlights(rows: DiffRow[]): Map<DiffRow, DiffToken[]> {
     const oldRow = rows[start]
     const newRow = rows[added]
     if (oldRow.kind === 'gap' || newRow.kind === 'gap') continue
+    // Word emphasis is optional. Minified/very different lines must not freeze expansion.
+    if (oldRow.text.length + newRow.text.length > 20_000) continue
     const oldWords = words(oldRow.text)
     const newWords = words(newRow.text)
     const oldRanges: Array<[number, number]> = []
     const newRanges: Array<[number, number]> = []
     let oldIndex = 0
     let newIndex = 0
-    for (const part of diffArrays(
+    const changes = diffArrays(
       oldWords.map((word) => word.value),
-      newWords.map((word) => word.value)
-    )) {
+      newWords.map((word) => word.value),
+      { maxEditLength: 256 }
+    )
+    if (!changes) continue
+    for (const part of changes) {
       const count = part.value.length
       if (part.removed) {
         oldRanges.push([oldWords[oldIndex].start, oldWords[oldIndex + count - 1].end])

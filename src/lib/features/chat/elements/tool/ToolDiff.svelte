@@ -31,7 +31,7 @@
   )
   // Hunk budgeting only applies to changes; written content is plain source that ToolCode slices.
   const preview = $derived(isEdit && limit !== null ? previewDiff(rows ?? [], limit, 8) : undefined)
-  const emphasis = $derived(isEdit ? wordHighlights(rows ?? []) : undefined)
+  const emphasis = $derived(isEdit ? wordHighlights(preview?.rows ?? rows ?? []) : undefined)
 </script>
 
 <div data-slot="tool-diff" class="min-w-0 font-mono text-xs">

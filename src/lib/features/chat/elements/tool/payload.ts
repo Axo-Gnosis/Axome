@@ -33,12 +33,18 @@ export function truncation(value: unknown): Truncation | null {
 export const coversBody = (cut: Truncation, body: string): boolean =>
   encoder.encode(body).length === cut.outputBytes && (body === '' ? 0 : body.split('\n').length) === cut.outputLines
 
+// Headers and expanded bodies share the same immutable result. Weak keys release cached rows with the transcript.
+const editDiffCache = new WeakMap<object, { source: string; display: boolean; result: DiffResult }>()
+
 /** axo's authoritative display diff wins (including empty); the unified patch is the fallback. */
 export function editDiff(details: unknown): DiffResult | null {
   const fields = record(details)
-  return typeof fields.diff === 'string'
-    ? parseDisplayDiff(fields.diff)
-    : typeof fields.patch === 'string'
-      ? patchRows(fields.patch)
-      : null
+  const display = typeof fields.diff === 'string'
+  const source = display ? fields.diff : fields.patch
+  if (typeof source !== 'string') return null
+  const cached = editDiffCache.get(fields)
+  if (cached?.source === source && cached.display === display) return cached.result
+  const result = display ? parseDisplayDiff(source) : patchRows(source)
+  editDiffCache.set(fields, { source, display, result })
+  return result
 }
