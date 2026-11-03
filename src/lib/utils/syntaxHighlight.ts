@@ -1,5 +1,4 @@
 import type { BundledLanguage, Highlighter, ThemedToken } from 'shiki'
-import { cachedCodeTokens } from './codeTokenCache'
 
 export const SHIKI_THEME_NAME = 'axome'
 let highlighterPromise: Promise<Highlighter> | null = null
@@ -16,8 +15,41 @@ export function getHighlighter(): Promise<Highlighter> {
   ))
 }
 
+// Bounded LRU of in-flight/completed tokenizations, shared across tool body remounts.
+const TOKEN_CACHE_CHARACTERS = 256_000
+const TOKEN_CACHE_ENTRIES = 64
+const tokenCache = new Map<string, { size: number; value: Promise<ThemedToken[][] | null> }>()
+let cachedCharacters = 0
+
 /** Tokenize with a lazily loaded bundled grammar; null when Shiki has none for `language`. */
-export const codeTokens = cachedCodeTokens(tokenizeCode)
+export function codeTokens(code: string, language: string): Promise<ThemedToken[][] | null> {
+  if (code.length + language.length + 1 > TOKEN_CACHE_CHARACTERS) return tokenizeCode(code, language)
+  const key = `${language}\0${code}`
+  const cached = tokenCache.get(key)
+  if (cached) {
+    tokenCache.delete(key)
+    tokenCache.set(key, cached)
+    return cached.value
+  }
+  const value = tokenizeCode(code, language)
+  while (
+    tokenCache.size &&
+    (cachedCharacters + key.length > TOKEN_CACHE_CHARACTERS || tokenCache.size >= TOKEN_CACHE_ENTRIES)
+  ) {
+    const oldest = tokenCache.keys().next().value!
+    cachedCharacters -= tokenCache.get(oldest)!.size
+    tokenCache.delete(oldest)
+  }
+  const entry = { size: key.length, value }
+  tokenCache.set(key, entry)
+  cachedCharacters += entry.size
+  void value.catch(() => {
+    if (tokenCache.get(key) !== entry) return
+    tokenCache.delete(key)
+    cachedCharacters -= entry.size
+  })
+  return value
+}
 
 async function tokenizeCode(code: string, language: string): Promise<ThemedToken[][] | null> {
   const highlighter = await getHighlighter()

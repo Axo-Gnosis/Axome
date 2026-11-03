@@ -3,27 +3,21 @@ export interface ScrollAnchor {
   candidates: { element: HTMLElement; offset: number }[]
 }
 
-export function captureScrollAnchor(
-  viewport: HTMLElement,
-  content: HTMLElement,
-  preferred?: HTMLElement | null
-): ScrollAnchor | null {
+export function captureScrollAnchor(viewport: HTMLElement, content: HTMLElement): ScrollAnchor | null {
   const bounds = viewport.getBoundingClientRect()
-  let element = preferred ?? null
-  if (!element) {
-    // The top sample can land in a gap between messages. Try just below it before giving up.
-    for (const offset of [8, 24, 48]) {
-      const hit = viewport.ownerDocument.elementFromPoint(
-        bounds.left + bounds.width / 2,
-        bounds.top + offset
-      ) as HTMLElement | null
-      if (hit && hit !== content && content.contains(hit)) {
-        element = hit
-        break
-      }
+  let element: HTMLElement | null = null
+  // The top sample can land in a gap between messages. Try just below it before giving up.
+  for (const offset of [8, 24, 48]) {
+    const hit = viewport.ownerDocument.elementFromPoint(
+      bounds.left + bounds.width / 2,
+      bounds.top + offset
+    ) as HTMLElement | null
+    if (hit && hit !== content && content.contains(hit)) {
+      element = hit
+      break
     }
   }
-  if (!element || !content.contains(element)) return null
+  if (!element) return null
   const candidates: ScrollAnchor['candidates'] = []
   while (element && element !== content) {
     const offset = element.getBoundingClientRect().top - bounds.top
@@ -34,7 +28,7 @@ export function captureScrollAnchor(
 }
 
 /** Anchor the first visible message/work section without moving its existing screen position. */
-export function captureExpansionAnchor(
+function captureExpansionAnchor(
   viewport: HTMLElement,
   content: HTMLElement,
   footer?: HTMLElement

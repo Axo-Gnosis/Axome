@@ -29,16 +29,28 @@
   } = $props()
 
   const open = $derived((overrides[segment.id] ?? expansion) !== 'collapsed')
-  const calls = $derived(
-    segment.steps.flatMap((step) => (step.kind === 'tool' ? [step] : step.kind === 'toolGroup' ? step.calls : []))
-  )
-  const failed = $derived(calls.filter((call) => call.status === 'error').length)
-  const thoughts = $derived(segment.steps.filter((step) => step.kind === 'thinking').length)
+  const { calls, failed, thoughts } = $derived.by(() => {
+    const counts = { calls: 0, failed: 0, thoughts: 0 }
+    for (const step of segment.steps) {
+      if (step.kind === 'tool') {
+        counts.calls++
+        if (step.status === 'error') counts.failed++
+      } else if (step.kind === 'toolGroup') {
+        counts.calls += step.calls.length
+        for (const call of step.calls) {
+          if (call.status === 'error') counts.failed++
+        }
+      } else if (step.kind === 'thinking') {
+        counts.thoughts++
+      }
+    }
+    return counts
+  })
   const summary = $derived(
     [
       running ? 'Working' : '',
       running && duration !== null ? formatDuration(duration) : '',
-      calls.length ? formatCount(calls.length, 'tool call') : '',
+      calls ? formatCount(calls, 'tool call') : '',
       thoughts ? formatCount(thoughts, 'thought') : ''
     ]
       .filter(Boolean)

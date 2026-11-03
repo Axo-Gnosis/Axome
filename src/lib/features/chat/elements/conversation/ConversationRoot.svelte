@@ -11,6 +11,7 @@
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
+  import { logicalKey } from '$lib/utils/keyboardEvent'
 
   let { children, footer }: { children?: Snippet; footer?: Snippet } = $props()
 
@@ -25,6 +26,12 @@
   let userScrolling = false
   let dragging = false
   let scrollIdle: ReturnType<typeof setTimeout> | undefined
+  // Where our own correction (or browser clamping it absorbed) left scrollTop; scroll events landing elsewhere are navigation.
+  let settledTop = Number.NaN
+
+  function nearBottom(scroller: HTMLElement): boolean {
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 32
+  }
 
   function endUserScroll() {
     clearTimeout(scrollIdle)
@@ -39,10 +46,11 @@
   }
 
   function updateAtBottom() {
-    // Browser clamping, resizing, and our own corrections also emit scroll events.
-    // Only navigation initiated by the user can choose a new reading/expansion anchor.
-    if (!viewport?.isConnected || !userScrolling || changing) return
-    atBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 32
+    if (!viewport?.isConnected || changing) return
+    // Our corrections and the clamps they absorbed land exactly on settledTop; anything else is navigation
+    // (wheel, scrollbar, keys, in-page links, focus scrolling).
+    if (!userScrolling && Math.abs(viewport.scrollTop - settledTop) < 1) return
+    atBottom = nearBottom(viewport)
     anchor = atBottom || !transcript ? null : captureScrollAnchor(viewport, transcript)
     expansionAnchor.reset()
     beginUserScroll()
@@ -53,6 +61,7 @@
     if (!viewport?.isConnected || userScrolling) return
     if (anchor) restoreScrollAnchor(viewport, anchor)
     else if (atBottom) viewport.scrollTop = viewport.scrollHeight
+    settledTop = viewport.scrollTop
   }
 
   /** Toggling changes layout, not reading position. Reuse the bulk anchor until the user scrolls. */
@@ -77,7 +86,15 @@
     try {
       change()
       await tick()
-      if (current === revision && viewport === scroller && transcript === content) restorePosition()
+      if (current === revision && viewport === scroller && transcript === content) {
+        restorePosition()
+        // The toggle held its header; if that left the view resting at the bottom, keep following new output.
+        if (nearBottom(scroller)) {
+          anchor = null
+          atBottom = true
+          expansionAnchor.reset()
+        }
+      }
     } finally {
       if (current === revision) changing = false
     }
@@ -98,7 +115,7 @@
     updateAtBottom()
   }
 
-  // Watches the whole column, so a growing transcript or composer both keep the view pinned.
+  // Watches the whole column, so a growing transcript or composer keeps a following view pinned.
   function pinToBottom(column: HTMLDivElement) {
     // Child attachments can run before the parent's bind:this assignment.
     const scroller = column.parentElement
@@ -128,10 +145,11 @@
       'keydown',
       (event) => {
         if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return
-        if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return
+        const key = logicalKey(event)
+        if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(key)) return
         const target = event.target instanceof Element ? event.target : null
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-        if (event.key === ' ' && target?.closest('button, a, [role="button"]')) return
+        if (key === ' ' && target?.closest('button, a, [role="button"]')) return
         beginUserScroll()
       },
       options
@@ -151,6 +169,7 @@
       revision++
       changing = false
       anchor = null
+      settledTop = Number.NaN
     }
   }
 </script>

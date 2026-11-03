@@ -33,8 +33,8 @@ export type DiffToken = { text: string; color?: string; changed?: boolean }
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-// Only true single-line removal/addition pairs receive word emphasis.
-export function wordHighlights(rows: DiffRow[]): Map<DiffRow, DiffToken[]> {
+// Only true single-line removal/addition pairs (judged on the full diff) receive word emphasis; `visible` limits work to shown rows.
+export function wordHighlights(rows: DiffRow[], visible?: ReadonlySet<DiffRow>): Map<DiffRow, DiffToken[]> {
   const highlights = new Map<DiffRow, DiffToken[]>()
   for (let index = 0; index < rows.length;) {
     if (rows[index].kind !== 'del') {
@@ -48,6 +48,7 @@ export function wordHighlights(rows: DiffRow[]): Map<DiffRow, DiffToken[]> {
     if (added !== start + 1 || index !== added + 1) continue
     const oldRow = rows[start]
     const newRow = rows[added]
+    if (visible && !(visible.has(oldRow) && visible.has(newRow))) continue
     if (oldRow.kind === 'gap' || newRow.kind === 'gap') continue
     // Word emphasis is optional. Minified/very different lines must not freeze expansion.
     if (oldRow.text.length + newRow.text.length > 20_000) continue
