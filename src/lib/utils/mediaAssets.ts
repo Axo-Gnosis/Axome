@@ -3,7 +3,8 @@ import { dirname } from '$lib/utils/paths'
 
 export const URL_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 
-// Markdown image URLs are document-relative. Browser-relative URLs point at Vite/Tauri chrome, not the repo.
+// Markdown images are document-relative, or project-relative in chat (no document path).
+// Browser-relative URLs point at Vite/Tauri chrome, not the repo.
 // Stream-backed platforms resolve project images only through the view-owned loader, never an HTTP-relative fetch.
 export async function markdownImageSrc(
   href: string | null | undefined,
@@ -19,14 +20,11 @@ export async function markdownImageSrc(
     if (/^file:/i.test(trimmed) && !('url' in assets)) return null
     return trimmed
   }
-  if ('url' in assets) {
-    if (!folderPath || !markdownPath) return trimmed
-    const localPath = resolveMarkdownLocalPath(markdownPath, trimmed)
-    return localPath ? assets.url(folderPath, localPath) : trimmed
-  }
-  if (!folderPath || !markdownPath || !loadLocalImage) return null
-  const localPath = resolveMarkdownLocalPath(markdownPath, trimmed)
-  return localPath ? loadLocalImage(localPath) : null
+  if (!folderPath) return null
+  const localPath = resolveMarkdownLocalPath(markdownPath ?? '', trimmed)
+  if (!localPath) return null
+  if ('url' in assets) return assets.url(folderPath, localPath)
+  return loadLocalImage ? loadLocalImage(localPath) : null
 }
 
 export function resolveMarkdownLocalPath(markdownPath: string, href: string): string | null {
