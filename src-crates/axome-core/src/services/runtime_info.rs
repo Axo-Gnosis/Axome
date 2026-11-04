@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use axome_protocol::app::AppRuntimeInfo;
+use std::collections::{HashMap, HashSet};
 
 /// Return package metadata, process memory, and aggregate process-tree CPU time.
 pub fn read_runtime_info(name: String, version: String) -> AppRuntimeInfo {

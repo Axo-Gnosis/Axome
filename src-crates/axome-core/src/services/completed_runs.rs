@@ -6,10 +6,10 @@
 //! while desktop Hosts retain completed runs in memory for their own lifetime.
 
 use crate::services::db::DatabaseService;
+use axome_protocol::pty::PtyEvent;
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{Connection, OptionalExtension};
 use std::sync::Arc;
-use axome_protocol::pty::PtyEvent;
 use tracing::warn;
 
 /// Everything a reconnecting desktop needs to replay a finished run.

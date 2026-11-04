@@ -1,4 +1,5 @@
 use crate::errors::ApiError;
+use axome_protocol::settings::{self, SettingsLayerPayload};
 use jsonc_parser::{
     cst::{CstInputValue, CstRootNode},
     ParseOptions,
@@ -10,7 +11,6 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use axome_protocol::settings::{self, SettingsLayerPayload};
 
 pub struct SettingsService;
 
@@ -314,8 +314,8 @@ fn non_empty_env_path(value: Option<OsString>) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use crate::Host;
-    use std::{ffi::OsString, fs};
     use axome_protocol::settings::{LspServerConfigRecord, LspTraceLevel};
+    use std::{ffi::OsString, fs};
     use uuid::Uuid;
 
     fn temp_root(name: &str) -> PathBuf {

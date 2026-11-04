@@ -3,17 +3,6 @@
 mod support;
 
 use anyhow::{bail, Context, Result};
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fs,
-    net::{SocketAddr, TcpListener},
-    path::{Path, PathBuf},
-    time::Duration,
-};
-use support::{enable_fake_lsp, init_repo, once_task, serve_dirs, StalledTask, FAKE_LSP_SERVER_ID};
 use axome_protocol::{
     lsp::LspEvent,
     rpc::{
@@ -25,6 +14,17 @@ use axome_protocol::{
 use axome_remote::{Identity, RemoteClient, RemoteError};
 use axome_server::auth;
 use axome_server::{serve, ServerHandle};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    fs,
+    net::{SocketAddr, TcpListener},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use support::{enable_fake_lsp, init_repo, once_task, serve_dirs, StalledTask, FAKE_LSP_SERVER_ID};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,

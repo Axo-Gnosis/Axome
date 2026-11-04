@@ -1,11 +1,5 @@
 use crate::errors::ApiError;
 use crate::services::env::EnvironmentService;
-use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 use axome_protocol::branch::BranchCommitRef;
 use axome_protocol::file_diff::{DiffSource, FileDiff, GitStatus};
 use axome_protocol::git::{
@@ -14,6 +8,12 @@ use axome_protocol::git::{
     GitRefKind, GitRemote, GitRemoteConfigOp, GitResetMode, GitSequencerAction, GitStashScope,
     GitSummary, GitTag, GitTagOp, GraphCommit, StashEntry,
 };
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 mod worktrees;
@@ -2932,8 +2932,8 @@ fn merge_numstat(changes: &mut [GitChange], path: &Path, args: &[&str], staged: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
     use axome_protocol::file_diff::GitStatus;
+    use std::process::Command;
 
     #[cfg(unix)]
     #[test]

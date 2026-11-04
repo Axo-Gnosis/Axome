@@ -40,7 +40,9 @@
 
   const submitState = runDialogSubmit({
     run: async () => {
-      await runGitAction(folderPath, (path) => backend.git.branch(path, { kind: 'set_upstream', branch: branchName, upstream }))
+      await runGitAction(folderPath, (path) =>
+        backend.git.branch(path, { kind: 'set_upstream', branch: branchName, upstream })
+      )
     },
     onDone: () => (open = false)
   })

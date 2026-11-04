@@ -1,4 +1,8 @@
 use crate::app_state::AppState;
+use axome_core::services::app_state_kv::AppStateKvService;
+use axome_core::services::pty::{PtyService, PtySubscriber};
+use axome_core::services::settings_resolution::resolve_effective_settings_for_folder_path;
+use axome_protocol::settings::{ExternalFileOpenMode, ExternalFolderOpenMode, WindowSettings};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -7,10 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use axome_core::services::app_state_kv::AppStateKvService;
-use axome_core::services::pty::{PtyService, PtySubscriber};
-use axome_core::services::settings_resolution::resolve_effective_settings_for_folder_path;
-use axome_protocol::settings::{ExternalFileOpenMode, ExternalFolderOpenMode, WindowSettings};
 use tauri::{
     Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,

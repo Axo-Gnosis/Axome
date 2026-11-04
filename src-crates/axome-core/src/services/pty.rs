@@ -1,6 +1,8 @@
 use crate::events::EventSink;
 use crate::services::completed_runs::CompletedRun;
 use crate::services::env::EnvironmentService;
+use axome_protocol::pty::PtyEvent;
+use axome_protocol::rpc::PtyCursor;
 use parking_lot::{Condvar, Mutex};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::{HashMap, HashSet};
@@ -9,8 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use axome_protocol::pty::PtyEvent;
-use axome_protocol::rpc::PtyCursor;
 use tracing::{error, info, warn};
 
 const PTY_READ_BUF_SIZE: usize = 64 * 1024;
@@ -2101,7 +2101,10 @@ mod tests {
     fn pty_children_get_xterm_identity_not_host_terminal() {
         let fixture = LocalFixture::new();
         let env: HashMap<String, String> = [
-            ("PATH".to_string(), std::env::var("PATH").unwrap_or_default()),
+            (
+                "PATH".to_string(),
+                std::env::var("PATH").unwrap_or_default(),
+            ),
             ("TERM".to_string(), "ghostty".to_string()),
             ("COLORTERM".to_string(), "24bit".to_string()),
             ("TERM_PROGRAM".to_string(), "ghostty".to_string()),

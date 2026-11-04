@@ -1,9 +1,9 @@
 use crate::host_events::{desktop_event_sink, DesktopEvent};
 use crate::router::WorkspaceRouter;
 use crate::windows::WindowCoordinatorService;
+use axome_core::Host;
 use std::path::PathBuf;
 use std::sync::Arc;
-use axome_core::Host;
 use tauri::Manager;
 
 /// Resolve the default database path inside the Tauri app data directory.

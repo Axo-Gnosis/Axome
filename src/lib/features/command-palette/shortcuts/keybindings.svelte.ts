@@ -13,7 +13,6 @@ import { normalizeShortcut, normalizeShortcutKey } from '$lib/features/command-p
 import { logicalKey } from '$lib/utils/keyboardEvent'
 import { closeTransientModals } from '$lib/utils/modalRegistry.svelte'
 
-
 const bindings = new Map<string, Pick<AppCommandDefinition, 'run' | 'terminalPolicy'>>()
 
 let suspendCount = 0
@@ -58,7 +57,6 @@ function hasChordPrefix(sequence: string): boolean {
   }
   return false
 }
-
 
 function isTerminalFocused(): boolean {
   const el = document.activeElement as HTMLElement | null

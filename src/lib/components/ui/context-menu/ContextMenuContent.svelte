@@ -3,11 +3,7 @@
   import { cn } from '$lib/utils/cn'
   import { menuContentVariants } from '../menu-recipe'
 
-  let {
-    ref = $bindable(null),
-    class: className,
-    ...rest
-  }: ContextMenuPrimitive.ContentProps = $props()
+  let { ref = $bindable(null), class: className, ...rest }: ContextMenuPrimitive.ContentProps = $props()
 </script>
 
 <ContextMenuPrimitive.Portal>

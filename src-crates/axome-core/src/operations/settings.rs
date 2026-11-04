@@ -12,13 +12,13 @@ use crate::{
     },
     Host,
 };
-use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
 use axome_protocol::settings::{
     EffectiveSettingsPayload, FormattingSettings, HarnessConfigRecord, HarnessSettingsEntry,
     NixSettings, PatchSettingsSectionInput, SettingsFileResult, SettingsLayerKind,
     SettingsLayerPayload, SettingsPayload, ShellConfigRecord, TypographySettings, WindowSettings,
 };
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 impl Host {
     pub fn settings_get(&self) -> Result<SettingsPayload, ApiError> {

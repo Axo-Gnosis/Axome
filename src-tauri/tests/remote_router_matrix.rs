@@ -3,8 +3,6 @@
 
 mod common;
 
-use serde_json::json;
-use std::{fs, future::Future, path::PathBuf, sync::Arc, time::Duration};
 use axome_core::{
     errors::ApiError,
     events::{EventSink, HostEvent},
@@ -17,6 +15,8 @@ use axome_protocol::rpc::{AttachMode, RecentFolder, Request};
 use axome_protocol::{lsp::LspEvent, pty::PtyEvent, settings::PatchSettingsSectionInput};
 use axome_remote::{Identity, RemoteClient};
 use axome_server::ServerHandle;
+use serde_json::json;
+use std::{fs, future::Future, path::PathBuf, sync::Arc, time::Duration};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 

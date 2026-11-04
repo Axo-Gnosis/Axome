@@ -4,12 +4,12 @@ use crate::services::{
     folders::folder_name,
     session_index::{Observation, SourceId},
 };
+use axome_protocol::activity_map::{DiscoveredHarnessActivity, DiscoveredProject};
 use chrono::{DateTime, Local, TimeZone};
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
-use axome_protocol::activity_map::{DiscoveredHarnessActivity, DiscoveredProject};
 
 const MAX_RESULTS: usize = 50;
 const WINDOW_DAYS: usize = 7;

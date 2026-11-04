@@ -1,7 +1,5 @@
 mod common;
 
-use serde_json::json;
-use std::{collections::HashSet, fs, sync::Arc, time::Duration};
 use axome_core::{
     errors::ApiError,
     events::{EventSink, HostEvent},
@@ -12,6 +10,8 @@ use axome_lib::router::{Target, WorkspaceRouter};
 use axome_protocol::{pty::PtyEvent, rpc::AttachMode, settings::PatchSettingsSectionInput};
 use axome_remote::Identity;
 use axome_server::{serve, ServeOptions};
+use serde_json::json;
+use std::{collections::HashSet, fs, sync::Arc, time::Duration};
 use tempfile::tempdir;
 use tokio::{sync::mpsc, time::timeout};
 

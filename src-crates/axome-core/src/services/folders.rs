@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
-use std::path::{Component, Path, PathBuf};
 use axome_protocol::folder::{PathRoot, PathRootKind};
+use std::path::{Component, Path, PathBuf};
 
 /// Canonicalize a user-supplied folder path and require it to be a directory.
 pub fn resolve_folder(path: &str) -> Result<PathBuf, ApiError> {

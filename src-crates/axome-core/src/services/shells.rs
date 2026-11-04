@@ -1,9 +1,9 @@
 use crate::services::extensions::resolve_contribution_command;
 use crate::services::harnesses::binary_override;
-use std::collections::HashMap;
-use std::path::Path;
 use axome_protocol::settings::{ShellPresetSettings, ShellSettings};
 use axome_protocol::shell::{ShellListing, ShellPresetEntry};
+use std::collections::HashMap;
+use std::path::Path;
 
 pub(crate) struct ShellLaunch {
     pub cmd: String,

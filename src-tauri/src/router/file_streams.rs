@@ -2,10 +2,10 @@ use super::{
     target::{remote_error, Target},
     RouterInner, WorkspaceRouter,
 };
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use axome_core::errors::ApiError;
 use axome_protocol::rpc::Open;
+use parking_lot::Mutex;
+use std::collections::HashMap;
 
 /// Each streamed assembly holds up to 256 MiB; more than this queue.
 const MAX_FILE_STREAMS: usize = 2;
@@ -131,9 +131,9 @@ impl FileStreams {
         size: u64,
         progress: impl Fn(u64, u64) -> Result<(), ApiError> + Send,
     ) -> Result<axome_protocol::files::FileContent, ApiError> {
-        use sha2::{Digest, Sha256};
         use axome_protocol::rpc::{FileReadDown, MAX_FILE_CHUNK_BYTES, MAX_STREAM_FILE_BYTES};
         use axome_remote::wire::{read_tagged_frame_with_limit, Frame};
+        use sha2::{Digest, Sha256};
         if size > MAX_STREAM_FILE_BYTES as u64 {
             return Err(ApiError::TooLarge {
                 size,

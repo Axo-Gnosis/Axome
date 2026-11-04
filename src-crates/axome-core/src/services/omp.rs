@@ -2,8 +2,8 @@ use crate::errors::ApiError;
 use crate::services::env::EnvironmentService;
 use crate::services::folders::home_dir;
 use crate::services::history::omp::session_bucket;
-use std::path::{Path, PathBuf};
 use axome_protocol::omp::OmpResolvedTarget;
+use std::path::{Path, PathBuf};
 
 fn latest_session_paths(cwd: &str) -> Option<(PathBuf, PathBuf)> {
     latest_in(session_bucket(cwd)?)

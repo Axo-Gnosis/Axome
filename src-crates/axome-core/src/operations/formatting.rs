@@ -8,8 +8,8 @@ use crate::{
     },
     Host,
 };
-use std::collections::HashMap;
 use axome_protocol::extensions::{FormatterAvailability, FormatterStatus};
+use std::collections::HashMap;
 
 impl Host {
     pub fn formatting_format(

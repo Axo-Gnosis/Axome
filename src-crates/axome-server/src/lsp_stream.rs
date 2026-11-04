@@ -2,6 +2,11 @@ use crate::{
     dispatch::ServerContext,
     stream::{StreamReader, StreamWriter},
 };
+use axome_core::{events::EventSink, Host};
+use axome_protocol::{
+    lsp::LspEvent,
+    rpc::{LspDown, LspUp},
+};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -10,11 +15,6 @@ use std::{
         Arc,
     },
     time::Duration,
-};
-use axome_core::{events::EventSink, Host};
-use axome_protocol::{
-    lsp::LspEvent,
-    rpc::{LspDown, LspUp},
 };
 use tokio::{
     sync::{mpsc, watch, Mutex as AsyncMutex},

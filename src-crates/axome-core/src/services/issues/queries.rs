@@ -11,10 +11,10 @@ use super::rows::{
     EPIC_COLUMNS, ISSUE_COLUMNS,
 };
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Params};
 use std::collections::HashSet;
-use axome_protocol::issues::*;
 
 pub(super) fn query_issues(
     conn: &Connection,

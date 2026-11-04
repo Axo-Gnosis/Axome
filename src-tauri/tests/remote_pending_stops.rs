@@ -1,11 +1,11 @@
 mod common;
 
-use serde_json::json;
-use std::{collections::HashMap, sync::Arc};
 use axome_core::{errors::ApiError, Host};
 use axome_lib::router::WorkspaceRouter;
 use axome_protocol::settings::PatchSettingsSectionInput;
 use axome_remote::Identity;
+use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
 use tempfile::tempdir;
 
 /// The retry loop resolves a stop's server by name and reads an unknown name

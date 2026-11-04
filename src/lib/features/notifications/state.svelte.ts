@@ -41,10 +41,13 @@ function show(notification: Notification): void {
   clearTimeout(hideTimers.get(notification.id))
   hideTimers.delete(notification.id)
   if (!notification.loading) {
-    hideTimers.set(notification.id, setTimeout(() => {
-      hideTimers.delete(notification.id)
-      notification.active = false
-    }, TOAST_DURATION_MS))
+    hideTimers.set(
+      notification.id,
+      setTimeout(() => {
+        hideTimers.delete(notification.id)
+        notification.active = false
+      }, TOAST_DURATION_MS)
+    )
   }
 }
 

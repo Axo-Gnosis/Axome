@@ -1,11 +1,11 @@
 mod pairing;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
-use std::{net::SocketAddr, path::PathBuf};
 use axome_core::services::settings::SettingsService;
 use axome_remote::Identity;
 use axome_server::{serve, ServeOptions};
+use clap::{Parser, Subcommand};
+use std::{net::SocketAddr, path::PathBuf};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]

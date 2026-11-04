@@ -1,8 +1,8 @@
 use crate::dispatch::Session;
-use std::{path::Path, sync::Arc};
 use axome_core::events::HostEvent;
 use axome_protocol::rpc::HostEventWire;
 use axome_remote::wire::write_frame;
+use std::{path::Path, sync::Arc};
 use tokio::sync::{broadcast, watch, Mutex};
 
 pub(crate) type HostEvents = broadcast::Sender<Arc<HostEventWire>>;

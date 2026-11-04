@@ -5,11 +5,11 @@ use super::rows::row_to_comment;
 use super::validators::{actor, validate_non_empty, DEFAULT_ACTOR};
 use super::{db_error, IssueService};
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 use std::path::Path;
-use axome_protocol::issues::*;
 
 impl IssueService {
     /// Append a comment to an issue and return the inserted row.

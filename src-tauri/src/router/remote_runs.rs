@@ -1,12 +1,4 @@
 use super::{remotes::Backoff, RouterInner};
-use parking_lot::Mutex;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Weak,
-    },
-};
 use axome_core::{
     errors::ApiError,
     events::EventSink,
@@ -18,6 +10,14 @@ use axome_protocol::{
     rpc::{Open, PtyCursor, PtyDown, PtyUp, Request},
 };
 use axome_remote::wire::{read_tagged_frame, write_frame, write_raw_frame, Frame};
+use parking_lot::Mutex;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Weak,
+    },
+};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 const INPUT_QUEUE_CAPACITY: usize = 256;

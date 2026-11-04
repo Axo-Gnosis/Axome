@@ -2,6 +2,11 @@ use super::removal::{remove_paths, remove_recursive};
 use crate::errors::ApiError;
 use crate::services::explorer_filter::{ExplorerFilter, IgnoreChain};
 use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
+use axome_protocol::files::{
+    DirEntry, FileContent, FilePasteCollision, FilePasteMapping, PathList,
+};
+#[cfg(test)]
+use axome_protocol::settings::ExplorerSettings;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -9,11 +14,6 @@ use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use axome_protocol::files::{
-    DirEntry, FileContent, FilePasteCollision, FilePasteMapping, PathList,
-};
-#[cfg(test)]
-use axome_protocol::settings::ExplorerSettings;
 
 const MAX_DEPTH: usize = 50;
 /// Bounds the single-child chain a compacted row may represent, so a

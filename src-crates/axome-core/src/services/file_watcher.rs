@@ -11,6 +11,7 @@
 //! directories instead of forcing a whole-tree refresh.
 
 use crate::events::{EventSink, HostEvent};
+use axome_protocol::files::FilesChangedEvent;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use axome_protocol::files::FilesChangedEvent;
 
 const FLUSH_DELAY: Duration = Duration::from_millis(300);
 

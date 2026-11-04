@@ -2,18 +2,18 @@ use crate::services::{
     extensions::ExtensionService,
     settings::{SettingsJsoncLayer, SettingsService},
 };
+use axome_protocol::extensions::{FORMATTER_DISABLED, FORMATTER_LSP};
+use axome_protocol::settings::{
+    EffectiveSettings, HarnessConfigRecord, HarnessSettings, LspServerConfigRecord,
+    LspServerSettings, SettingsDiagnostic, SettingsDiagnosticCode, SettingsDiagnosticSeverity,
+    SettingsLayerKind, SettingsOrigin,
+};
 use jsonschema::{error::ValidationErrorKind, Validator};
 use schemars::schema_for;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
-};
-use axome_protocol::extensions::{FORMATTER_DISABLED, FORMATTER_LSP};
-use axome_protocol::settings::{
-    EffectiveSettings, HarnessConfigRecord, HarnessSettings, LspServerConfigRecord,
-    LspServerSettings, SettingsDiagnostic, SettingsDiagnosticCode, SettingsDiagnosticSeverity,
-    SettingsLayerKind, SettingsOrigin,
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -473,8 +473,8 @@ pub(crate) fn field_ref(node: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use axome_protocol::settings::TabBeamPosition;
+    use serde_json::json;
     #[test]
     fn global_schema_includes_global_only_settings() {
         let schema =

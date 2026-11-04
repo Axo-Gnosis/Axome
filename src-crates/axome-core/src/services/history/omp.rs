@@ -1,11 +1,11 @@
 use super::{readable, store_home, BuiltinScanner, HistoryQuery, HistoryRow, Listing};
 use crate::services::folders::home_dir;
+use axome_protocol::session::MessageRole;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::collections::HashMap;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use axome_protocol::session::MessageRole;
 
 pub(super) const SCANNER: BuiltinScanner = BuiltinScanner {
     name: "omp",
@@ -321,8 +321,8 @@ fn exists(query: &HistoryQuery<'_>, id: &str) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
     use axome_protocol::session::LastMessage;
+    use std::time::SystemTime;
 
     // Bucket names observed in a real ~/.omp/agent/sessions/.
     #[test]

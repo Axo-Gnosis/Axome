@@ -3,12 +3,12 @@
 
 use super::{git_command, git_output, read_operation, run_git_mutate, GitService};
 use crate::errors::ApiError;
-use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Weak};
 use axome_protocol::git::{
     GitWorktree, GitWorktreeCheckout, GitWorktreeList, GitWorktreeOp, GitWorktreeResult,
 };
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Weak};
 
 mod copy;
 

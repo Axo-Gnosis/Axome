@@ -10,10 +10,12 @@ export function tabDragSource(args: { tab: Tab }) {
 
 /** The server tab drags its whole group. */
 export function groupDragSource(args: { server: string; workbenchId: string }) {
-  return dragSource(() => [{
-    kind: 'workbench',
-    server: args.server,
-    workbenchId: args.workbenchId,
-    sourceWindowLabel: platform.workbench.id
-  }])
+  return dragSource(() => [
+    {
+      kind: 'workbench',
+      server: args.server,
+      workbenchId: args.workbenchId,
+      sourceWindowLabel: platform.workbench.id
+    }
+  ])
 }

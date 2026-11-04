@@ -1,6 +1,8 @@
 #![allow(dead_code)] // each test binary uses a subset
 
 use anyhow::{bail, Context, Result};
+use axome_remote::{Identity, RemoteClient, RemoteError};
+use axome_server::{auth, serve, ServeOptions, ServerHandle};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -9,8 +11,6 @@ use std::{
     process::Command,
     sync::mpsc,
 };
-use axome_remote::{Identity, RemoteClient, RemoteError};
-use axome_server::{auth, serve, ServeOptions, ServerHandle};
 use tempfile::TempDir;
 
 pub const FAKE_LSP_SERVER_ID: &str = "dev.axome.nix::nil";

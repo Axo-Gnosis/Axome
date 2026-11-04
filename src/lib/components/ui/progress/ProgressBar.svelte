@@ -23,9 +23,7 @@
 
   let pctDone = $derived(total > 0 ? Math.round((done / total) * 100) : 0)
   let pctActive = $derived(total > 0 ? Math.round((active / total) * 100) : 0)
-  let resolvedTitle = $derived(
-    total > 0 ? `${done} done, ${active} active, ${total - done - active} open` : 'No items'
-  )
+  let resolvedTitle = $derived(total > 0 ? `${done} done, ${active} active, ${total - done - active} open` : 'No items')
 </script>
 
 <div

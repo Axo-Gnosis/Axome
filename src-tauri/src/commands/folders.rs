@@ -1,12 +1,12 @@
 use crate::app_state::AppState;
 use crate::router::Target;
-use std::path::{Path, PathBuf};
-#[cfg(target_os = "linux")]
-use std::process::{Command, Stdio};
 use axome_core::errors::ApiError;
 #[cfg(target_os = "linux")]
 use axome_core::services::env::EnvironmentService;
 use axome_core::services::folders::resolve_folder;
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use tauri::Manager;
 
 /// Open a native directory picker and return the selected canonical path.

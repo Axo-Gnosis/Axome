@@ -2,8 +2,6 @@ use crate::errors::ApiError;
 use crate::events::HostEvent;
 use crate::host::Host;
 use crate::services::git::validated_ref_name;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 use axome_protocol::branch::BranchSummary;
 use axome_protocol::file_diff::{DiffSource, FileDiff, GitStatus};
 use axome_protocol::git::{
@@ -13,6 +11,8 @@ use axome_protocol::git::{
     GitTagOp, GitWorktreeCheckout, GitWorktreeList, GitWorktreeOp, GitWorktreeResult, GraphCommit,
     StashEntry,
 };
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// Validate an upstream tracking ref in `<remote>/<branch>` form.
 pub(crate) fn validated_upstream_ref(upstream: &str) -> Result<(), ApiError> {

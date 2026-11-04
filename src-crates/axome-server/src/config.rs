@@ -1,11 +1,11 @@
 use anyhow::{anyhow, bail, ensure, Context};
+use axome_protocol::server_config::{ServerConfig, WebConfig, SERVER_CONFIG_FILE};
+use axome_remote::Identity;
 use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use axome_protocol::server_config::{ServerConfig, WebConfig, SERVER_CONFIG_FILE};
-use axome_remote::Identity;
 
 pub fn default_path(config_dir: &Path) -> PathBuf {
     config_dir.join(SERVER_CONFIG_FILE)

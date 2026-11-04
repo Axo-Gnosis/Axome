@@ -1,5 +1,5 @@
-use serde::{ser::SerializeStruct, Serialize};
 use axome_protocol::rpc::WireError;
+use serde::{ser::SerializeStruct, Serialize};
 
 /// Unified error type returned by host operations and application commands.
 ///

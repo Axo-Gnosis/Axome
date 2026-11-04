@@ -2,6 +2,7 @@
 
 use super::{floor_to, HistoryRow, HistorySource};
 use crate::services::pty::PtyEventSink;
+use axome_protocol::pty::PtyEvent;
 use chrono::DateTime;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -9,7 +10,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use axome_protocol::pty::PtyEvent;
 use tracing::{debug, error, info};
 
 const BINDING_POLL: Duration = Duration::from_secs(1);

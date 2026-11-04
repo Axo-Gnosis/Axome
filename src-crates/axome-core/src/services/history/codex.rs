@@ -1,4 +1,5 @@
 use super::{store_home, BuiltinScanner, HistoryQuery, HistoryRow, Listing};
+use axome_protocol::session::MessageRole;
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params_from_iter, Connection, OpenFlags, OptionalExtension, ToSql};
 use serde_json::Value;
@@ -7,7 +8,6 @@ use std::fs::File;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use axome_protocol::session::MessageRole;
 
 pub(super) const SCANNER: BuiltinScanner = BuiltinScanner {
     name: "codex",
@@ -235,8 +235,8 @@ fn exists(query: &HistoryQuery<'_>, id: &str) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use axome_protocol::session::LastMessage;
+    use std::collections::HashMap;
 
     #[test]
     fn optional_columns_and_folder_filter() {

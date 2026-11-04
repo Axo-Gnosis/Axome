@@ -22,10 +22,4 @@
   } = $props()
 </script>
 
-<input
-  data-slot="input"
-  bind:value
-  bind:this={ref}
-  class={cn(inputVariants(), className)}
-  {...rest}
-/>
+<input data-slot="input" bind:value bind:this={ref} class={cn(inputVariants(), className)} {...rest} />

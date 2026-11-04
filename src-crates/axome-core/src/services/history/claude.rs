@@ -3,10 +3,10 @@ use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
+use axome_protocol::session::MessageRole;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use axome_protocol::session::MessageRole;
 
 use super::{readable, BuiltinScanner, HistoryQuery, HistoryRow, Listing};
 

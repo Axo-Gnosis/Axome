@@ -1,9 +1,9 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use axome_protocol::files::FilesChangedEvent;
 use axome_protocol::git::GitChangedEvent;
 use axome_protocol::rpc::RecentFolder;
 use axome_protocol::settings::SettingsChangedEvent;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Delivery completes synchronously. Sinks must not re-enter the emitting
 /// service or wait for asynchronous delivery while its state is locked.

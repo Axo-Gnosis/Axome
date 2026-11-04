@@ -2,9 +2,6 @@
 mod support;
 
 use anyhow::{bail, Context, Result};
-use chrono::DateTime;
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
-use support::Daemon;
 use axome_core::services::settings::SettingsService;
 use axome_protocol::{
     folder::PathRootKind,
@@ -16,6 +13,9 @@ use axome_protocol::{
     },
 };
 use axome_remote::{wire::read_frame, RemoteClient, RemoteError};
+use chrono::DateTime;
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
+use support::Daemon;
 use tokio::time::timeout;
 
 const WAIT: Duration = Duration::from_secs(5);

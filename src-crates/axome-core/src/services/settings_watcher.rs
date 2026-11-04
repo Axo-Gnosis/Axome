@@ -3,6 +3,7 @@ use crate::services::settings::SettingsService;
 use crate::services::settings_resolution::{
     parse_error_diagnostic, resolve_effective_settings_for_folder_path,
 };
+use axome_protocol::settings::{SettingsChangedEvent, SettingsDiagnostic, SettingsLayerKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -11,7 +12,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
-use axome_protocol::settings::{SettingsChangedEvent, SettingsDiagnostic, SettingsLayerKind};
 
 struct FolderSettingsWatcher {
     watcher: RecommendedWatcher,

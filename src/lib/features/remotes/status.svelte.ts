@@ -16,11 +16,13 @@ export function watchRemoteStatuses(): () => void {
   if (++watchers === 1) {
     const current = generation
     ready = Promise.resolve()
-      .then(() => native.remotes.onStatus(({ server, ...status }) => {
-        if (current !== generation || watchers === 0) return
-        revisions.set(server, (revisions.get(server) ?? 0) + 1)
-        statuses[server] = status
-      }))
+      .then(() =>
+        native.remotes.onStatus(({ server, ...status }) => {
+          if (current !== generation || watchers === 0) return
+          revisions.set(server, (revisions.get(server) ?? 0) + 1)
+          statuses[server] = status
+        })
+      )
       .then((stop) => {
         if (current !== generation || watchers === 0) stop()
         else unlisten = stop

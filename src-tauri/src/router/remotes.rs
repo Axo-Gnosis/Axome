@@ -3,13 +3,6 @@ use super::{
     RouterInner, WorkspaceRouter,
 };
 use crate::host_events::DesktopEvent;
-use parking_lot::Mutex;
-use std::{
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, Weak},
-    time::Duration,
-};
 use axome_core::{
     errors::ApiError,
     events::{EventSink, HostEvent},
@@ -22,6 +15,13 @@ use axome_protocol::{
     settings::{EffectiveSettingsPayload, RemoteSettings, SettingsDiagnostic, SettingsOrigin},
 };
 use axome_remote::{wire::read_frame, Fingerprint, Identity, RemoteClient};
+use parking_lot::Mutex;
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle, time::sleep};
 
 fn validate_server_name(name: &str) -> Result<(), ApiError> {
@@ -735,8 +735,8 @@ impl Backoff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use axome_protocol::settings::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn settings_effective_merges_desktop_sections() {

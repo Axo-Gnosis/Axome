@@ -9,14 +9,14 @@ use super::protocol::{
 use crate::errors::ApiError;
 use crate::events::{deliver, EventSink, HostEvent};
 use crate::services::issues::IssueService;
-use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
-use std::path::Path;
 use axome_protocol::issues::{
     IssueCommentCreateInput, IssueCommentUpdateInput, IssueCreateInput, IssueDependencyInput,
     IssueEpicCreateInput, IssueEpicUpdateInput, IssueListFilters, IssueReadyFilters,
     IssueUpdateInput,
 };
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
+use std::path::Path;
 
 const BRIDGE_METHODS: &[&str] = &[
     "bridge.info",

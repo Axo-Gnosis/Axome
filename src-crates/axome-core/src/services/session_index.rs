@@ -6,9 +6,6 @@ use std::{
     sync::{Arc, OnceLock, Weak},
 };
 
-use chrono::{SecondsFormat, Utc};
-use parking_lot::Mutex;
-use rusqlite::{params, Connection};
 use axome_protocol::{
     activity_map::DiscoveredProject,
     session::{
@@ -16,6 +13,9 @@ use axome_protocol::{
         SessionIndexStatus, SessionSource, SessionSourceKey,
     },
 };
+use chrono::{SecondsFormat, Utc};
+use parking_lot::Mutex;
+use rusqlite::{params, Connection};
 use tokio::{
     runtime::Handle,
     sync::{watch, Semaphore},

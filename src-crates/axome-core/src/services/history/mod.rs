@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axome_protocol::session::{LastMessage, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
 use parking_lot::Mutex;
-use axome_protocol::session::{LastMessage, MessageRole};
 
 use crate::services::harnesses::HarnessLaunch;
 

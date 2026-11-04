@@ -4,6 +4,11 @@ use crate::{
     stream::{StreamReader, StreamWriter},
     workbenches::{self, Attach, ControlLease, Terminal},
 };
+use axome_core::Host;
+use axome_protocol::rpc::{
+    ChatDown, FileReadDown, Open, PtyDown, Request, Response as RpcResponse, WireError,
+    MAX_FRAME_BYTES, MAX_REQUEST_FRAME_BYTES, MAX_STREAMS_PER_CONNECTION,
+};
 use axum::{
     extract::{
         ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade},
@@ -26,11 +31,6 @@ use std::{
         Arc, Mutex as StdMutex,
     },
     time::Duration,
-};
-use axome_core::Host;
-use axome_protocol::rpc::{
-    ChatDown, FileReadDown, Open, PtyDown, Request, Response as RpcResponse, WireError,
-    MAX_FRAME_BYTES, MAX_REQUEST_FRAME_BYTES, MAX_STREAMS_PER_CONNECTION,
 };
 use tokio::{
     net::TcpListener,
@@ -823,8 +823,8 @@ async fn stream_socket(mut socket: WebSocket, state: WebState, control: Arc<Cont
 mod tests {
     use super::*;
     use crate::test_support::pending;
-    use std::sync::atomic::AtomicBool;
     use axome_protocol::rpc::Reply;
+    use std::sync::atomic::AtomicBool;
 
     fn workbench_control() -> Arc<Control> {
         Control::new("a".into(), "a".into(), ControlLease::new())

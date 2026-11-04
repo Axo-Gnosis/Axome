@@ -2,17 +2,17 @@ use crate::{
     dispatch::ServerContext,
     stream::{Frame, StreamReader, StreamWriter},
 };
-use parking_lot::Mutex;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
 use axome_core::{
     events::EventSink,
     services::{completed_runs::CompletedRun, pty::PtyReplay},
     Host,
 };
 use axome_protocol::rpc::{PtyCursor, PtyDown, PtyUp, WireError};
+use parking_lot::Mutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::sync::{mpsc, watch};
 
 const STREAM_QUEUE_CAPACITY: usize = 4096;
@@ -534,10 +534,10 @@ async fn write_stream_error(send: &mut StreamWriter, error: WireError) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axome_core::services::pty::RunBackend;
     use axum::body::Bytes;
     use std::sync::mpsc;
     use std::time::Duration;
-    use axome_core::services::pty::RunBackend;
 
     struct GatedBackend {
         writes: Arc<Mutex<Vec<Vec<u8>>>>,

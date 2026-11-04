@@ -4,11 +4,6 @@ use crate::{
     pty_stream::RunFanout,
     workbenches::{self, Attach, ControlLease, Terminal},
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-    sync::{Arc, Weak},
-};
 use axome_core::services::folders::resolve_folder;
 use axome_core::{errors::ApiError, Host};
 use axome_protocol::{
@@ -17,6 +12,11 @@ use axome_protocol::{
     session::SessionStartInfo,
 };
 use axome_remote::Fingerprint;
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::{Arc, Weak},
+};
 use tokio::sync::{
     watch, Mutex, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock,
 };

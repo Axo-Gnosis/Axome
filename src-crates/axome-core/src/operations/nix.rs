@@ -7,9 +7,9 @@ use crate::{
     },
     Host,
 };
+use axome_protocol::nix_env::{NixDetection, NixDiagnostic, NixEnvRecord, NixEnvStatus};
 use std::collections::HashMap;
 use std::path::Path;
-use axome_protocol::nix_env::{NixDetection, NixDiagnostic, NixEnvRecord, NixEnvStatus};
 
 struct NixEvalGuard<'a> {
     locks: &'a parking_lot::Mutex<std::collections::HashSet<String>>,

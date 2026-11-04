@@ -4,10 +4,10 @@ use super::{
     RouterInner, WorkspaceRouter,
 };
 use crate::host_events::DesktopEvent;
-use std::{collections::HashMap, sync::Arc};
 use axome_core::errors::ApiError;
 use axome_protocol::rpc::{AttachMode, Request, WorkbenchAttached, WorkbenchInfo};
 use axome_remote::{RemoteClient, RemoteError};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex as AsyncMutex;
 
 #[derive(Clone, Debug)]

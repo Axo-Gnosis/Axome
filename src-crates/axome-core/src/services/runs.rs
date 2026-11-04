@@ -3,11 +3,11 @@
 use crate::errors::ApiError;
 use crate::services::completed_runs::{CompletedRun, CompletedRunStore};
 use crate::services::pty::{CompletedRunSink, PtyRunState, PtyService, PtySubscriber};
+use axome_protocol::rpc::RunStatus;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
-use axome_protocol::rpc::RunStatus;
 use tracing::warn;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -503,9 +503,9 @@ mod tests {
     use super::*;
     use crate::events::HostEvent;
     use crate::host::Host;
+    use axome_protocol::pty::PtyEvent;
     use std::fs;
     use std::time::{Duration, Instant};
-    use axome_protocol::pty::PtyEvent;
 
     struct Fixture {
         host: Arc<Host>,

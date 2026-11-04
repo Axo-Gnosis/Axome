@@ -11,11 +11,11 @@ use super::validators::{
 };
 use super::{db_error, IssueService};
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use chrono::Utc;
 use rusqlite::{params, params_from_iter, types::Value, OptionalExtension};
 use serde_json::json;
 use std::path::Path;
-use axome_protocol::issues::*;
 
 const DEFAULT_LIMIT: i64 = 100;
 

@@ -1,9 +1,9 @@
 #![allow(dead_code)] // each test binary uses a subset
 
-use serde_json::{json, Value};
-use std::{fs, path::Path, process::Command};
 use axome_remote::Identity;
 use axome_server::{auth::append_authorized, serve, ServeOptions, ServerHandle};
+use serde_json::{json, Value};
+use std::{fs, path::Path, process::Command};
 
 // Each binary has one test: HOME/XDG/git remain isolated for its whole lifetime.
 pub fn isolate(root: &Path) -> anyhow::Result<()> {

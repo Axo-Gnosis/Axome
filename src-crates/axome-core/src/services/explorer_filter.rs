@@ -12,6 +12,7 @@
 
 use crate::errors::ApiError;
 use crate::services::git::git_line;
+use axome_protocol::settings::ExplorerSettings;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::Match;
@@ -20,7 +21,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
-use axome_protocol::settings::ExplorerSettings;
 
 /// Identity of a `.gitignore` file, used to detect edits without inotify.
 type IgnoreStamp = Option<(SystemTime, u64)>;

@@ -1,14 +1,5 @@
 mod support;
 use anyhow::{bail, Context, Result};
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-    time::Duration,
-};
-use support::{
-    enable_fake_lsp, init_repo, mkfifo, once_task, Daemon, StalledTask, FAKE_LSP_SERVER_ID,
-};
 use axome_protocol::{
     files::DirEntry,
     git::GitSummary,
@@ -25,6 +16,15 @@ use axome_remote::{
     Fingerprint, Identity, RemoteClient, RemoteError,
 };
 use axome_server::auth;
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use support::{
+    enable_fake_lsp, init_repo, mkfifo, once_task, Daemon, StalledTask, FAKE_LSP_SERVER_ID,
+};
 use tokio::time::{sleep, timeout};
 
 const SHORT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -532,9 +532,9 @@ async fn pairing_persists_and_dispatches_host_operations() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn file_read_stream_assembles_and_caps() -> Result<()> {
-    use sha2::Digest;
     use axome_protocol::rpc::{FileReadDown, MAX_FILE_CHUNK_BYTES};
     use axome_remote::wire::read_tagged_frame_with_limit;
+    use sha2::Digest;
 
     let fixture = Daemon::start(None).await?;
     let repo = tempfile::tempdir()?;

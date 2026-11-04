@@ -3,9 +3,9 @@ use crate::events::HostEvent;
 use crate::host::Host;
 use crate::services::app_state_kv::AppStateKvService;
 use crate::services::folders::{find_path_root, folder_name, home_dir, resolve_folder};
-use rusqlite::Connection;
 use axome_protocol::folder::{FolderEntry, FolderInfo, PathRoot};
 use axome_protocol::rpc::RecentFolder;
+use rusqlite::Connection;
 
 const RECENT_FOLDERS_KEY: &str = "recent_folders";
 

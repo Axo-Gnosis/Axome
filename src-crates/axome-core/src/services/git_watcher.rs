@@ -7,6 +7,7 @@
 
 use crate::events::{EventSink, HostEvent};
 use crate::services::git::{git_output, git_output_line, git_with_stdin, GitService};
+use axome_protocol::git::{GitChangeScope, GitChangedEvent};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -15,7 +16,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use axome_protocol::git::{GitChangeScope, GitChangedEvent};
 
 const QUIET_DELAY: Duration = Duration::from_millis(150);
 const MAX_FLUSH_DELAY: Duration = Duration::from_millis(750);

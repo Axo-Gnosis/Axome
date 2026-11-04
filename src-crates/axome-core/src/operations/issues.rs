@@ -1,8 +1,8 @@
 //! Folder-local issue workflows.
 
 use crate::{errors::ApiError, events::HostEvent, services::folders::resolve_folder, Host};
-use std::path::Path;
 use axome_protocol::issues::*;
+use std::path::Path;
 
 impl Host {
     pub fn issues_list(

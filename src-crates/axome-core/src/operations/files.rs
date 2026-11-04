@@ -2,11 +2,11 @@ use crate::errors::ApiError;
 use crate::events::HostEvent;
 use crate::host::Host;
 use crate::services::folders::{normalize_absolute_path, resolve_folder};
-use std::collections::HashMap;
-use std::path::Path;
 use axome_protocol::files::{
     DirEntry, FileContent, FilePasteCollision, FilePasteMapping, PathList,
 };
+use std::collections::HashMap;
+use std::path::Path;
 
 impl Host {
     pub fn file_stat(

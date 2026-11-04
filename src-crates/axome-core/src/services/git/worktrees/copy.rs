@@ -2,6 +2,7 @@
 
 use super::super::{git_command, git_output};
 use crate::errors::ApiError;
+use axome_protocol::git::GitWorktreeList;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, CString, OsStr};
@@ -12,7 +13,6 @@ use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
-use axome_protocol::git::GitWorktreeList;
 
 #[derive(Debug)]
 pub(super) struct CopySnapshot {
@@ -512,11 +512,11 @@ fn remove_partial(parent: &File, name: &CStr, created: &File) -> io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axome_protocol::git::GitWorktree;
     use std::fs;
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
-    use axome_protocol::git::GitWorktree;
 
     struct TestDirectory(PathBuf);
 

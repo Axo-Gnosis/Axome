@@ -14,7 +14,9 @@
     <div class="flex flex-col items-center gap-0.5">
       <div
         class="h-2.5 w-full rounded-[3px]"
-        style="background: {count > 0 ? 'var(--color-accent)' : 'var(--color-edge)'}; opacity: {count > 0 ? intensity : 0.15};"
+        style="background: {count > 0 ? 'var(--color-accent)' : 'var(--color-edge)'}; opacity: {count > 0
+          ? intensity
+          : 0.15};"
       ></div>
       <span class="text-3xs text-subtle">{days[i]}</span>
     </div>

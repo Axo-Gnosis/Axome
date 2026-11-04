@@ -1,4 +1,5 @@
 use crate::{identity::Fingerprint, RemoteError};
+use axome_protocol::rpc::{ALPN, MAX_STREAMS_PER_CONNECTION};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider},
@@ -7,7 +8,6 @@ use rustls::{
     DigitallySignedStruct, DistinguishedName, SignatureScheme,
 };
 use std::{sync::Arc, time::Duration};
-use axome_protocol::rpc::{ALPN, MAX_STREAMS_PER_CONNECTION};
 
 /// Admits unknown self-signed client certificates for pairing. CertificateVerify
 /// still proves possession; daemon authorization pins the resulting fingerprint.

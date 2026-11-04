@@ -4,9 +4,9 @@ use super::rows::collect_rows;
 use super::validators::{validate_config_key, validate_prefix};
 use super::{db_error, IssueService};
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use rusqlite::{params, OptionalExtension};
 use std::path::Path;
-use axome_protocol::issues::*;
 
 impl IssueService {
     /// Project-local id-prefix configuration entries.

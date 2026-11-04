@@ -11,9 +11,9 @@
 //   <> append a `ConfigSchemaEntry` below
 //   <> ship it; the frontend picks it up automatically on next load
 
+use axome_protocol::config_schemas::ConfigSchemaEntry;
 use schemars::schema_for;
 use serde_json::json;
-use axome_protocol::config_schemas::ConfigSchemaEntry;
 
 use crate::services::{extensions::ExtensionService, settings_resolution::settings_layer_schema};
 use axome_protocol::{server_config::ServerConfig, settings::SettingsLayerKind, task::TasksFile};

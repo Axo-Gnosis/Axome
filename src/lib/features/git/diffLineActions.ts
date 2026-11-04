@@ -74,17 +74,15 @@ export async function runDiffGitLineAction(
   } else {
     const nextWorkingTree = applyLineChanges(originalContent, modifiedContent, changes)
     if (context.status === 'untracked' && nextWorkingTree.length === 0) {
-      await withTrashFallback((permanent) => runGitAction(
-        context.folderPath,
-        (path) => backend.files.delete(path, context.filePath, permanent),
-        { scope: 'summary' }
-      ))
+      await withTrashFallback((permanent) =>
+        runGitAction(context.folderPath, (path) => backend.files.delete(path, context.filePath, permanent), {
+          scope: 'summary'
+        })
+      )
       return
     }
-    await runGitAction(
-      context.folderPath,
-      (path) => backend.files.write(path, context.filePath, nextWorkingTree),
-      { scope: 'summary' }
-    )
+    await runGitAction(context.folderPath, (path) => backend.files.write(path, context.filePath, nextWorkingTree), {
+      scope: 'summary'
+    })
   }
 }

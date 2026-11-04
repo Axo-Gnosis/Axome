@@ -1,8 +1,8 @@
 use crate::services::env::EnvironmentService;
+use axome_protocol::nix_env::{NixDiagnostic, NixEnvRecord, NixEnvStatus};
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::Path;
-use axome_protocol::nix_env::{NixDiagnostic, NixEnvRecord, NixEnvStatus};
 use tracing::info;
 
 /// Nix files checked in priority order.

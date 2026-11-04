@@ -1,10 +1,10 @@
 use crate::stream::{StreamReader, StreamWriter};
-use std::sync::Arc;
 use axome_core::{errors::ApiError, events::EventSink, Host};
 use axome_protocol::{
     chat::ChatEvent,
     rpc::{ChatDown, WireError},
 };
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 

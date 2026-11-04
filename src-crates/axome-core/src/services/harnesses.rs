@@ -6,12 +6,12 @@ use crate::services::extensions::{
     LoadedHarness,
 };
 use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
 use axome_protocol::extensions::{HarnessTerminal, VersionStream, SESSION_ID_VARIABLE};
 use axome_protocol::harness::{HarnessConnectionStatus, HarnessStatus};
 use axome_protocol::settings::{EffectiveSettings, HarnessSettings, PresetSettings};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 pub(crate) fn binary_override(value: Option<&str>) -> Option<&str> {

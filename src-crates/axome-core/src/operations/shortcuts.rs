@@ -1,7 +1,7 @@
 use crate::{errors::ApiError, services::settings::SettingsService, Host};
+use axome_protocol::settings::{SettingsFileResult, ShortcutsFilePayload};
 use serde_json::Value;
 use std::path::PathBuf;
-use axome_protocol::settings::{SettingsFileResult, ShortcutsFilePayload};
 
 const SHORTCUTS_FILE_TEMPLATE: &str =
     "{\n  \"version\": 1,\n  \"bindings\": [],\n  \"unboundCommands\": []\n}\n";

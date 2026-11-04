@@ -6,11 +6,11 @@ use super::queries::{
 use super::validators::actor;
 use super::{db_error, IssueService};
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 use std::path::Path;
-use axome_protocol::issues::*;
 use uuid::Uuid;
 
 impl IssueService {

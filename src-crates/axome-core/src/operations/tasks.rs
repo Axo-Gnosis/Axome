@@ -6,8 +6,8 @@ use crate::services::pty::{CompletedRunSink, PtySubscriber};
 use crate::services::runs::RunKind;
 use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
 use crate::services::shells;
-use std::sync::Arc;
 use axome_protocol::task::TaskDefinition;
+use std::sync::Arc;
 
 impl Host {
     /// Return the parsed task list for a folder. Idempotently wires up

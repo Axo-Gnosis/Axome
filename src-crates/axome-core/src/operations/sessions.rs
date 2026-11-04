@@ -10,13 +10,13 @@ use crate::services::omp;
 use crate::services::pty::{CompletedRunSink, PtyRunState, PtySubscriber};
 use crate::services::runs::RunKind;
 use crate::services::session_index::SourceId;
+use axome_protocol::session::SessionStartInfo;
 use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::SystemTime;
-use axome_protocol::session::SessionStartInfo;
 use tracing::{info, warn};
 
 impl Host {

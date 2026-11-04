@@ -1,3 +1,4 @@
+use axome_remote::Fingerprint;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -7,7 +8,6 @@ use std::{
     path::Path,
     str::FromStr,
 };
-use axome_remote::Fingerprint;
 use uuid::Uuid;
 
 const AUTHORIZED_KEYS: &str = "authorized_keys";

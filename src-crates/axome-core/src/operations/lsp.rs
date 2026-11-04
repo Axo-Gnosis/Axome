@@ -9,10 +9,10 @@ use crate::services::settings::SettingsService;
 use crate::services::settings_resolution::{
     lsp_config_record, resolve_effective_settings_for_folder_path,
 };
-use serde_json::Value;
-use std::path::{Path, PathBuf};
 use axome_protocol::lsp::{LspEvent, LspServerSettingsEntry};
 use axome_protocol::settings::{LspServerConfigRecord, LspServerSettings};
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 impl Host {
     pub fn lsp_list_servers(
@@ -159,8 +159,8 @@ fn normalize_root_path(project_path: &str, root_path: &str) -> Result<String, Ap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use axome_protocol::settings::LspTraceLevel;
+    use serde_json::json;
     use uuid::Uuid;
 
     fn temp_root(name: &str) -> PathBuf {

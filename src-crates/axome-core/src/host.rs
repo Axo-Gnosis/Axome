@@ -18,11 +18,11 @@ use crate::services::{
     settings_watcher::SettingsWatcherService,
     tasks::TaskService,
 };
+use axome_protocol::rpc::WorkbenchRun;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use axome_protocol::rpc::WorkbenchRun;
 
 /// Services and workflows executing on one development host. The embedding
 /// application supplies storage location, event delivery and lifetime policy.

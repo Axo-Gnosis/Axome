@@ -7,11 +7,11 @@ use super::validators::{
 };
 use super::{db_error, IssueService};
 use crate::errors::ApiError;
+use axome_protocol::issues::*;
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::json;
 use std::path::Path;
-use axome_protocol::issues::*;
 
 impl IssueService {
     /// Create an epic. Allocates the next id under the project's

@@ -11,7 +11,10 @@ export type GitError =
   | { kind: 'branchUnmerged'; branch: string; message: string }
   | { kind: 'dirtyWorktree'; message: string }
 
-export function isGitError<K extends GitError['kind']>(error: unknown, kind: K): error is Extract<GitError, { kind: K }> {
+export function isGitError<K extends GitError['kind']>(
+  error: unknown,
+  kind: K
+): error is Extract<GitError, { kind: K }> {
   return typeof error === 'object' && error !== null && 'kind' in error && error.kind === kind
 }
 
@@ -22,9 +25,10 @@ export async function withConflictMarkerConfirm(stage: (allow: boolean) => Promi
     return true
   } catch (error) {
     if (!isGitError(error, 'conflictMarkers')) throw error
-    const message = error.paths.length === 1
-      ? `Are you sure you want to stage ${basename(error.paths[0])} with merge conflicts?`
-      : `Are you sure you want to stage ${error.paths.length} files with merge conflicts?`
+    const message =
+      error.paths.length === 1
+        ? `Are you sure you want to stage ${basename(error.paths[0])} with merge conflicts?`
+        : `Are you sure you want to stage ${error.paths.length} files with merge conflicts?`
     const proceed = await confirmAsync({
       title: 'Stage With Conflicts?',
       message,

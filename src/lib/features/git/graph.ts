@@ -143,7 +143,7 @@ export function computeRowRender(row: GraphRow): RowRender {
           color: c
         })
       } else {
-          // Primary lane advances the output pointer only.
+        // Primary lane advances the output pointer only.
         outputIdx++
       }
     } else {

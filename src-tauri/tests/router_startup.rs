@@ -1,9 +1,9 @@
 mod common;
 
-use std::sync::Arc;
 use axome_core::{events::EventSink, Host};
 use axome_lib::host_events::DesktopEvent;
 use axome_lib::router::WorkspaceRouter;
+use std::sync::Arc;
 use tempfile::tempdir;
 
 /// Tauri builds the router inside `setup`, which runs on the main thread with

@@ -3,13 +3,13 @@ use super::{
     Target, WorkspaceRouter,
 };
 use crate::windows::WindowCoordinatorService;
-use std::sync::Arc;
 use axome_core::errors::ApiError;
 use axome_protocol::{
     branch::BranchSummary,
     git::{GitWorktreeCheckout, GitWorktreeList, GitWorktreeOp, GitWorktreeResult},
     rpc::Request,
 };
+use std::sync::Arc;
 
 fn qualify_inventory(server: &str, inventory: &mut GitWorktreeList) {
     inventory.common_dir = Target::remote_uri(server, &inventory.common_dir);

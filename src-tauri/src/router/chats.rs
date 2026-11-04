@@ -1,4 +1,10 @@
 use super::RouterInner;
+use axome_core::{errors::ApiError, events::EventSink, Host};
+use axome_protocol::{
+    chat::ChatEvent,
+    rpc::{ChatDown, Open, WireError},
+};
+use axome_remote::wire::read_frame;
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -8,12 +14,6 @@ use std::{
     },
     time::Duration,
 };
-use axome_core::{errors::ApiError, events::EventSink, Host};
-use axome_protocol::{
-    chat::ChatEvent,
-    rpc::{ChatDown, Open, WireError},
-};
-use axome_remote::wire::read_frame;
 use tokio::task::JoinHandle;
 
 pub(crate) struct ChatAttachments {
