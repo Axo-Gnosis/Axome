@@ -3,6 +3,7 @@
   import { formatCount } from '$lib/features/chat/format'
   import type { ToolStep } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
+  import { openLink } from '$lib/features/workbench/links/openLink'
   import { bashOutput } from './bashOutput'
   import MoreButton from './MoreButton.svelte'
   import TerminalOutput from './TerminalOutput.svelte'
@@ -12,12 +13,14 @@
     call,
     view,
     onExpand,
-    onOpenLocation
+    folderPath,
+    sessionId
   }: {
     call: ToolStep
     view: BlockView
     onExpand: () => void
-    onOpenLocation: (path: string, line?: number) => void
+    folderPath: string
+    sessionId: string | null
   } = $props()
 
   const output = $derived(bashOutput(call, view === 'preview' ? 12 : null))
@@ -46,7 +49,7 @@
     {:else}
       <div class="font-mono text-xs text-subtle">{running ? 'Running · No output yet' : 'No output'}</div>
     {/if}
-    {#if output.fullOutputPath}
+    {#if output.fullOutput}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
         <span>{noticeSummary}</span>
         <Button
@@ -54,8 +57,8 @@
           variant="text"
           size="xs"
           class="px-0 font-normal"
-          title={output.fullOutputPath}
-          onclick={() => onOpenLocation(output.fullOutputPath!)}>Open Full Output</Button
+          title={output.fullOutput}
+          onclick={() => void openLink(output.fullOutput!, { folderPath, sessionId })}>Open Full Output</Button
         >
       </div>
     {/if}

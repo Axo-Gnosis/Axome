@@ -51,3 +51,4 @@ by remote webviews as `text/plain`.
 - `adapters/file-tree.svelte.ts`: file explorer source + folder/root targets with delayed expand.
 - `adapters/git.svelte.ts`: git change drag sources + staged/unstaged drop zones.
 - `adapters/terminal.svelte.ts`: terminal drops (file paths + image temp-save path insert).
+- `adapters/prompt-input.ts`: chat composer drops (explorer files and OS files become chips).

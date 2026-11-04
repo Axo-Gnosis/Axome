@@ -11,6 +11,11 @@ export interface ParsedLinkTarget {
 
 const SCHEME_REGEX = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(.*)$/
 
+/** A literal `<scheme>://…` URL as tools and chips carry it: no sanitizing, no mailto/tel special cases. */
+export function isSchemeUrl(value: string): boolean {
+  return SCHEME_REGEX.test(value)
+}
+
 /**
  * Strip surrounding quotes, backticks, parens, brackets from raw terminal or markdown token.
  */

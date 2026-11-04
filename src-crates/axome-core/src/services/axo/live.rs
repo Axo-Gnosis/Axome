@@ -8,9 +8,9 @@ use axo::store::{Entry, EntryId, SeqEntry, SubmissionKind};
 use axo::{LiveSnapshot, MaintenanceKind, PromptRequest, SessionEvent};
 use axo_agent::{AgentEvent, AgentMessage};
 use axo_ai::{AssistantBlock, AssistantEvent, Message};
-use parking_lot::Mutex;
 use axome_protocol::chat::*;
-use tokio::sync::{broadcast, oneshot};
+use parking_lot::Mutex;
+use tokio::sync::{broadcast, oneshot, watch};
 
 use super::{axo_error, convert, AxoService};
 use crate::{errors::ApiError, events::EventSink};
@@ -22,6 +22,8 @@ pub(crate) struct LiveSession {
     service: Weak<AxoService>,
     state: Mutex<RelayState>,
     relay: OnceLock<tokio::task::AbortHandle>,
+    tasks: tokio_util::task::TaskTracker,
+    maintenance_starts: watch::Sender<u64>,
 }
 
 struct RelayState {
@@ -281,7 +283,7 @@ impl RelayState {
                     Entry::Submission {
                         submission_id,
                         kind,
-                        content,
+                        parts,
                         request_id,
                         ..
                     } => {
@@ -299,7 +301,7 @@ impl RelayState {
                             self.queue_ids.push(submission_id.clone());
                             self.live.queue.push(ChatQueued {
                                 kind,
-                                text: convert::text(content),
+                                parts: convert::parts_to_wire(parts),
                             });
                         }
                         if !self.submitted {
@@ -333,7 +335,8 @@ impl RelayState {
                                 .live
                                 .tools
                                 .retain(|run| run.call_id != result.tool_call_id),
-                            _ => {}
+                            AgentMessage::Llm(Message::User(_) | Message::System(_))
+                            | AgentMessage::Custom(_) => {}
                         }
                     }
                     Entry::ModelChange { .. } | Entry::ThinkingLevelChange { .. }
@@ -359,7 +362,17 @@ impl RelayState {
                         self.live.title = convert::title(&self.entries);
                         refresh = true;
                     }
-                    _ => {}
+                    Entry::ModelChange { .. }
+                    | Entry::ThinkingLevelChange { .. }
+                    | Entry::Usage { .. }
+                    | Entry::Compaction { .. }
+                    | Entry::BranchSummary { .. }
+                    | Entry::Custom { .. }
+                    | Entry::CustomMessage { .. }
+                    | Entry::ContextEdit { .. }
+                    | Entry::Label { .. }
+                    | Entry::Leaf { .. }
+                    | Entry::Unknown(_) => {}
                 }
                 if !linear {
                     let (model, thinking) = convert::selection(&self.entries, &self.path);
@@ -445,7 +458,7 @@ impl RelayState {
                 self.live.retry = Some(ChatRetry { attempt, delay_ms });
                 changed = true;
             }
-            _ => {}
+            SessionEvent::Agent(_) => {}
         }
         if changed {
             self.broadcast_live();
@@ -462,14 +475,11 @@ impl LiveSession {
     ) -> Arc<Self> {
         let id = session.id().to_owned();
         let attach = session.attach(None).await;
-        let mut commands = vec![ChatCommand {
-            name: "compact".into(),
-            description: "Summarize older history to free context".into(),
-        }];
-        commands.extend(session.skills().iter().map(|skill| ChatCommand {
-            name: skill.name.clone(),
-            description: skill.description.clone(),
-        }));
+        let commands = session
+            .commands()
+            .into_iter()
+            .map(convert::command)
+            .collect();
         let live = Arc::new(Self {
             id,
             folder,
@@ -482,10 +492,12 @@ impl LiveSession {
                 &service,
             )),
             relay: OnceLock::new(),
+            tasks: tokio_util::task::TaskTracker::new(),
+            maintenance_starts: watch::channel(0).0,
         });
         let weak = Arc::downgrade(&live);
         let session = live.session.clone();
-        let relay = tokio::spawn(async move {
+        let relay = live.tasks.spawn(async move {
             let mut events = attach.events;
             loop {
                 match events.recv().await {
@@ -493,8 +505,12 @@ impl LiveSession {
                         let Some(live) = weak.upgrade() else {
                             break;
                         };
+                        let started = matches!(event, SessionEvent::MaintenanceStart { .. });
                         let (refresh, unload) =
                             live.state.lock().apply(event, &live.id, &live.service);
+                        if started {
+                            live.maintenance_starts.send_modify(|starts| *starts += 1);
+                        }
                         if let Some(service) = live.service.upgrade() {
                             if refresh {
                                 service.schedule_refresh(&live.folder);
@@ -510,7 +526,7 @@ impl LiveSession {
                         };
                         let last_seq = live.state.lock().entries.last().map(|seq| seq.seq);
                         let attach = session.attach(last_seq).await;
-                        {
+                        let maintaining = {
                             let mut state = live.state.lock();
                             state.entries.extend(attach.missed);
                             let entries = std::mem::take(&mut state.entries);
@@ -534,8 +550,13 @@ impl LiveSession {
                                     }
                                 }
                             }
+                            let maintaining = rebuilt.live.maintenance.is_some();
                             *state = rebuilt;
                             state.broadcast_snapshot(&live.id);
+                            maintaining
+                        };
+                        if maintaining {
+                            live.maintenance_starts.send_modify(|starts| *starts += 1);
                         }
                         events = attach.events;
                         if let Some(service) = live.service.upgrade() {
@@ -555,6 +576,15 @@ impl LiveSession {
         if let Some(relay) = self.relay.get() {
             relay.abort();
         }
+    }
+
+    pub(super) async fn shutdown(&self) {
+        self.abort_relay();
+        self.session.shutdown().await;
+        // Shutdown settles the run; the relay and prompt drivers must also release
+        // their Session Arcs before the retirement barrier permits reopening its file.
+        self.tasks.close();
+        self.tasks.wait().await;
     }
 
     pub(super) fn subscribe(
@@ -585,10 +615,6 @@ impl LiveSession {
             && state.live.maintenance.is_none()
             && state.live.questions.is_empty()
     }
-    pub(super) fn busy(&self) -> bool {
-        let state = self.state.lock();
-        state.live.running || state.live.maintenance.is_some()
-    }
     pub(super) fn broadcast_closed(&self, message: String) {
         self.state.lock().broadcast(ChatEvent::Closed {
             message,
@@ -596,11 +622,30 @@ impl LiveSession {
         });
     }
 
+    /// Resolves when the command finishes or when the maintenance run it starts begins; that
+    /// run's later failure reaches attachments as `ChatEvent::Notice` via `MaintenanceEnd`.
+    pub(super) async fn run_command(&self, command: axo::Command) -> Result<(), ApiError> {
+        let mut started = self.maintenance_starts.subscribe();
+        let session = self.session.clone();
+        let mut done = self
+            .tasks
+            .spawn(async move { session.run_command(command).await });
+        // ponytail: another attachment's maintenance starting in the same instant also resolves this early, dropping this command's Busy error.
+        tokio::select! {
+            biased;
+            result = &mut done => result
+                .map_err(|error| ApiError::Internal(format!("axo command task failed: {error}")))?
+                .map_err(axo_error),
+            Ok(()) = started.changed() => Ok(()),
+        }
+    }
+
     pub(super) async fn prompt(
         self: &Arc<Self>,
         request_id: String,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
+        let input = convert::parts_from_wire(parts)?;
         let (submitted, mut submission) = oneshot::channel();
         self.state
             .lock()
@@ -609,13 +654,13 @@ impl LiveSession {
         let (mut done, mut settled) = oneshot::channel();
         let live = self.clone();
         let driver_request_id = request_id.clone();
-        tokio::spawn(async move {
+        self.tasks.spawn(async move {
             let session = live.session.clone();
             let submitted_request_id = driver_request_id.clone();
             let mut driver = tokio::spawn(async move {
                 session
                     .prompt_with(PromptRequest {
-                        text,
+                        input,
                         request_id: Some(submitted_request_id),
                     })
                     .await

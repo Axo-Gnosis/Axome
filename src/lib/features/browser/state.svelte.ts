@@ -22,17 +22,23 @@ export interface NavigateBrowserRequest {
   replaceTabId?: TabId
 }
 
-export interface SelectFolderBrowserRequest {
-  kind: 'select-folder'
+export interface SelectBrowserRequest {
+  /** `select-file` lists files too; the folder being browsed can still be chosen whole. */
+  kind: 'select-folder' | 'select-file'
   /** Start browsing here and keep selection on this path's host. */
   path: string
   server: string | null
 }
 
-export type BrowserRequest = NavigateBrowserRequest | SelectFolderBrowserRequest
+export type BrowserRequest = NavigateBrowserRequest | SelectBrowserRequest
+export type BrowserSelection = { path: string; folder: boolean }
+
+export function isSelection(request: BrowserRequest): request is SelectBrowserRequest {
+  return request.kind === 'select-folder' || request.kind === 'select-file'
+}
 
 let request = $state<BrowserRequest | null>(null)
-let resolveSelection: ((path: string | null) => void) | null = null
+let resolveSelection: ((selection: BrowserSelection | null) => void) | null = null
 let selectionFocus: HTMLElement | null = null
 
 export function isBrowserOpen(): boolean {
@@ -51,27 +57,32 @@ export function openBrowser(options: NavigateBrowserRequest = {}): void {
   request = { ...options, replaceTabId }
 }
 
-/** Choose an existing folder without dismissing the dialog that requested it. */
-export function selectFolder(options: { path: string }): Promise<string | null> {
+function select(kind: SelectBrowserRequest['kind'], path: string): Promise<BrowserSelection | null> {
   closeBrowser()
   selectionFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  const { promise, resolve } = Promise.withResolvers<string | null>()
+  const { promise, resolve } = Promise.withResolvers<BrowserSelection | null>()
   resolveSelection = resolve
-  request = {
-    kind: 'select-folder',
-    path: options.path,
-    server: splitRemotePath(options.path)?.server ?? null
-  }
+  request = { kind, path, server: splitRemotePath(path)?.server ?? null }
   return promise
 }
 
-function finishSelection(path: string | null): void {
+/** Choose an existing folder without dismissing the dialog that requested it. */
+export async function selectFolder(options: { path: string }): Promise<string | null> {
+  return (await select('select-folder', options.path))?.path ?? null
+}
+
+/** Choose a file, or a whole folder, on `path`'s host. */
+export function selectFile(options: { path: string }): Promise<BrowserSelection | null> {
+  return select('select-file', options.path)
+}
+
+function finishSelection(selection: BrowserSelection | null): void {
   const resolve = resolveSelection
   const focusTarget = selectionFocus
   resolveSelection = null
   selectionFocus = null
   request = null
-  resolve?.(path)
+  resolve?.(selection)
   if (focusTarget) {
     // The awaiting dialog re-enables its fields after settlement, before focus returns.
     void tick().then(() => {
@@ -85,17 +96,19 @@ export function closeBrowser(): void {
 }
 
 /** All selection gestures canonicalize here; a replaced or cancelled request stays settled. */
-export async function completeFolderSelection(path: string, opening: SelectFolderBrowserRequest): Promise<void> {
+export async function completeSelection(path: string, folder: boolean, opening: SelectBrowserRequest): Promise<void> {
   if (request !== opening) return
   if ((splitRemotePath(path)?.server ?? null) !== opening.server) {
     throw new Error('Select a folder on the initiating host.')
   }
+  // Files come from listing an already resolved folder.
+  if (!folder) return finishSelection({ path, folder })
   const resolved = await backend.folders.resolve(path)
   if (request !== opening) return
   if ((splitRemotePath(resolved.path)?.server ?? null) !== opening.server) {
     throw new Error('Select a folder on the initiating host.')
   }
-  finishSelection(resolved.path)
+  finishSelection({ path: resolved.path, folder })
 }
 
 /** Title-bar folder button: toggles browsing inside `path`. */

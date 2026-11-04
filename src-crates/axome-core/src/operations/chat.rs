@@ -1,5 +1,7 @@
 use crate::{errors::ApiError, events::EventSink, services::folders::resolve_folder, Host};
-use axome_protocol::chat::{ChatAnswer, ChatEvent, ChatForkInfo, ChatModelCatalog, ChatThinking};
+use axome_protocol::chat::{
+    ChatAnswer, ChatEvent, ChatForkInfo, ChatLinkTarget, ChatModelCatalog, ChatPart, ChatThinking,
+};
 
 impl Host {
     pub fn chat_models(&self, folder_path: String) -> Result<ChatModelCatalog, ApiError> {
@@ -25,36 +27,36 @@ impl Host {
         folder_path: String,
         session_id: String,
         request_id: String,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         self.axo.bind_runtime();
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.prompt(&folder, &session_id, request_id, text))?
+            .block_on(self.axo.prompt(&folder, &session_id, request_id, parts))?
     }
 
     pub fn chat_steer(
         &self,
         folder_path: String,
         session_id: String,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         self.axo.bind_runtime();
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.steer(&folder, &session_id, text))?
+            .block_on(self.axo.steer(&folder, &session_id, parts))?
     }
 
     pub fn chat_follow_up(
         &self,
         folder_path: String,
         session_id: String,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         self.axo.bind_runtime();
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.follow_up(&folder, &session_id, text))?
+            .block_on(self.axo.follow_up(&folder, &session_id, parts))?
     }
 
     pub fn chat_abort(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
@@ -88,34 +90,29 @@ impl Host {
             .block_on(self.axo.dismiss(&folder, &session_id, call_id))?
     }
 
-    pub fn chat_set_model(
+    pub fn chat_run_command(
         &self,
         folder_path: String,
         session_id: String,
-        model: String,
+        name: String,
+        args: serde_json::Value,
     ) -> Result<(), ApiError> {
         self.axo.bind_runtime();
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.set_model(&folder, &session_id, model))?
+            .block_on(self.axo.run_command(&folder, &session_id, name, args))?
     }
 
-    pub fn chat_set_thinking(
+    pub fn chat_resolve_link(
         &self,
         folder_path: String,
         session_id: String,
-        thinking: ChatThinking,
-    ) -> Result<(), ApiError> {
+        url: String,
+    ) -> Result<ChatLinkTarget, ApiError> {
         self.axo.bind_runtime();
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.set_thinking(&folder, &session_id, thinking))?
-    }
-
-    pub fn chat_compact(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
-        self.axo.bind_runtime();
-        let folder = resolve_folder(&folder_path)?;
-        self.axo.block_on(self.axo.compact(&folder, &session_id))?
+            .block_on(self.axo.resolve_link(&folder, &session_id, url))?
     }
 
     pub fn chat_navigate(

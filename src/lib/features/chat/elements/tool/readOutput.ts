@@ -1,5 +1,6 @@
 import type { ChatContent } from '$lib/types/backend'
 import type { ToolStep } from '../../turns'
+import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
 import { coversBody, pathText, record, truncation } from './payload'
 
 export type ReadOutput = {
@@ -24,11 +25,12 @@ export function readStartLine(arguments_: unknown): number | undefined {
   return Number.isSafeInteger(start) ? start : undefined
 }
 
-/** The read ledger records the resolved path, including backend path normalization. */
+/** Preserve session-owned URLs; plain paths use the ledger's backend normalization. */
 export function readPath(call: ToolStep): string | null {
+  const path = record(call.arguments).path
+  if (pathText(path) && isSchemeUrl(path)) return path
   const ledger = record(record(call.result?.details).ledger)
   if (ledger.access === 'read' && pathText(ledger.path)) return ledger.path
-  const path = record(call.arguments).path
   return pathText(path) ? path : null
 }
 

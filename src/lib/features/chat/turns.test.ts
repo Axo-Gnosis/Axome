@@ -18,7 +18,12 @@ const live: ChatLive = {
 function entry(id: string, body: ChatEntryBody): ChatEntry {
   return { id, timestamp: '2026-01-01T00:00:00Z', body }
 }
-const user = entry('user:1', { kind: 'user', text: 'Do the work', anchor: null, siblings: ['user:1'] })
+const user = entry('user:1', {
+  kind: 'user',
+  parts: [{ type: 'text', text: 'Do the work' }],
+  anchor: null,
+  siblings: ['user:1']
+})
 const thought = { type: 'thinking', text: 'Thinking', redacted: false } as const
 const message = entry('answer', {
   kind: 'assistant',
@@ -136,7 +141,7 @@ test('leading content has no fabricated user and leading model selections are dr
   assert.equal(turns[1].id, user.id)
 })
 
-test('turn settings retain unchanged reasoning and ignore later picker changes', () => {
+test('turn settings retain unchanged reasoning; later picker changes are command rows, not config', () => {
   const thinking = (id: string, level: 'low' | 'medium' | 'high') =>
     entry(id, { kind: 'thinkingChange', thinking: level })
   const turns = transcriptTurns(
@@ -162,7 +167,10 @@ test('turn settings retain unchanged reasoning and ignore later picker changes',
       { model: null, thinking: 'high' }
     ]
   )
-  assert.ok(turns.every((turn) => turn.steps.every((step) => step.kind === 'text')))
+  assert.deepEqual(
+    turns.map((turn) => turn.steps.map((step) => step.kind)),
+    [['text', 'thinkingChange', 'thinkingChange'], ['thinkingChange', 'thinkingChange'], []]
+  )
 })
 
 test('assistant settings reflect recorded reasoning, including off and mid-turn changes', () => {
@@ -214,4 +222,22 @@ test('duration uses entry timestamps when finished and the clock while running',
   assert.equal(turnDurationMs({ ...turn, endedAt: null }, Date.now()), null)
   const [userOnly] = transcriptTurns([user], null, live)
   assert.equal(userOnly.endedAt, null)
+})
+
+test('later config and maintenance entries join the turn without extending its duration', () => {
+  const endedAt = '2026-01-01T00:00:12Z'
+  const [turn] = transcriptTurns(
+    [
+      user,
+      { ...message, timestamp: endedAt },
+      { ...end, timestamp: endedAt },
+      { id: 'model', timestamp: '2026-01-01T01:00:00Z', body: { kind: 'modelChange', model: 'x/y' } },
+      { id: 'compact', timestamp: '2026-01-01T01:00:05Z', body: { kind: 'compaction', summary: 's', tokensBefore: 1 } }
+    ],
+    null,
+    live
+  )
+  assert.equal(turn.endedAt, endedAt)
+  assert.equal(turnDurationMs(turn, Date.parse(endedAt) + 5000), 12_000)
+  assert.ok(turn.steps.some((step) => step.kind === 'modelChange'))
 })

@@ -53,14 +53,16 @@
   import {
     localHostLabel,
     closeBrowser,
-    completeFolderSelection,
+    completeSelection,
     getBrowserRequest,
     goToFolder,
-    goToWorkbench
+    goToWorkbench,
+    isSelection
   } from './state.svelte'
 
   type Location = { key: string; label: string; detail: string; section: string } & (
     | { kind: 'folder'; path: string }
+    | { kind: 'file'; path: string }
     | { kind: 'workbench'; workbench: WorkbenchInfo; server?: string }
     | { kind: 'server'; server: string | null; state: ServerState }
     | { kind: 'manage' }
@@ -74,8 +76,10 @@
   const folderLoad = createTrackedAsyncLoad<string | null>()
   const previewLoad = createTrackedAsyncLoad<string | null>()
   let request = $derived(getBrowserRequest())
-  let selection = $derived(request?.kind === 'select-folder' ? request : null)
-  let replaceTabId = $derived(request?.kind === 'select-folder' ? undefined : request?.replaceTabId)
+  let selection = $derived(request && isSelection(request) ? request : null)
+  // Picking a file lists files beside folders; Enter browses folders and Ctrl+Enter picks the open one.
+  let pickingFiles = $derived(selection?.kind === 'select-file')
+  let replaceTabId = $derived(request && !isSelection(request) ? request.replaceTabId : undefined)
   let open = $derived(request !== null)
   let input = $state<HTMLInputElement | null>(null)
   let list = $state<HTMLDivElement | null>(null)
@@ -173,12 +177,25 @@
         ]
   )
   let rows = $derived.by<Location[]>(() => {
+    const listed = entriesPath === path ? entries : []
     const source =
       path === null
         ? locations
-        : entriesPath === path
-          ? entries.filter((entry) => entry.is_dir).map((entry) => folderLocation(entry.path, 'Folders'))
-          : []
+        : [
+            ...listed.filter((entry) => entry.is_dir).map((entry) => folderLocation(entry.path, 'Folders')),
+            ...(pickingFiles
+              ? listed
+                  .filter((entry) => !entry.is_dir)
+                  .map((entry): Location => ({
+                    key: `file:${entry.path}`,
+                    kind: 'file',
+                    section: 'Files',
+                    path: entry.path,
+                    label: entry.name,
+                    detail: ''
+                  }))
+              : [])
+          ]
     return source.filter((row) => {
       if (row.kind === 'folder' && !isPinnedHost(row.path)) return false
       if (editing && parsed?.servers && row.kind !== 'server') return false
@@ -231,17 +248,17 @@
     focusSearch()
   }
 
-  async function completeFolder(folderPath: string): Promise<void> {
+  async function complete(chosen: string, folder = true): Promise<void> {
     const opening = request
     if (!opening || choosingFolder || systemPickerOpen) return
-    if (opening.kind !== 'select-folder') {
-      await goToFolder(folderPath, opening.replaceTabId)
+    if (!isSelection(opening)) {
+      await goToFolder(chosen, opening.replaceTabId)
       return
     }
     choosingFolder = true
     pathError = null
     try {
-      await completeFolderSelection(folderPath, opening)
+      await completeSelection(chosen, folder, opening)
     } catch (error) {
       if (opening === request) pathError = getErrorMessage(error)
     } finally {
@@ -253,7 +270,7 @@
     const opening = request
     const native = platform.native
     if (!opening || !native || currentServer !== null || choosingFolder || systemPickerOpen) return
-    if (opening.kind !== 'select-folder') {
+    if (!isSelection(opening)) {
       closeBrowser()
       await openFolderPicker(opening.replaceTabId)
       return
@@ -264,7 +281,7 @@
       const chosen = await native.dialogs.selectDirectory()
       if (opening !== request) return
       systemPickerOpen = false
-      if (chosen) await completeFolder(chosen)
+      if (chosen) await complete(chosen)
       else closeBrowser()
     } catch (error) {
       if (opening === request) pathError = getErrorMessage(error)
@@ -308,11 +325,14 @@
   }
 
   function activate(row: Location, drill = false): void {
-    if (selection && row.kind !== 'folder') return
+    if (selection && row.kind !== 'folder' && row.kind !== 'file') return
     switch (row.kind) {
       case 'folder':
-        if (drill) browse(row.path)
-        else void completeFolder(row.path)
+        if (drill || pickingFiles) browse(row.path)
+        else void complete(row.path)
+        break
+      case 'file':
+        if (!drill) void complete(row.path, false)
         break
       case 'server':
         void enterServer(row.server)
@@ -438,7 +458,8 @@
         ? 'Enter an absolute path or ~ on the initiating host.'
         : 'Enter an absolute path, ~, or axome://server/path.'
     } else if (!parsed.servers && !parsed.leaf && path) {
-      if (entriesPath === path) void completeFolder(path)
+      if (pickingFiles) return
+      if (entriesPath === path) void complete(path)
       else pathError = folderError ?? 'Still loading this folder.'
     } else if (selected) {
       activate(selected)
@@ -462,10 +483,10 @@
     } else if (key === 'Enter') {
       event.preventDefault()
       event.stopPropagation()
-      if (event.ctrlKey && path) void completeFolder(path)
+      if (event.ctrlKey && path) void complete(path)
       else if (editing) submitLocation()
       else if (selected) activate(selected)
-      else if (selection && path) void completeFolder(path)
+      else if (selection?.kind === 'select-folder' && path) void complete(path)
     } else if (key === 'Escape' && editing) {
       event.preventDefault()
       event.stopPropagation()
@@ -510,7 +531,7 @@
       choosingFolder = false
       systemPickerOpen = false
       if (!opening) return
-      if (opening.kind === 'select-folder') browse(opening.path)
+      if (isSelection(opening)) browse(opening.path)
       else {
         showLocations()
         if (opening.server !== undefined) void enterServer(opening.server)
@@ -575,6 +596,7 @@
 {#snippet locationIcon(row: Location)}
   {#if row.kind === 'folder'}
     <FileIcon filename={row.label} folder expanded={selected?.key === row.key} size={16} />
+  {:else if row.kind === 'file'}<FileIcon filename={row.label} size={16} />
   {:else if row.kind === 'workbench'}<Icon icon={Layers01Icon} />
   {:else if row.kind === 'server'}
     {#if row.server}<Icon icon={ServerIcon} />{:else}<Icon icon={MonitorIcon} />{/if}
@@ -588,7 +610,7 @@
     onOpenChange={(value) => {
       if (!value) closeBrowser()
     }}
-    label={selection ? 'Select Folder' : 'Open Folder'}
+    label={pickingFiles ? 'Select File' : selection ? 'Select Folder' : 'Open Folder'}
     onkeydown={handleKey}
     onOpenAutoFocus={(event) => {
       event.preventDefault()
@@ -605,7 +627,7 @@
           aria-label={editing
             ? 'Location'
             : path
-              ? 'Filter folders or enter a path'
+              ? `Filter ${pickingFiles ? 'files' : 'folders'} or enter a path`
               : 'Search locations or enter a path'}
           aria-expanded={true}
           aria-controls={`${id}-locations`}
@@ -615,7 +637,7 @@
           placeholder={editing
             ? 'Enter a path…'
             : path
-              ? 'Filter folders or enter a path…'
+              ? `Filter ${pickingFiles ? 'files' : 'folders'} or enter a path…`
               : 'Search locations or enter a path…'}
           spellcheck={false}
           autocomplete="off"
@@ -650,7 +672,7 @@
         </IconButton>
         <IconButton
           size="md"
-          tooltip={showHidden ? 'Hide Hidden Folders' : 'Show Hidden Folders'}
+          tooltip={`${showHidden ? 'Hide' : 'Show'} Hidden ${pickingFiles ? 'Files' : 'Folders'}`}
           active={showHidden}
           onclick={() => {
             showHidden = !showHidden
@@ -662,12 +684,12 @@
           variant={selection ? 'accent' : 'ghost'}
           size="xs"
           disabled={choosingFolder || systemPickerOpen}
-          onclick={() => path && void completeFolder(path)}
+          onclick={() => path && void complete(path)}
           title={selection ? 'Select this folder (Ctrl+Enter)' : 'Open this folder (Ctrl+Enter)'}
           >{selection ? 'Select Folder' : 'Open Folder'}</Button
         >
       {/if}
-      {#if platform.native && currentServer === null}
+      {#if platform.native && currentServer === null && !pickingFiles}
         <IconButton
           size="md"
           tooltip={selection ? 'Select with System Dialog' : 'Open with System Dialog'}
@@ -709,11 +731,11 @@
             onpointermove={(event) => pointerSelect(event, row)}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => {
-              if (selection && row.kind === 'folder') selectedKey = row.key
+              if (selection && (row.kind === 'folder' || row.kind === 'file')) selectedKey = row.key
               else activate(row, row.kind === 'folder')
             }}
             ondblclick={() => {
-              if (selection && row.kind === 'folder') void completeFolder(row.path)
+              if (selection && (row.kind === 'folder' || row.kind === 'file')) activate(row)
             }}
           >
             {@render locationIcon(row)}
@@ -733,8 +755,8 @@
           <div class="px-2 py-6 text-center text-sm text-muted" role="status">
             {#if folderError}<span class="text-danger">{folderError}</span>
             {:else if folderLoad.loading}Loading…
-            {:else if term}No matching {path ? 'folders' : 'locations'}.
-            {:else}No folders.{/if}
+            {:else if term}No matching {path ? (pickingFiles ? 'entries' : 'folders') : 'locations'}.
+            {:else}{pickingFiles ? 'Empty folder.' : 'No folders.'}{/if}
           </div>
         {/each}
       </div>
@@ -749,7 +771,7 @@
           {#if previewError}<p class="px-2 py-2 text-sm text-danger">{previewError}</p>
           {:else if previewLoad.loading}<p class="px-2 py-2 text-sm text-muted">Loading…</p>
           {:else if visiblePreview.length === 0}<p class="px-2 py-2 text-sm text-subtle">
-              {selectedPath ? 'Empty folder.' : 'Select a folder.'}
+              {selectedPath ? 'Empty folder.' : selected?.kind === 'file' ? 'No preview.' : 'Select a folder.'}
             </p>
           {:else}
             {#each visiblePreview as entry (entry.path)}
@@ -785,8 +807,17 @@
           >navigate</span
         >
         <span class="flex items-center gap-1.5"
-          ><Kbd>Enter</Kbd>{selection ? 'select' : selected?.kind === 'server' ? 'browse' : 'open'}</span
+          ><Kbd>Enter</Kbd>{pickingFiles && selected?.kind === 'folder'
+            ? 'browse'
+            : selection
+              ? 'select'
+              : selected?.kind === 'server'
+                ? 'browse'
+                : 'open'}</span
         >
+        {#if pickingFiles && path}
+          <span class="flex items-center gap-1.5"><Kbd>Ctrl+Enter</Kbd>select folder</span>
+        {/if}
         {#if editing}
           <span class="flex items-center gap-1.5"><Kbd>Tab</Kbd>complete</span>
         {:else}

@@ -14,12 +14,14 @@
     thought,
     view,
     onView,
-    folderPath
+    folderPath,
+    sessionId
   }: {
     thought: ThoughtStep
     view: BlockView
     onView: (stepId: string, view: BlockView) => void
     folderPath: string
+    sessionId: string | null
   } = $props()
   const text = $derived(thought.text)
   const line = $derived(text.replace(/\s+/g, ' ').trim())
@@ -77,6 +79,7 @@
         {text}
         streaming={thought.streaming}
         {folderPath}
+        {sessionId}
         class="gap-1.5 [&_.markdown-body]:font-mono! [&_.markdown-body]:text-xs! [&_.markdown-body]:leading-normal! [&_.markdown-body]:text-muted! [&_.markdown-body]:italic! [&_.markdown-body>:first-child]:mt-0! [&_.markdown-body>:last-child]:mb-0!"
       />
     </div>

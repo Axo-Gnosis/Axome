@@ -24,6 +24,8 @@ pub struct ChatModel {
     /// Supported levels, lowest first; `[Off]` without reasoning.
     pub thinking: Vec<ChatThinking>,
     pub context_window: u64,
+    /// Accepts image input; text-only models get placeholders for images.
+    pub images: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -50,6 +52,42 @@ pub enum ChatContent {
         mime_type: String,
         /// Base64-encoded image bytes.
         data: String,
+    },
+}
+
+/// Most decoded Content bytes one message may carry; mirrored by CONTENT_LIMIT in src/lib/features/chat/parts/parts.ts.
+pub const MAX_CONTENT_BYTES: usize = 20 * 1024 * 1024;
+
+/// One part of a user message, mirroring `axo::PromptPart` field for field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatPart {
+    Text {
+        text: String,
+    },
+    /// Pasted text; reaches the model like `Text`, drawn collapsed.
+    Paste {
+        text: String,
+    },
+    /// A file or directory reference: relative to the session cwd, absolute, `~`, or a scheme URL.
+    File {
+        path: String,
+    },
+    /// Bytes handed over (a pasted image, a file from outside the project). Input only:
+    /// axo saves them under `local://` and stores `Saved` instead.
+    Content {
+        name: String,
+        /// Base64-encoded bytes.
+        bytes: String,
+    },
+    /// A file axo saved from `Content`.
+    Saved {
+        url: String,
+        image: bool,
     },
 }
 
@@ -125,7 +163,7 @@ pub enum ChatEntryBody {
     /// `anchor`: where an edit of this message branches from (`None` = session start).
     /// `siblings`: ids of every user message with the same anchor (itself included), oldest first.
     User {
-        text: String,
+        parts: Vec<ChatPart>,
         anchor: Option<String>,
         siblings: Vec<String>,
     },
@@ -163,6 +201,10 @@ pub enum ChatEntryBody {
     BranchSummary {
         summary: String,
     },
+    /// Blocks moved out of context into recoverable `artifact://` files (`/shake`, clearing).
+    ContextMoved {
+        blocks: u32,
+    },
     RunEnd {
         outcome: ChatRunOutcome,
         reason: Option<String>,
@@ -198,7 +240,7 @@ pub enum ChatQueueKind {
 #[serde(rename_all = "camelCase")]
 pub struct ChatQueued {
     pub kind: ChatQueueKind,
-    pub text: String,
+    pub parts: Vec<ChatPart>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -272,11 +314,40 @@ pub struct ChatLive {
     pub stats: ChatStats,
 }
 
+/// When a built-in may run, mirroring `axo::CommandPolicy`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatCommandPolicy {
+    /// Runs during a turn; takes effect from the next request.
+    Alongside,
+    /// Busy while a turn runs.
+    WhenIdle,
+    /// A skill: prompt text, sent through prompt, steer or follow-up.
+    Queued,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatCommandKind {
+    /// `parameters`: inlined JSON Schema object; `format: "model" | "entry"` mark semantic strings.
+    Builtin { parameters: serde_json::Value },
+    /// One free-text argument.
+    Skill { argument_hint: Option<String> },
+}
+
+/// One entry of the session's command catalog, mirroring `axo::CommandInfo` JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatCommand {
     pub name: String,
     pub description: String,
+    pub policy: ChatCommandPolicy,
+    #[serde(flatten)]
+    pub kind: ChatCommandKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -354,5 +425,22 @@ pub enum ChatEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ChatForkInfo {
     pub session_id: String,
-    pub editable_text: Option<String>,
+    /// The forked user message's parts, for the composer to edit and resubmit.
+    pub editable: Option<Vec<ChatPart>>,
+}
+
+/// What a scheme URL shown in a chat names, resolved against the chat's session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatLinkTarget {
+    /// A file or directory on the session's host (daemon-absolute for remote folders).
+    File { path: String, is_dir: bool },
+    /// Text a host scheme renders itself.
+    Virtual { text: String },
+    /// Not a scheme this session registers.
+    Unhandled,
 }

@@ -1,6 +1,7 @@
 import type { ToolStep } from '../../turns'
 import type { ChatContent } from '$lib/types/backend'
 import { coversBody, integer, pathText, record, truncation } from './payload'
+import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
 
 export type SearchLine = { text: string; link?: { path: string; line?: number; length: number } }
 type SearchPart = { type: 'text'; lines: SearchLine[]; suffix: string } | Extract<ChatContent, { type: 'image' }>
@@ -8,8 +9,8 @@ export type SearchOutputModel = { parts: SearchPart[]; hidden: number }
 
 const relativePath = (value: string): boolean =>
   pathText(value) &&
-  !value.startsWith('/') &&
-  !value.split('/').some((part) => part === '.' || part === '..' || part === '')
+  (isSchemeUrl(value) ||
+    (!value.startsWith('/') && !value.split('/').some((part) => part === '.' || part === '..' || part === '')))
 
 /** Recognize only the exact metadata-backed footer, never a bracketed filename or source line. */
 function searchBody(

@@ -13,7 +13,9 @@ import type {
   BranchSummary,
   ChatAnswer,
   ChatForkInfo,
+  ChatLinkTarget,
   ChatModelCatalog,
+  ChatPart,
   ChatThinking,
   ExtensionCatalog,
   ExtensionGrammar,
@@ -225,14 +227,14 @@ export const backend = {
     create(folderPath: string, model: string, thinking: ChatThinking): Promise<string> {
       return invoke<string>('chat_create', { folderPath, model, thinking })
     },
-    prompt(folderPath: string, sessionId: string, requestId: string, text: string): Promise<void> {
-      return invoke<void>('chat_prompt', { folderPath, sessionId, requestId, text })
+    prompt(folderPath: string, sessionId: string, requestId: string, parts: ChatPart[]): Promise<void> {
+      return invoke<void>('chat_prompt', { folderPath, sessionId, requestId, parts })
     },
-    steer(folderPath: string, sessionId: string, text: string): Promise<void> {
-      return invoke<void>('chat_steer', { folderPath, sessionId, text })
+    steer(folderPath: string, sessionId: string, parts: ChatPart[]): Promise<void> {
+      return invoke<void>('chat_steer', { folderPath, sessionId, parts })
     },
-    followUp(folderPath: string, sessionId: string, text: string): Promise<void> {
-      return invoke<void>('chat_follow_up', { folderPath, sessionId, text })
+    followUp(folderPath: string, sessionId: string, parts: ChatPart[]): Promise<void> {
+      return invoke<void>('chat_follow_up', { folderPath, sessionId, parts })
     },
     abort(folderPath: string, sessionId: string): Promise<void> {
       return invoke<void>('chat_abort', { folderPath, sessionId })
@@ -243,14 +245,12 @@ export const backend = {
     dismiss(folderPath: string, sessionId: string, callId: string): Promise<void> {
       return invoke<void>('chat_dismiss', { folderPath, sessionId, callId })
     },
-    setModel(folderPath: string, sessionId: string, model: string): Promise<void> {
-      return invoke<void>('chat_set_model', { folderPath, sessionId, model })
+    /** Runs a built-in catalog command with JSON arguments its schema accepts. */
+    runCommand(folderPath: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<void> {
+      return invoke<void>('chat_run_command', { folderPath, sessionId, name, args })
     },
-    setThinking(folderPath: string, sessionId: string, thinking: ChatThinking): Promise<void> {
-      return invoke<void>('chat_set_thinking', { folderPath, sessionId, thinking })
-    },
-    compact(folderPath: string, sessionId: string): Promise<void> {
-      return invoke<void>('chat_compact', { folderPath, sessionId })
+    resolveLink(folderPath: string, sessionId: string, url: string): Promise<ChatLinkTarget> {
+      return invoke<ChatLinkTarget>('chat_resolve_link', { folderPath, sessionId, url })
     },
     navigate(folderPath: string, sessionId: string, entryId: string | null): Promise<void> {
       return invoke<void>('chat_navigate', { folderPath, sessionId, entryId })

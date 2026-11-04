@@ -10,19 +10,19 @@ import {
   setChatTabStatus,
   setChatTabTitle
 } from '$lib/features/workbench/state.svelte'
-import type { ChatAnswer, ChatBlock, ChatEntry, ChatEvent, ChatState, ChatThinking } from '$lib/types/backend'
+import type { ChatAnswer, ChatBlock, ChatEntry, ChatEvent, ChatPart, ChatState } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 import { getOrCreate } from './registry'
+import { getChatModels, loadChatModels } from './models.svelte'
+import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent } from './parts/parts'
 
 export class ChatController {
   readonly tabId: TabId
   state = $state<ChatState | null>(null)
   connection = $state<'detached' | 'attaching' | 'live' | 'reconnecting' | 'closed'>('detached')
   error = $state<string | null>(null)
-  draft = $state('')
-  draftModel = $state<string | null>(null)
-  draftThinking = $state<ChatThinking>('off')
-  editing = $state<{ entryId: string; anchor: string | null; text: string } | null>(null)
+  draft = $state<ChatPart[]>([])
+  editing = $state<{ entryId: string; anchor: string | null; parts: ChatPart[] } | null>(null)
   #handle: StreamHandle<void> | null = null
   #generation = 0
 
@@ -44,18 +44,28 @@ export class ChatController {
     const tab = this.#tab
     if (!tab) return
     this.error = null
-    if (!tab.sessionId) {
-      this.state = null
-      this.connection = 'live'
-      setChatTabStatus(this.tabId, 'idle')
-      return
-    }
-
+    // A reconnect keeps the transcript it shows until the new snapshot replaces it.
+    if (this.state?.sessionId !== tab.sessionId) this.state = null
     this.connection = 'attaching'
     const generation = this.#generation
     try {
+      let sessionId = tab.sessionId
+      if (sessionId) void loadChatModels(tab.folderPath)
+      else {
+        await loadChatModels(tab.folderPath)
+        if (generation !== this.#generation) return
+        const models = getChatModels(tab.folderPath)
+        const model = models.catalog?.defaultModel ?? models.catalog?.models[0]?.selector
+        if (!model || !models.catalog) {
+          throw new Error(models.error ?? 'No axo models are available. Configure a default model and credentials.')
+        }
+        sessionId = await backend.chat.create(tab.folderPath, model, models.catalog.defaultThinking)
+        // Kept even when superseded: the next attach reuses it, and the backend reclaims an unattached one.
+        setChatTabSessionId(this.tabId, sessionId)
+        if (generation !== this.#generation) return
+      }
       const handle = backend.chat.attach(
-        { attachId: crypto.randomUUID(), folderPath: tab.folderPath, sessionId: tab.sessionId },
+        { attachId: crypto.randomUUID(), folderPath: tab.folderPath, sessionId },
         {
           onEvent: (event) => {
             if (generation === this.#generation) this.apply(event)
@@ -134,9 +144,9 @@ export class ChatController {
           setChatTabSessionId(this.tabId, null)
           this.state = null
           this.editing = null
-          this.connection = 'live'
           this.error = null
           notify.info('Started a new chat', 'The previous axo session no longer exists.')
+          void this.attach().catch(() => {})
         } else {
           this.connection = 'closed'
           this.error = event.message
@@ -159,31 +169,35 @@ export class ChatController {
   }
 
   async send(): Promise<void> {
-    const text = this.draft.trim()
-    if (!text) return
-    if (text === '/compact') {
-      if (await this.compact()) this.draft = ''
-      return
+    const parts = this.draft
+    if (!this.#validateParts(parts)) return
+    const generation = this.#generation
+    const succeeded = await this.#withSession((folder, id) =>
+      this.state?.live.running
+        ? backend.chat.steer(folder, id, parts)
+        : backend.chat.prompt(folder, id, crypto.randomUUID(), parts)
+    )
+    if (succeeded && generation === this.#generation && this.draft === parts) this.draft = []
+  }
+
+  #validateParts(parts: ChatPart[]): boolean {
+    if (!hasContent(parts)) return false
+    if (contentBytes(parts) > CONTENT_LIMIT) {
+      notify.error('Attachment too large', CONTENT_LIMIT_MESSAGE)
+      return false
     }
+    return true
+  }
+
+  /** Runs a catalog command; resolves to its error message, or null once it ran or began. */
+  async runCommand(name: string, args: Record<string, unknown>): Promise<string | null> {
     const tab = this.#tab
-    if (!tab) return
+    if (!tab?.sessionId || this.connection !== 'live') return 'The chat is not connected.'
     try {
-      if (!tab.sessionId) {
-        if (!this.draftModel) throw new Error('Select an axo model before sending a message.')
-        const sessionId = await backend.chat.create(tab.folderPath, this.draftModel, this.draftThinking)
-        setChatTabSessionId(this.tabId, sessionId)
-        await this.attach()
-        if (this.connection !== 'live' || this.#tab?.sessionId !== sessionId) {
-          throw new Error(this.error ?? 'The axo session could not be attached.')
-        }
-      }
-      const sessionId = this.#tab?.sessionId
-      if (!sessionId) return
-      if (this.state?.live.running) await backend.chat.steer(tab.folderPath, sessionId, text)
-      else await backend.chat.prompt(tab.folderPath, sessionId, crypto.randomUUID(), text)
-      if (this.draft.trim() === text) this.draft = ''
+      await backend.chat.runCommand(tab.folderPath, tab.sessionId, name, args)
+      return null
     } catch (error) {
-      notify.error('axo', getErrorMessage(error))
+      return getErrorMessage(error)
     }
   }
 
@@ -200,10 +214,11 @@ export class ChatController {
   }
 
   async followUp(): Promise<void> {
-    const text = this.draft.trim()
-    if (!text) return
-    if (await this.#withSession((folder, id) => backend.chat.followUp(folder, id, text))) {
-      if (this.draft.trim() === text) this.draft = ''
+    const parts = this.draft
+    if (!this.#validateParts(parts)) return
+    const generation = this.#generation
+    if (await this.#withSession((folder, id) => backend.chat.followUp(folder, id, parts))) {
+      if (generation === this.#generation && this.draft === parts) this.draft = []
     }
   }
 
@@ -221,23 +236,13 @@ export class ChatController {
     await this.#withSession((folder, id) => backend.chat.dismiss(folder, id, callId))
   }
 
-  async setModel(selector: string): Promise<void> {
-    if (!this.#tab?.sessionId) this.draftModel = selector
-    else await this.#withSession((folder, id) => backend.chat.setModel(folder, id, selector))
-  }
-
-  async setThinking(level: ChatThinking): Promise<void> {
-    if (!this.#tab?.sessionId) this.draftThinking = level
-    else await this.#withSession((folder, id) => backend.chat.setThinking(folder, id, level))
-  }
-
-  compact(): Promise<boolean> {
-    return this.#withSession((folder, id) => backend.chat.compact(folder, id))
-  }
-
   startEdit(entry: ChatEntry): void {
     if (entry.body.kind !== 'user') return
-    this.editing = { entryId: entry.id, anchor: entry.body.anchor, text: entry.body.text }
+    this.editing = {
+      entryId: entry.id,
+      anchor: entry.body.anchor,
+      parts: entry.body.parts.map((part) => ({ ...part }))
+    }
   }
 
   cancelEdit(): void {
@@ -246,10 +251,10 @@ export class ChatController {
 
   async submitEdit(): Promise<void> {
     const editing = this.editing
-    if (!editing || !editing.text.trim()) return
+    if (!editing || !this.#validateParts(editing.parts)) return
     const succeeded = await this.#withSession(async (folder, id) => {
       await backend.chat.navigate(folder, id, editing.anchor)
-      await backend.chat.prompt(folder, id, crypto.randomUUID(), editing.text)
+      await backend.chat.prompt(folder, id, crypto.randomUUID(), editing.parts)
     })
     if (succeeded && this.editing === editing) this.editing = null
   }
@@ -263,7 +268,7 @@ export class ChatController {
       const fork = await backend.chat.fork(folderPath, sessionId, entryId)
       const tabId = addChatTab(folderPath, { sessionId: fork.sessionId, title: this.state?.live.title ?? 'New Chat' })
       const tab = getTabs().find((candidate) => candidate.id === tabId)
-      if (tab?.kind === 'chat') getOrCreate(tab).draft = fork.editableText ?? ''
+      if (tab?.kind === 'chat') getOrCreate(tab).draft = fork.editable ?? []
       requestFocusTab(tabId)
     })
   }

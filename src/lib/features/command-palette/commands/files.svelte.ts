@@ -51,7 +51,8 @@ interface ScoredPath {
  */
 function scorePath(path: string, query: string): number | null {
   if (query.length === 0) return 0
-  const pl = path.toLowerCase()
+  // Directory paths end in `/`; rank them by their own name.
+  const pl = path.toLowerCase().replace(/\/$/, '')
   const ql = query.toLowerCase()
   const slash = pl.lastIndexOf('/')
   const base = slash >= 0 ? pl.slice(slash + 1) : pl
@@ -74,7 +75,7 @@ function scorePath(path: string, query: string): number | null {
   return null
 }
 
-function rankPaths(paths: string[], query: string): ScoredPath[] {
+export function rankPaths(paths: string[], query: string): ScoredPath[] {
   if (query.length === 0) {
     // No query: surface the first N paths in their natural (sorted)
     // order so the empty palette shows something rather than blank.

@@ -1,5 +1,6 @@
-import { sveltekit } from '@sveltejs/kit/vite'
+import { statfsSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
+import { sveltekit } from '@sveltejs/kit/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
@@ -19,6 +20,19 @@ function isUiWatchPath(path: string): boolean {
     return isWatchRoot || isInsideWatchRoot || isAncestorOfWatchRoot
   })
 }
+function isNetworkFs(dir = rootDir): boolean {
+  try {
+    const type = statfsSync(dir).type >>> 0
+    // 0x6969: NFS, 0x517b: SMB, 0xfe534d42/0xff534d42: SMB2/CIFS, 0x65735546: FUSE, 0x01021997: 9P
+    return [0x6969, 0x517b, 0xfe534d42 >>> 0, 0xff534d42 >>> 0, 0x65735546, 0x01021997].includes(type)
+  } catch {
+    return false
+  }
+}
+
+const envPolling = process.env.CHOKIDAR_USEPOLLING ?? process.env.VITE_USE_POLLING
+const usePolling = envPolling !== undefined ? envPolling === 'true' || envPolling === '1' : isNetworkFs()
+const pollInterval = Number(process.env.CHOKIDAR_INTERVAL || 150)
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
@@ -70,6 +84,8 @@ export default defineConfig({
         }
       : undefined,
     watch: {
+      usePolling,
+      interval: pollInterval,
       // Dev webview should reload only for files that can change UI content.
       ignored: (path) => !isUiWatchPath(path)
     }

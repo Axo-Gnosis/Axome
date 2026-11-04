@@ -22,6 +22,7 @@
     turn,
     controller,
     folderPath,
+    sessionId,
     canBranch,
     now,
     expansion = 'collapsed',
@@ -32,6 +33,7 @@
     turn: Turn
     controller: ChatController
     folderPath: string
+    sessionId: string | null
     canBranch: boolean
     now: number
     expansion?: BlockView
@@ -91,17 +93,46 @@
 
 {#snippet render(step: TranscriptStep)}
   {#if step.kind === 'text'}
-    <Message.Response text={step.text} streaming={step.entryId === null} {folderPath} />
+    <Message.Response text={step.text} streaming={step.entryId === null} {folderPath} {sessionId} />
   {:else if step.kind === 'thinking'}
-    <ThinkingBlock thought={step} view={overrides[step.id] ?? detailView} {onView} {folderPath} />
+    <ThinkingBlock thought={step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
   {:else if step.kind === 'toolGroup'}
-    <ToolGroup group={step} expansion={detailView} {overrides} {onView} {folderPath} {onOpenLocation} {controller} />
+    <ToolGroup
+      group={step}
+      expansion={detailView}
+      {overrides}
+      {onView}
+      {folderPath}
+      {sessionId}
+      {onOpenLocation}
+      {controller}
+    />
   {:else if step.kind === 'tool'}
-    <ToolBlock call={step} expansion={detailView} {overrides} {onView} {folderPath} {onOpenLocation} {controller} />
+    <ToolBlock
+      call={step}
+      expansion={detailView}
+      {overrides}
+      {onView}
+      {folderPath}
+      {sessionId}
+      {onOpenLocation}
+      {controller}
+    />
   {:else if step.kind === 'notice'}
     <div class="text-sm whitespace-pre-wrap text-muted">{step.text}</div>
   {:else if step.kind === 'compaction' || step.kind === 'branchSummary'}
-    <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} />
+    <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
+  {:else if step.kind === 'modelChange' || step.kind === 'thinkingChange' || step.kind === 'contextMoved'}
+    <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
+      <Icon icon={InfoIcon} size={14} />
+      <span
+        >{step.kind === 'modelChange'
+          ? `Model → ${step.model}`
+          : step.kind === 'thinkingChange'
+            ? `Thinking → ${step.thinking}`
+            : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
+      >
+    </div>
   {/if}
 {/snippet}
 

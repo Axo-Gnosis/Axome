@@ -22,7 +22,7 @@ axo.workspace = true
 axo-agent.workspace = true
 axo-ai.workspace = true
 async-trait.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 libc = "0.2"
 notify = "6"
 ignore = "0.4"
@@ -33,6 +33,7 @@ portable-pty = "0.9"
 refinery = { version = "0.8", features = ["rusqlite"] }
 which = "8"
 sha2 = "0.10"
+base64 = "0.22"
 jsonschema = { version = "0.55.0", default-features = false }
 
 [dev-dependencies]

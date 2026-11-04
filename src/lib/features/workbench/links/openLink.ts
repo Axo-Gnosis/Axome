@@ -40,15 +40,36 @@ async function getGitHubRepo(folderPath: string): Promise<{ owner: string; repo:
   }
 }
 
-/**
- * Open a link from terminal output or markdown view.
- *
- * @param rawTarget The clicked link URL, URI, or file path.
- * @param folderPath Active workbench folder path.
- */
-export async function openLink(rawTarget: string, folderPath?: string | null): Promise<boolean> {
+export interface LinkOwner {
+  folderPath: string
+  sessionId?: string | null
+}
+
+/** Open a link in the context of the surface that owns it. */
+export async function openLink(rawTarget: string, owner?: LinkOwner | null): Promise<boolean> {
+  const folderPath = owner?.folderPath
   try {
     const target = parseLinkTarget(rawTarget)
+    const scheme = target.scheme
+    if (owner?.sessionId && scheme && !['http', 'https', 'file', 'axome', 'issue', 'pr'].includes(scheme)) {
+      const url = target.url ?? rawTarget
+      const location = parseFilePathAndLocation(url)
+      const resolved = await backend.chat.resolveLink(
+        owner.folderPath,
+        owner.sessionId,
+        location.reveal ? location.filePath : url
+      )
+      if (resolved.kind === 'file') {
+        const path = await resolveFileLocationPath(resolved.path, folderPath)
+        if (resolved.isDir) await openFolder(path)
+        else await openTextFile(dirname(path), basename(path), { temporary: false, reveal: location.reveal })
+        return true
+      }
+      if (resolved.kind === 'virtual') {
+        notify.info(rawTarget, resolved.text)
+        return true
+      }
+    }
     if (target.kind === 'anchor') {
       // Fragment-only link (#section); handled within document or no-op
       return true
@@ -60,7 +81,8 @@ export async function openLink(rawTarget: string, folderPath?: string | null): P
     }
 
     if (target.kind === 'uri') {
-      return await handleUriLink(target, folderPath)
+      // A chat's scheme links resolve only through its own axo session (above); OMP's resolver would answer from OMP's workspace instead.
+      return await handleUriLink(target, folderPath, !owner?.sessionId)
     }
 
     if (target.kind === 'file') {
@@ -74,7 +96,7 @@ export async function openLink(rawTarget: string, folderPath?: string | null): P
   return false
 }
 
-async function handleUriLink(target: ParsedLinkTarget, folderPath?: string | null): Promise<boolean> {
+async function handleUriLink(target: ParsedLinkTarget, folderPath?: string | null, allowOmp = true): Promise<boolean> {
   const scheme = target.scheme
   const fullUrl = target.url ?? target.raw
 
@@ -91,7 +113,7 @@ async function handleUriLink(target: ParsedLinkTarget, folderPath?: string | nul
     return handleIssueOrPrScheme(scheme, fullUrl, folderPath)
   }
 
-  if (scheme && OMP_SCHEMES[scheme]) {
+  if (allowOmp && scheme && OMP_SCHEMES[scheme]) {
     return handleOmpScheme(fullUrl, target.reveal, folderPath)
   }
 

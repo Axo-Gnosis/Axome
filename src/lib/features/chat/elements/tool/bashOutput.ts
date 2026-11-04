@@ -2,15 +2,15 @@ import type { ToolStep } from '../../turns'
 import type { ChatContent } from '$lib/types/backend'
 import { pathText } from './payload'
 
-function fullOutputPath(details: unknown): string | null {
-  if (!details || typeof details !== 'object' || !('fullOutputPath' in details)) return null
-  const path = details.fullOutputPath
-  return pathText(path) && path.trim() ? path : null
+function fullOutput(details: unknown): string | null {
+  if (!details || typeof details !== 'object' || !('fullOutput' in details)) return null
+  const url = details.fullOutput
+  return pathText(url) && url.startsWith('artifact://') && url.length > 'artifact://'.length ? url : null
 }
 
 /** Only separate backend footers when their result metadata and paragraph position agree. */
 export function bashOutput(call: ToolStep, limit: number | null = null) {
-  const path = fullOutputPath(call.result?.details)
+  const path = fullOutput(call.result?.details)
   let status: string | null = null
   let notice: string | null = null
   let parts = call.output
@@ -26,7 +26,7 @@ export function bashOutput(call: ToolStep, limit: number | null = null) {
         text = text.slice(0, footer.index)
       }
     }
-    // A matching path is evidence this is axo's notice, rather than a lookalike log line.
+    // A matching URL is evidence this is axo's notice, rather than a lookalike log line.
     if (path) {
       const footer = text.match(
         /(?:^|\n\n)(\[(?:Showing lines 1-\d+ and \d+-\d+ of \d+(?: \(50\.0KB limit\))?|Lines longer than 768 bytes were cut)\. Full output: [^\r\n]+\])$/
@@ -52,5 +52,5 @@ export function bashOutput(call: ToolStep, limit: number | null = null) {
       return from < counts[index] ? [{ type: 'text', text: chunks[index].slice(from).join('\n') }] : []
     })
   }
-  return { parts, status, notice, fullOutputPath: path, hidden }
+  return { parts, status, notice, fullOutput: path, hidden }
 }

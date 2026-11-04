@@ -1,9 +1,19 @@
 <script lang="ts">
   import { Button, IconButton } from '$lib/components/ui/button'
-  import { Textarea } from '$lib/components/ui/input'
+  import { PromptInput } from '$lib/features/chat/elements/prompt-input'
+  import PartChip from '$lib/features/chat/parts/PartChip.svelte'
+  import { hasContent, invokedSkill, partsText } from '$lib/features/chat/parts/parts'
+  import type { ChatCommand, ChatModel } from '$lib/types/backend'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import type { UserEntry } from '$lib/features/chat/turns'
-  import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, GitForkIcon, PencilIcon } from '@hugeicons/core-free-icons'
+  import {
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    CopyIcon,
+    GitForkIcon,
+    PencilIcon,
+    SparklesIcon
+  } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { copyToClipboard } from '$lib/utils/clipboard'
   import { cn } from '$lib/utils/cn'
@@ -12,14 +22,21 @@
   let {
     entry,
     controller,
-    canBranch
+    canBranch,
+    owner,
+    commands,
+    models
   }: {
     entry: UserEntry
     controller: ChatController
     canBranch: boolean
+    owner: { folderPath: string; sessionId: string | null }
+    commands: ChatCommand[]
+    models: ChatModel[]
   } = $props()
 
-  let textarea = $state<HTMLTextAreaElement | null>(null)
+  let input = $state<PromptInput>()
+  const skill = $derived(invokedSkill(entry.body.parts, commands))
   const editing = $derived(controller.editing?.entryId === entry.id)
   const branchIndex = $derived(entry.body.siblings.indexOf(entry.id))
   const time = $derived(
@@ -32,41 +49,25 @@
   )
 
   $effect(() => {
-    if (editing) textarea?.focus()
+    if (editing) input?.focus()
   })
-
-  $effect(() => {
-    if (!editing || !textarea) return
-    controller.editing?.text
-    textarea.style.height = 'auto'
-    textarea.style.height = `${textarea.scrollHeight}px`
-  })
-
-  function editKey(event: KeyboardEvent): void {
-    if (event.isComposing) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      controller.cancelEdit()
-    } else if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      if (canBranch) void controller.submitEdit()
-    }
-  }
 </script>
 
 <div data-slot="user-block" class="group/message flex min-w-0 flex-col items-end gap-1">
   <div class={cn('rounded-lg bg-surface px-4 py-3', editing ? 'flex w-full flex-col gap-2' : 'max-w-4/5 min-w-0')}>
     {#if editing && controller.editing}
-      <Textarea
-        bind:ref={textarea}
-        bind:value={controller.editing.text}
-        rows={1}
-        aria-label="Edit Message"
+      <PromptInput
+        bind:this={input}
+        bind:parts={controller.editing.parts}
+        {owner}
+        commands={commands.filter((command) => command.kind === 'skill')}
+        {models}
+        running={false}
         disabled={!canBranch}
-        onkeydown={editKey}
-        class="overflow-hidden bg-ground text-base"
+        placeholder="Edit message"
+        onSubmit={() => void controller.submitEdit()}
+        onAltSubmit={() => void controller.submitEdit()}
+        onCancel={() => controller.cancelEdit()}
       />
       <div class="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="xs" onclick={() => controller.cancelEdit()}
@@ -76,12 +77,21 @@
           type="button"
           variant="ghost"
           size="xs"
-          disabled={!canBranch || !controller.editing.text.trim()}
+          disabled={!canBranch || !hasContent(controller.editing.parts)}
           onclick={() => void controller.submitEdit()}>Send <KeyHint keys="Enter" /></Button
         >
       </div>
     {:else}
-      <div class="text-base break-words whitespace-pre-wrap text-fg">{entry.body.text}</div>
+      <div class="text-base break-words whitespace-pre-wrap text-fg">
+        {#each entry.body.parts as part, index}{#if part.type === 'text'}{#if index === 0 && skill}<span
+                class="inline-flex items-center gap-1 rounded-full border border-edge bg-raised px-2 py-0.5 text-xs text-accent"
+                ><Icon icon={SparklesIcon} size={12} />{'/' + skill.name}</span
+              >{part.text.slice(skill.name.length + 1)}{:else}{part.text}{/if}{:else}<PartChip
+              {part}
+              {owner}
+              interactive
+            />{/if}{/each}
+      </div>
     {/if}
   </div>
   <div
@@ -117,7 +127,7 @@
         disabled={!canBranch}
         onclick={() => void controller.fork(entry.id)}><Icon icon={GitForkIcon} size={14} /></IconButton
       >
-      <IconButton tooltip="Copy" class="text-subtle" onclick={() => void copyToClipboard(entry.body.text)}
+      <IconButton tooltip="Copy" class="text-subtle" onclick={() => void copyToClipboard(partsText(entry.body.parts))}
         ><Icon icon={CopyIcon} size={14} /></IconButton
       >
     </div>

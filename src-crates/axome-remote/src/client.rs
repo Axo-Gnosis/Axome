@@ -4,6 +4,11 @@ use crate::{
     wire::{read_frame, write_frame_with_limit},
     RemoteError,
 };
+use axome_protocol::chat::ChatPart;
+use axome_protocol::rpc::{
+    Open, OpenRpc, OpenWorkbenchRpc, Reply, Request, Response, WireError, MAX_FRAME_BYTES,
+    MAX_REQUEST_FRAME_BYTES,
+};
 use serde::Serialize;
 use std::{
     collections::VecDeque,
@@ -11,10 +16,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
-};
-use axome_protocol::rpc::{
-    Open, OpenRpc, OpenWorkbenchRpc, Reply, Request, Response, WireError, MAX_FRAME_BYTES,
-    MAX_REQUEST_FRAME_BYTES,
 };
 use tokio::{
     task::JoinSet,
@@ -117,14 +118,25 @@ impl RemoteClient {
     }
 
     /// Run one request/response exchange. Normal RPCs have a deadline; attach
-    /// recovery waits for its supervised operation or connection shutdown.
+    /// recovery waits for its supervised operation or connection shutdown, and
+    /// messages carrying Content attachments take as long as the upload needs.
     ///
     /// An RPC may carry a file body, so its open frame is bounded by the
     /// whole-frame ceiling rather than the small intake cap. The daemon only
     /// accepts a frame that large once this connection is paired.
     pub async fn call(&self, request: &Request) -> Result<Reply, RemoteError> {
         let open = OpenRpc::new(request);
-        if matches!(request, Request::WorkbenchRecover { .. }) {
+        let unbounded = match request {
+            Request::WorkbenchRecover { .. } => true,
+            // Attachments upload up to MAX_CONTENT_BYTES; that takes as long as the link needs.
+            Request::ChatPrompt { parts, .. }
+            | Request::ChatSteer { parts, .. }
+            | Request::ChatFollowUp { parts, .. } => parts
+                .iter()
+                .any(|part| matches!(part, ChatPart::Content { .. })),
+            _ => false,
+        };
+        if unbounded {
             return self.exchange(&open).await;
         }
         self.call_open(&open).await

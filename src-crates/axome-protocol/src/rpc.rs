@@ -699,11 +699,11 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatCreate => chat_create(folder_path: String, model: String, thinking: $crate::chat::ChatThinking) -> String;
             #[route(folder_path)]
-            ChatPrompt => chat_prompt(folder_path: String, session_id: String, request_id: String, text: String) -> ();
+            ChatPrompt => chat_prompt(folder_path: String, session_id: String, request_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
-            ChatSteer => chat_steer(folder_path: String, session_id: String, text: String) -> ();
+            ChatSteer => chat_steer(folder_path: String, session_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
-            ChatFollowUp => chat_follow_up(folder_path: String, session_id: String, text: String) -> ();
+            ChatFollowUp => chat_follow_up(folder_path: String, session_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
             ChatAbort => chat_abort(folder_path: String, session_id: String) -> ();
             #[route(folder_path)]
@@ -711,11 +711,9 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatDismiss => chat_dismiss(folder_path: String, session_id: String, call_id: String) -> ();
             #[route(folder_path)]
-            ChatSetModel => chat_set_model(folder_path: String, session_id: String, model: String) -> ();
+            ChatRunCommand => chat_run_command(folder_path: String, session_id: String, name: String, args: serde_json::Value) -> ();
             #[route(folder_path)]
-            ChatSetThinking => chat_set_thinking(folder_path: String, session_id: String, thinking: $crate::chat::ChatThinking) -> ();
-            #[route(folder_path)]
-            ChatCompact => chat_compact(folder_path: String, session_id: String) -> ();
+            ChatResolveLink => chat_resolve_link(folder_path: String, session_id: String, url: String) -> $crate::chat::ChatLinkTarget;
             #[route(folder_path)]
             ChatNavigate => chat_navigate(folder_path: String, session_id: String, entry_id: Option<String>) -> ();
             #[route(folder_path)]

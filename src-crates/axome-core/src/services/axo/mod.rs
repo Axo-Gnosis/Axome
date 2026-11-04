@@ -19,10 +19,10 @@ use std::{
 use axo::store::{Entry, EntryId};
 use axo::{Axo, NavigateOptions, RecoveryPolicy, SessionOptions};
 use axo_ai::ThinkingLevel;
-use chrono::{DateTime, SecondsFormat, Utc};
-use parking_lot::Mutex;
 use axome_protocol::chat::*;
 use axome_protocol::session::MessageRole;
+use chrono::{DateTime, SecondsFormat, Utc};
+use parking_lot::Mutex;
 use tokio::runtime::Handle;
 
 use crate::{
@@ -53,17 +53,36 @@ pub(crate) struct AxoService {
 pub(super) fn axo_error(error: axo::Error) -> ApiError {
     match &error {
         axo::Error::Busy => {
-            ApiError::InvalidArgument("axo is busy; steer or queue a follow-up instead".into())
+            ApiError::InvalidArgument("axo is busy: a run or maintenance is active".into())
         }
-        axo::Error::SessionBusy { .. } | axo::Error::NoModel | axo::Error::ModelNotFound(_) => {
-            ApiError::InvalidArgument(error.to_string())
-        }
+        axo::Error::SessionBusy { .. }
+        | axo::Error::NoModel
+        | axo::Error::ModelNotFound(_)
+        | axo::Error::InvalidCommand { .. }
+        | axo::Error::InvalidInput(_) => ApiError::InvalidArgument(error.to_string()),
         axo::Error::EntryNotFound(_) | axo::Error::NoPendingQuestion(_) => {
             ApiError::NotFound(error.to_string())
         }
-        _ => ApiError::Internal(format!("axo: {error}")),
+        axo::Error::Ai(_)
+        | axo::Error::Agent(_)
+        | axo::Error::Io { .. }
+        | axo::Error::Config { .. }
+        | axo::Error::Scheme(_)
+        | axo::Error::NoAxoDir
+        | axo::Error::Compaction(_)
+        | axo::Error::MaintenanceAborted
+        | axo::Error::ContextChanged
+        | axo::Error::InvalidHistory(_) => ApiError::Internal(format!("axo: {error}")),
     }
 }
+
+/// How long a session with no file yet stays loaded while unattached: long enough for a
+/// reconnect or a window move to reattach, since a retired unwritten session cannot be reopened.
+const UNWRITTEN_GRACE: Duration = if cfg!(test) {
+    Duration::from_secs(1)
+} else {
+    Duration::from_secs(60)
+};
 
 impl AxoService {
     pub(crate) fn new(db: Arc<DatabaseService>) -> Arc<Self> {
@@ -142,6 +161,7 @@ impl AxoService {
             ))),
             sections: Vec::new(),
             recovery: RecoveryPolicy::Resume,
+            ..Default::default()
         }
     }
 
@@ -198,8 +218,7 @@ impl AxoService {
                 return Ok(live);
             }
         }
-        live.abort_relay();
-        live.session.shutdown().await;
+        live.shutdown().await;
         Err(ApiError::Internal("Axome is shutting down".into()))
     }
 
@@ -218,14 +237,42 @@ impl AxoService {
 
     fn maybe_unload(&self, id: &str) {
         let mut sessions = self.sessions.lock();
-        if sessions
-            .get(id)
-            .is_some_and(|live| live.idle_and_unattached())
-        {
+        let Some(live) = sessions.get(id) else { return };
+        if !live.idle_and_unattached() {
+            return;
+        }
+        if live.session.path().exists() {
             if let Some(live) = sessions.remove(id) {
                 self.retire(live);
             }
+            return;
         }
+        drop(sessions);
+        // axo creates the session file on the first submission; a session without one cannot be reopened once retired, so its owner gets UNWRITTEN_GRACE to reattach.
+        self.retire_unwritten_later(id);
+    }
+
+    fn retire_unwritten_later(&self, id: &str) {
+        let Some(runtime) = self.runtime() else {
+            return;
+        };
+        let this = self.this.clone();
+        let id = id.to_owned();
+        runtime.spawn(async move {
+            tokio::time::sleep(UNWRITTEN_GRACE).await;
+            let Some(service) = this.upgrade() else {
+                return;
+            };
+            let mut sessions = service.sessions.lock();
+            if sessions
+                .get(&id)
+                .is_some_and(|live| live.idle_and_unattached())
+            {
+                if let Some(live) = sessions.remove(&id) {
+                    service.retire(live);
+                }
+            }
+        });
     }
     // Called with the registry locked so reopen cannot miss the retirement barrier.
     fn retire(&self, live: Arc<LiveSession>) {
@@ -233,7 +280,7 @@ impl AxoService {
         if let Some(runtime) = self.runtime() {
             let id = live.id.clone();
             let task = runtime.spawn(async move {
-                live.session.shutdown().await;
+                live.shutdown().await;
             });
             self.retiring.lock().insert(id, task);
         }
@@ -270,6 +317,7 @@ impl AxoService {
                     .map(convert::thinking_to_wire)
                     .collect(),
                 context_window: m.context_window,
+                images: m.input.contains(&axo_ai::InputKind::Image),
             })
             .collect();
         models.sort_by(|a, b| {
@@ -305,7 +353,9 @@ impl AxoService {
             ))
             .await
             .map_err(axo_error)?;
-        Ok(self.insert(folder.to_owned(), session).await?.id.clone())
+        let id = self.insert(folder.to_owned(), session).await?.id.clone();
+        self.maybe_unload(&id);
+        Ok(id)
     }
 
     pub(crate) async fn attach(
@@ -339,20 +389,20 @@ impl AxoService {
         folder: &Path,
         id: &str,
         request_id: String,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
-        self.live(folder, id).await?.prompt(request_id, text).await
+        self.live(folder, id).await?.prompt(request_id, parts).await
     }
     pub(crate) async fn steer(
         &self,
         folder: &Path,
         id: &str,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         self.live(folder, id)
             .await?
             .session
-            .steer(&text)
+            .steer(convert::parts_from_wire(parts)?)
             .await
             .map_err(axo_error)
     }
@@ -360,12 +410,12 @@ impl AxoService {
         &self,
         folder: &Path,
         id: &str,
-        text: String,
+        parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         self.live(folder, id)
             .await?
             .session
-            .follow_up(&text)
+            .follow_up(convert::parts_from_wire(parts)?)
             .await
             .map_err(axo_error)
     }
@@ -398,47 +448,70 @@ impl AxoService {
             .dismiss(&call_id)
             .map_err(axo_error)
     }
-    pub(crate) async fn set_model(
+    pub(crate) async fn run_command(
         &self,
         folder: &Path,
         id: &str,
-        model: String,
+        name: String,
+        args: serde_json::Value,
     ) -> Result<(), ApiError> {
-        let live = self.live(folder, id).await?;
-        let model = self
-            .axo()
-            .await?
-            .models()
-            .find(&model)
-            .ok_or_else(|| ApiError::InvalidArgument(format!("Unknown model {model}")))?
-            .clone();
-        live.session.set_model(model).await.map_err(axo_error)
+        let command = axo::Command::decode(&name, args).map_err(axo_error)?;
+        self.live(folder, id).await?.run_command(command).await
     }
-    pub(crate) async fn set_thinking(
+
+    pub(crate) async fn resolve_link(
         &self,
         folder: &Path,
         id: &str,
-        thinking: ChatThinking,
-    ) -> Result<(), ApiError> {
-        self.live(folder, id)
-            .await?
-            .session
-            .set_thinking(convert::thinking_from_wire(thinking))
+        url: String,
+    ) -> Result<ChatLinkTarget, ApiError> {
+        let live = self.sessions.lock().get(id).cloned();
+        let unloaded;
+        let schemes = if let Some(live) = &live {
+            if live.folder != folder {
+                return Err(ApiError::NotFound(format!("axo session {id}")));
+            }
+            live.session.schemes()
+        } else {
+            let axo = self.axo().await?;
+            let info = axo
+                .list_sessions(folder)
+                .await
+                .map_err(axo_error)?
+                .into_iter()
+                .find(|info| info.id == id)
+                .ok_or_else(|| ApiError::NotFound(format!("axo session {id}")))?;
+            unloaded = axo
+                .schemes(&info.path, None, &[])
+                .await
+                .map_err(axo_error)?;
+            &unloaded
+        };
+        let Some(url) = schemes.exact(&url) else {
+            return Ok(ChatLinkTarget::Unhandled);
+        };
+        match schemes
+            .resolve(&url)
             .await
-            .map(|_| ())
-            .map_err(axo_error)
-    }
-    pub(crate) async fn compact(&self, folder: &Path, id: &str) -> Result<(), ApiError> {
-        let live = self.live(folder, id).await?;
-        if live.busy() {
-            return Err(ApiError::InvalidArgument(
-                "Wait for the current turn to finish before compacting".into(),
-            ));
+            .map_err(|error| ApiError::InvalidArgument(error.to_string()))?
+        {
+            axo::schemes::Target::File { path, .. } => {
+                let metadata = tokio::fs::metadata(&path)
+                    .await
+                    .map_err(|error| ApiError::NotFound(format!("{}: {error}", path.display())))?;
+                Ok(ChatLinkTarget::File {
+                    path: path.to_string_lossy().into_owned(),
+                    is_dir: metadata.is_dir(),
+                })
+            }
+            axo::schemes::Target::Virtual => {
+                let text = schemes
+                    .read(&url)
+                    .await
+                    .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
+                Ok(ChatLinkTarget::Virtual { text })
+            }
         }
-        tokio::spawn(async move {
-            let _ = live.session.compact().await;
-        });
-        Ok(())
     }
     pub(crate) async fn navigate(
         &self,
@@ -486,7 +559,7 @@ impl AxoService {
         self.schedule_refresh(folder);
         Ok(ChatForkInfo {
             session_id: session.id.clone(),
-            editable_text: fork.editable_text,
+            editable: fork.editable.as_deref().map(convert::parts_to_wire),
         })
     }
 
@@ -581,7 +654,21 @@ impl AxoService {
                         entry @ (Entry::Submission { .. } | Entry::SessionInfo { .. }) => {
                             entries.push(entry)
                         }
-                        _ => {}
+                        Entry::Message { .. }
+                        | Entry::ThinkingLevelChange { .. }
+                        | Entry::ModelChange { .. }
+                        | Entry::Usage { .. }
+                        | Entry::Compaction { .. }
+                        | Entry::BranchSummary { .. }
+                        | Entry::Custom { .. }
+                        | Entry::CustomMessage { .. }
+                        | Entry::ContextEdit { .. }
+                        | Entry::Label { .. }
+                        | Entry::Leaf { .. }
+                        | Entry::RunStart { .. }
+                        | Entry::RunEnd { .. }
+                        | Entry::RunResumed { .. }
+                        | Entry::Unknown(_) => {}
                     }
                     ControlFlow::Continue(())
                 })?;
@@ -630,7 +717,7 @@ impl AxoService {
                 let mut tasks = tokio::task::JoinSet::new();
                 for live in sessions {
                     tasks.spawn(async move {
-                        live.session.shutdown().await;
+                        live.shutdown().await;
                     });
                 }
                 for task in retiring {

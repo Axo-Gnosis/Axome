@@ -171,6 +171,8 @@ export interface ChatModel {
   name: string
   thinking: ChatThinking[]
   contextWindow: number
+  /** Accepts image input. */
+  images: boolean
 }
 
 export interface ChatModelCatalog {
@@ -204,8 +206,16 @@ export interface ChatEntry {
   body: ChatEntryBody
 }
 
+/** One part of a user message, mirroring `axo::PromptPart`. `content` is input only; axo stores it as `saved`. */
+export type ChatPart =
+  | { type: 'text'; text: string }
+  | { type: 'paste'; text: string }
+  | { type: 'file'; path: string }
+  | { type: 'content'; name: string; /** Base64. */ bytes: string }
+  | { type: 'saved'; url: string; image: boolean }
+
 export type ChatEntryBody =
-  | { kind: 'user'; text: string; anchor: string | null; siblings: string[] }
+  | { kind: 'user'; parts: ChatPart[]; anchor: string | null; siblings: string[] }
   | {
       kind: 'assistant'
       blocks: ChatBlock[]
@@ -229,6 +239,7 @@ export type ChatEntryBody =
   | { kind: 'thinkingChange'; thinking: ChatThinking }
   | { kind: 'compaction'; summary: string; tokensBefore: number }
   | { kind: 'branchSummary'; summary: string }
+  | { kind: 'contextMoved'; blocks: number }
   | { kind: 'runEnd'; outcome: ChatRunOutcome; reason: string | null }
 
 export type ChatMaintenance = 'compact' | 'shake' | 'branchSummary'
@@ -244,7 +255,7 @@ export type ChatQueueKind = 'steer' | 'followUp'
 
 export interface ChatQueued {
   kind: ChatQueueKind
-  text: string
+  parts: ChatPart[]
 }
 
 export interface ChatQuestionOption {
@@ -301,10 +312,13 @@ export interface ChatLive {
   stats: ChatStats
 }
 
-export interface ChatCommand {
-  name: string
-  description: string
-}
+export type ChatCommandPolicy = 'alongside' | 'when_idle' | 'queued'
+
+/** One catalog entry, mirroring `axo::CommandInfo`. */
+export type ChatCommand = { name: string; description: string; policy: ChatCommandPolicy } & (
+  | { kind: 'builtin'; /** Inlined JSON Schema object. */ parameters: Record<string, unknown> }
+  | { kind: 'skill'; argumentHint: string | null }
+)
 
 export interface ChatState {
   sessionId: string
@@ -332,8 +346,11 @@ export type ChatEvent =
 
 export interface ChatForkInfo {
   sessionId: string
-  editableText: string | null
+  editable: ChatPart[] | null
 }
+
+export type ChatLinkTarget =
+  { kind: 'file'; path: string; isDir: boolean } | { kind: 'virtual'; text: string } | { kind: 'unhandled' }
 
 /** Everything the backend needs to spawn a session tab's process under an ephemeral run id. */
 export interface SessionSpec {

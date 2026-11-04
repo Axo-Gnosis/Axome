@@ -12,11 +12,13 @@
   let {
     source,
     folderPath,
+    sessionId,
     filePath,
     class: className
   }: {
     source: string
     folderPath?: string
+    sessionId?: string | null
     filePath?: string | null
     class?: string
   } = $props()
@@ -171,7 +173,7 @@
       const resolved = resolveMarkdownLocalPath(filePath, pathPart)
       if (resolved) target = `${resolved}${hashPart}`
     }
-    void openLink(target, folderPath)
+    void openLink(target, folderPath ? { folderPath, sessionId } : undefined)
   }
 </script>
 

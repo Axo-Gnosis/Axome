@@ -19,10 +19,13 @@
   import { cn } from '$lib/utils/cn'
   import type { ToolHeader } from '../tool/toolHeader'
   import BashCommand from '../tool/BashCommand.svelte'
+  import { openToolLocation } from '../tool/referenceNavigation'
 
   let {
     header,
     view,
+    folderPath,
+    sessionId,
     nested = false,
     onToggle,
     onOpenLocation,
@@ -30,6 +33,8 @@
   }: {
     header: ToolHeader
     view: BlockView
+    folderPath: string
+    sessionId: string | null
     nested?: boolean
     onToggle: () => void
     onOpenLocation: (path: string, line?: number) => void
@@ -114,7 +119,9 @@
           variant="text"
           size="xs"
           class="min-w-0 justify-start p-0 font-mono text-xs font-normal text-fg hover:text-bright hover:underline"
-          onclick={() => header.path !== null && onOpenLocation(header.path, header.line)}
+          onclick={() =>
+            header.path !== null &&
+            void openToolLocation(header.path, header.line, { folderPath, sessionId }, onOpenLocation)}
           >{#if !search}<FileIcon filename={header.path} size={12} />{/if}<span class="truncate"
             >{header.pathLabel || header.path}</span
           ></Button

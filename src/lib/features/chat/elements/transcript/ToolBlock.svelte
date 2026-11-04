@@ -20,6 +20,7 @@
     overrides,
     onView,
     folderPath,
+    sessionId,
     onOpenLocation,
     controller,
     nested = false
@@ -29,6 +30,7 @@
     overrides: Record<string, BlockView>
     onView: (id: string, view: BlockView) => void
     folderPath: string
+    sessionId: string | null
     onOpenLocation: (path: string, line?: number) => void
     controller: ChatController
     nested?: boolean
@@ -50,7 +52,7 @@
 </script>
 
 <div data-slot="tool-block" data-view-id={call.id} data-collapsed={view === 'collapsed'} class="min-w-0">
-  <ToolFrame {header} {view} {nested} {onOpenLocation} onToggle={toggle}>
+  <ToolFrame {header} {view} {nested} {folderPath} {sessionId} {onOpenLocation} onToggle={toggle}>
     {#if call.name === 'ask' && activeQuestions}
       <AskCard
         questions={activeQuestions}
@@ -60,14 +62,15 @@
     {:else if call.name === 'bash'}
       <div class="flex min-w-0 flex-col gap-2">
         <BashCommand command={header.command ?? ''} />
-        <BashOutput {call} {view} onExpand={expand} {onOpenLocation} />
+        <BashOutput {call} {view} onExpand={expand} {folderPath} {sessionId} />
       </div>
     {:else if call.name === 'grep' || call.name === 'find'}
       <SearchOutput
         {call}
         {view}
         onExpand={expand}
-        onOpenResult={(path, line) => void openReferenceResult(call, folderPath, path, line, onOpenLocation)}
+        onOpenResult={(path, line) =>
+          void openReferenceResult(call, { folderPath, sessionId }, path, line, onOpenLocation)}
       />
     {:else if call.name === 'read' && !failed}
       <ReadOutput {call} {folderPath} {view} onExpand={expand} />

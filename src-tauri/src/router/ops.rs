@@ -7,11 +7,6 @@ use super::{
     },
     WorkspaceRouter,
 };
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 use axome_core::{
     errors::ApiError,
     events::{EventSink, HostEvent},
@@ -20,6 +15,11 @@ use axome_core::{
 use axome_protocol::{
     pty::PtyEvent,
     rpc::{Reply, Request, RunStatus},
+};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
 macro_rules! define_router_operation {
@@ -429,6 +429,44 @@ macro_rules! define_router_operation {
                 reject_remote("omp_resolve_uri", cwd)?;
             }
             self.local(move |host| host.$method($uri, $cwd)).await
+        }
+    };
+    (
+        #[route(folder_path)]
+        ChatResolveLink => $method:ident(
+            $folder_path:ident: $folder_path_type:ty,
+            $session_id:ident: $session_id_type:ty,
+            $url:ident: $url_type:ty $(,)?
+        ) -> $return_type:ty;
+    ) => {
+        pub async fn $method(
+            &self,
+            $folder_path: $folder_path_type,
+            $session_id: $session_id_type,
+            $url: $url_type,
+        ) -> Result<$return_type, ApiError> {
+            if let Target::Remote { server, path } = Target::parse(&$folder_path)? {
+                self.inner.remember_claim(server, path, None, false);
+                let mut target = self
+                    .call_reply(
+                        server,
+                        Request::ChatResolveLink {
+                            folder_path: path.to_owned(),
+                            session_id: $session_id,
+                            url: $url,
+                        },
+                    )
+                    .await?
+                    .$method()
+                    .map_err(ApiError::from)?;
+                // Resolution belongs to the session's daemon; desktop file
+                // operations must retain that owner rather than open locally.
+                if let axome_protocol::chat::ChatLinkTarget::File { path, .. } = &mut target {
+                    *path = Target::remote_uri(server, path);
+                }
+                return Ok(target);
+            }
+            self.local(move |host| host.$method($folder_path, $session_id, $url)).await
         }
     };
     (

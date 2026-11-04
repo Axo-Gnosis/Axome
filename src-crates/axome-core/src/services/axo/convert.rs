@@ -1,11 +1,99 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::{errors::ApiError, services::history::normalize_title};
 use axo::store::{Entry, RunOutcome, SeqEntry, SubmissionKind};
 use axo_agent::{AgentMessage, AgentSnapshot};
 use axo_ai::{AssistantBlock, Message, StopReason, ThinkingLevel, Usage, UserBlock};
 use axome_protocol::chat::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
 
-use crate::services::history::normalize_title;
+pub(super) fn parts_from_wire(parts: Vec<ChatPart>) -> Result<axo::PromptInput, ApiError> {
+    let mut content = 0usize;
+    parts
+        .into_iter()
+        .map(|part| {
+            Ok(match part {
+                ChatPart::Text { text } => axo::PromptPart::Text { text },
+                ChatPart::Paste { text } => axo::PromptPart::Paste { text },
+                ChatPart::File { path } => axo::PromptPart::File { path },
+                ChatPart::Saved { url, image } => axo::PromptPart::Saved { url, image },
+                ChatPart::Content { name, bytes } => {
+                    let bytes = STANDARD.decode(bytes).map_err(|error| {
+                        ApiError::InvalidArgument(format!("Invalid content bytes: {error}"))
+                    })?;
+                    content += bytes.len();
+                    if content > MAX_CONTENT_BYTES {
+                        return Err(ApiError::InvalidArgument(
+                            "A message can contain at most 20 MiB of content.".into(),
+                        ));
+                    }
+                    axo::PromptPart::Content { name, bytes }
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()
+        .map(axo::PromptInput::from)
+}
+
+pub(super) fn parts_to_wire(parts: &[axo::PromptPart]) -> Vec<ChatPart> {
+    parts
+        .iter()
+        .map(|part| match part {
+            axo::PromptPart::Text { text } => ChatPart::Text { text: text.clone() },
+            axo::PromptPart::Paste { text } => ChatPart::Paste { text: text.clone() },
+            axo::PromptPart::File { path } => ChatPart::File { path: path.clone() },
+            axo::PromptPart::Saved { url, image } => ChatPart::Saved {
+                url: url.clone(),
+                image: *image,
+            },
+            axo::PromptPart::Content { name, bytes } => ChatPart::Content {
+                name: name.clone(),
+                bytes: STANDARD.encode(bytes),
+            },
+        })
+        .collect()
+}
+
+fn parts_text(parts: &[axo::PromptPart]) -> String {
+    let mut result = String::new();
+    for part in parts {
+        let reference = match part {
+            axo::PromptPart::Text { text } | axo::PromptPart::Paste { text } => {
+                result.push_str(text);
+                continue;
+            }
+            axo::PromptPart::File { path } => path,
+            axo::PromptPart::Saved { url, .. } => url,
+            axo::PromptPart::Content { name, .. } => name,
+        };
+        result.push('@');
+        let quoted = reference.chars().any(char::is_whitespace);
+        if quoted {
+            result.push('"');
+        }
+        result.push_str(reference);
+        if quoted {
+            result.push('"');
+        }
+    }
+    result
+}
+
+pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
+    ChatCommand {
+        name: value.name,
+        description: value.description,
+        policy: match value.policy {
+            axo::CommandPolicy::Alongside => ChatCommandPolicy::Alongside,
+            axo::CommandPolicy::WhenIdle => ChatCommandPolicy::WhenIdle,
+            axo::CommandPolicy::Queued => ChatCommandPolicy::Queued,
+        },
+        kind: match value.kind {
+            axo::CommandKind::Builtin { parameters } => ChatCommandKind::Builtin { parameters },
+            axo::CommandKind::Skill { argument_hint } => ChatCommandKind::Skill { argument_hint },
+        },
+    }
+}
 
 pub(super) fn thinking_to_wire(level: ThinkingLevel) -> ChatThinking {
     match level {
@@ -121,10 +209,130 @@ fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&
             } => {
                 parent = ancestor.parent_id();
             }
-            _ => return Some(id),
+            Entry::Message { .. }
+            | Entry::ThinkingLevelChange { .. }
+            | Entry::ModelChange { .. }
+            | Entry::Usage { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::RunEnd { .. }
+            | Entry::Unknown(_) => return Some(id),
         }
     }
     None
+}
+
+fn moved_blocks(entries: &[SeqEntry], at: usize) -> u32 {
+    let Entry::ContextEdit {
+        target_id,
+        replacement: Some(replacement),
+        ..
+    } = &entries[at].entry
+    else {
+        return 0;
+    };
+    let mut parent = entries[at].entry.parent_id();
+    for seq in entries[..at].iter().rev() {
+        if seq.entry.id() != parent {
+            continue;
+        }
+        parent = seq.entry.parent_id();
+        let previous = if let Entry::ContextEdit {
+            target_id: previous_target,
+            replacement: Some(previous),
+            ..
+        } = &seq.entry
+        {
+            if previous_target != target_id {
+                continue;
+            }
+            std::borrow::Cow::Borrowed(&previous.content)
+        } else if seq.entry.id() == Some(target_id.as_str()) {
+            let content = match &seq.entry {
+                Entry::Message { message, .. } => match message {
+                    AgentMessage::Llm(Message::User(value)) => serde_json::to_value(&value.content),
+                    AgentMessage::Llm(Message::Assistant(value)) => {
+                        serde_json::to_value(&value.content)
+                    }
+                    AgentMessage::Llm(Message::ToolResult(value)) => {
+                        serde_json::to_value(&value.content)
+                    }
+                    AgentMessage::Llm(Message::System(_)) => return 0,
+                    AgentMessage::Custom(value) => serde_json::to_value(&value.content),
+                },
+                Entry::CustomMessage { content, .. } => serde_json::to_value(content),
+                Entry::ThinkingLevelChange { .. }
+                | Entry::ModelChange { .. }
+                | Entry::Usage { .. }
+                | Entry::Compaction { .. }
+                | Entry::BranchSummary { .. }
+                | Entry::Custom { .. }
+                | Entry::ContextEdit { .. }
+                | Entry::Label { .. }
+                | Entry::SessionInfo { .. }
+                | Entry::Leaf { .. }
+                | Entry::RunStart { .. }
+                | Entry::RunEnd { .. }
+                | Entry::RunResumed { .. }
+                | Entry::Submission { .. }
+                | Entry::Unknown(_) => return 0,
+            };
+            let Ok(content) = content else {
+                return 0;
+            };
+            std::borrow::Cow::Owned(content)
+        } else {
+            continue;
+        };
+        return replacement.content.as_array().map_or(0, |blocks| {
+            let old = previous.as_array();
+            blocks
+                .iter()
+                .enumerate()
+                .filter(|(index, block)| old.and_then(|blocks| blocks.get(*index)) != Some(*block))
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX)
+        });
+    }
+    0
+}
+
+fn context_moved(entries: &[SeqEntry], at: usize) -> Option<ChatEntryBody> {
+    // axo commits one elision as a contiguous, parent-linked batch of replacements.
+    // There is no persisted maintenance id: adjacent passes without intervening entries
+    // are indistinguishable, so contiguous parent-linked replacements share one row.
+    // Omission edits (failed-response recovery) are not recoverable moves.
+    let replacement = |entry: &Entry| {
+        matches!(
+            entry,
+            Entry::ContextEdit {
+                replacement: Some(_),
+                ..
+            }
+        )
+    };
+    if at > 0
+        && replacement(&entries[at - 1].entry)
+        && entries[at].entry.parent_id() == entries[at - 1].entry.id()
+    {
+        return None;
+    }
+    let mut blocks = 0u32;
+    for index in at..entries.len() {
+        if !replacement(&entries[index].entry)
+            || (index > at && entries[index].entry.parent_id() != entries[index - 1].entry.id())
+        {
+            break;
+        }
+        blocks = blocks.saturating_add(moved_blocks(entries, index));
+    }
+    (blocks > 0).then_some(ChatEntryBody::ContextMoved { blocks })
 }
 
 pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
@@ -133,6 +341,7 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
     let body = match value {
         Entry::Message {
             message: AgentMessage::Llm(Message::User(user)),
+            submission_id,
             ..
         } => {
             let by_id: HashMap<_, _> = entries
@@ -146,7 +355,27 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
                 .collect();
             siblings.sort_by_key(|seq| seq.seq);
             ChatEntryBody::User {
-                text: text(&user.content),
+                parts: submission_id
+                    .as_ref()
+                    .and_then(|id| {
+                        entries.iter().find_map(|seq| {
+                            if let Entry::Submission {
+                                submission_id,
+                                parts,
+                                ..
+                            } = &seq.entry
+                            {
+                                (submission_id == id).then(|| parts_to_wire(parts))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        vec![ChatPart::Text {
+                            text: text(&user.content),
+                        }]
+                    }),
                 anchor: user_anchor.map(str::to_owned),
                 siblings: siblings
                     .into_iter()
@@ -214,6 +443,10 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
         Entry::BranchSummary { summary, .. } => ChatEntryBody::BranchSummary {
             summary: summary.clone(),
         },
+        Entry::ContextEdit {
+            replacement: Some(_),
+            ..
+        } => context_moved(entries, at)?,
         Entry::RunEnd {
             outcome, reason, ..
         } if reason.as_deref() != Some("fork") => ChatEntryBody::RunEnd {
@@ -225,7 +458,22 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
             },
             reason: reason.clone(),
         },
-        _ => return None,
+        Entry::Message {
+            message: AgentMessage::Llm(Message::System(_)) | AgentMessage::Custom(_),
+            ..
+        }
+        | Entry::CustomMessage { .. }
+        | Entry::RunEnd { .. }
+        | Entry::Usage { .. }
+        | Entry::Custom { .. }
+        | Entry::ContextEdit { .. }
+        | Entry::Label { .. }
+        | Entry::SessionInfo { .. }
+        | Entry::Leaf { .. }
+        | Entry::RunStart { .. }
+        | Entry::RunResumed { .. }
+        | Entry::Submission { .. }
+        | Entry::Unknown(_) => return None,
     };
     Some(ChatEntry {
         id: base.id.to_string(),
@@ -252,12 +500,28 @@ pub(super) fn title_of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Opti
             } => name = Some(value.as_str()),
             Entry::Submission {
                 kind: SubmissionKind::Prompt,
-                content,
+                parts,
                 ..
             } if prompt.is_none() => {
-                prompt = Some(text(content));
+                prompt = Some(parts_text(parts));
             }
-            _ => {}
+            Entry::Message { .. }
+            | Entry::ThinkingLevelChange { .. }
+            | Entry::ModelChange { .. }
+            | Entry::Usage { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::Leaf { .. }
+            | Entry::RunStart { .. }
+            | Entry::RunEnd { .. }
+            | Entry::RunResumed { .. }
+            | Entry::Submission { .. }
+            | Entry::Unknown(_) => {}
         }
     }
     name.or(prompt.as_deref()).and_then(normalize_title)
@@ -272,7 +536,21 @@ pub(super) fn selection(entries: &[SeqEntry], path: &[usize]) -> (Option<String>
                 provider, model_id, ..
             } => model = Some(format!("{provider}/{model_id}")),
             Entry::ThinkingLevelChange { thinking_level, .. } => thinking = *thinking_level,
-            _ => {}
+            Entry::Message { .. }
+            | Entry::Usage { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::Leaf { .. }
+            | Entry::RunStart { .. }
+            | Entry::RunEnd { .. }
+            | Entry::RunResumed { .. }
+            | Entry::Submission { .. }
+            | Entry::Unknown(_) => {}
         }
     }
     (model, thinking)
@@ -287,7 +565,23 @@ pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -
                 message: AgentMessage::Llm(Message::Assistant(value)),
                 ..
             } => Some(value.usage.total_tokens),
-            _ => None,
+            Entry::Message { .. }
+            | Entry::ThinkingLevelChange { .. }
+            | Entry::ModelChange { .. }
+            | Entry::Usage { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::Leaf { .. }
+            | Entry::RunStart { .. }
+            | Entry::RunEnd { .. }
+            | Entry::RunResumed { .. }
+            | Entry::Submission { .. }
+            | Entry::Unknown(_) => None,
         })
         .unwrap_or(0);
     let mut result = ChatStats {
@@ -312,7 +606,22 @@ pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -
             | Entry::BranchSummary {
                 usage: Some(usage), ..
             } => usage,
-            _ => continue,
+            Entry::Message { .. }
+            | Entry::ThinkingLevelChange { .. }
+            | Entry::ModelChange { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::Leaf { .. }
+            | Entry::RunStart { .. }
+            | Entry::RunEnd { .. }
+            | Entry::RunResumed { .. }
+            | Entry::Submission { .. }
+            | Entry::Unknown(_) => continue,
         };
         result.input += usage.input;
         result.output += usage.output;
@@ -334,7 +643,23 @@ pub(super) fn queue_at_attach(
                 submission_id: Some(id),
                 ..
             } => Some(id.as_str()),
-            _ => None,
+            Entry::Message { .. }
+            | Entry::ThinkingLevelChange { .. }
+            | Entry::ModelChange { .. }
+            | Entry::Usage { .. }
+            | Entry::Compaction { .. }
+            | Entry::BranchSummary { .. }
+            | Entry::Custom { .. }
+            | Entry::CustomMessage { .. }
+            | Entry::ContextEdit { .. }
+            | Entry::Label { .. }
+            | Entry::SessionInfo { .. }
+            | Entry::Leaf { .. }
+            | Entry::RunStart { .. }
+            | Entry::RunEnd { .. }
+            | Entry::RunResumed { .. }
+            | Entry::Submission { .. }
+            | Entry::Unknown(_) => None,
         })
         .collect();
     let mut steering = Vec::new();
@@ -343,7 +668,7 @@ pub(super) fn queue_at_attach(
         if let Entry::Submission {
             submission_id,
             kind,
-            content,
+            parts,
             ..
         } = &seq.entry
         {
@@ -355,7 +680,7 @@ pub(super) fn queue_at_attach(
                 SubmissionKind::FollowUp => (&mut follow_up, ChatQueueKind::FollowUp),
                 SubmissionKind::Prompt => continue,
             };
-            queue.push((seq.seq, submission_id, kind, content));
+            queue.push((seq.seq, submission_id, kind, parts));
         }
     }
     steering.sort_by_key(|item| item.0);
@@ -374,12 +699,12 @@ pub(super) fn queue_at_attach(
     queued.sort_by_key(|item| item.0);
     queued
         .into_iter()
-        .map(|(_, id, kind, content)| {
+        .map(|(_, id, kind, parts)| {
             (
                 id.clone(),
                 ChatQueued {
                     kind,
-                    text: text(content),
+                    parts: parts_to_wire(parts),
                 },
             )
         })
@@ -443,7 +768,7 @@ mod tests {
             base: base(id, parent),
             submission_id: id.into(),
             kind,
-            content: vec![UserBlock::Text { text: id.into() }],
+            parts: vec![axo::PromptPart::Text { text: id.into() }],
             request_id: None,
         }
     }
@@ -471,6 +796,20 @@ mod tests {
                 timestamp: 0,
             })),
         }
+    }
+
+    #[test]
+    fn content_over_the_message_limit_is_rejected() {
+        let part = |len: usize| ChatPart::Content {
+            name: "blob.bin".into(),
+            bytes: STANDARD.encode(vec![0u8; len]),
+        };
+        let half = MAX_CONTENT_BYTES / 2 + 1;
+        assert!(matches!(
+            parts_from_wire(vec![part(half), part(half)]),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        assert!(parts_from_wire(vec![part(MAX_CONTENT_BYTES)]).is_ok());
     }
 
     #[test]
@@ -609,14 +948,18 @@ mod tests {
                     "follow".into(),
                     ChatQueued {
                         kind: ChatQueueKind::FollowUp,
-                        text: "follow".into()
+                        parts: vec![ChatPart::Text {
+                            text: "follow".into()
+                        }]
                     }
                 ),
                 (
                     "steer".into(),
                     ChatQueued {
                         kind: ChatQueueKind::Steer,
-                        text: "steer".into()
+                        parts: vec![ChatPart::Text {
+                            text: "steer".into()
+                        }]
                     }
                 ),
             ]

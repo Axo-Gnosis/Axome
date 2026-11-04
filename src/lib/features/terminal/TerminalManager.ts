@@ -601,7 +601,9 @@ export class TerminalManager {
 
     const linkHandlers = {
       activate: (event: MouseEvent, text: string) => {
-        if (event.ctrlKey || event.metaKey) void openLink(text, this.getFolderPath())
+        if (!(event.ctrlKey || event.metaKey)) return
+        const folderPath = this.getFolderPath()
+        void openLink(text, folderPath ? { folderPath } : undefined)
       },
       hover: (_event: MouseEvent, text: string) => {
         if (this.hostEl) this.hostEl.title = `Ctrl+click to follow: ${text}`

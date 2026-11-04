@@ -86,6 +86,14 @@ The home dashboard reads local Claude Code, Codex, and OMP histories to show pro
 
 In native Axo chats, `Alt+O` cycles through folded work, call summaries, and open thoughts/tools (including nested calls), then folds everything again, resetting individual folds. Opening calls keeps long outputs truncated; use each output's More control to reveal the remaining lines. Thoughts and tool outputs start folded; pending questions stay accessible.
 
+The Axo chat composer works like a chat app's:
+
+- **Commands:** type `/` for the session's commands (axo's built-ins and your skills). A command stays ordinary text you can edit anywhere; its arguments are highlighted as you type, arguments with fixed values (modes, models, true/false) list them at the caret, and the line is checked before sending, including text the command doesn't take. Commands that need an idle session are disabled while a turn runs.
+- **Mentions:** type `@` to mention a project file or folder as a chip; start with `../`, `/`, or `~/` to mention anything else on the chat's machine, and press `Tab` on a folder to list its contents. The paperclip opens the location browser to attach any file or folder there (`Ctrl+Enter` picks the open folder). Files axo's machine can see, including drops, are referenced by path rather than copied. Pastes, and local files dropped on a remote chat, are copied into the session (up to 20 MiB per message). Long pastes collapse into a chip.
+- **Chips everywhere:** chips look the same in replayed, reopened, and forked chats.
+- **Links:** `artifact://`, `local://`, and `skill://` links open the file from that chat's own session, even when the chat isn't loaded.
+- **Keys:** a chip sits in the text like one character: the caret steps over it, `Backspace` deletes it whole, and it selects, copies, and pastes with the text around it. `Esc` closes a list first, then stops the run.
+
 <details>
 <summary>📷 See the dashboard and an agent workspace</summary>
 

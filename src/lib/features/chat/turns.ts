@@ -19,7 +19,10 @@ export type Step =
       (
         | { kind: 'text'; text: string }
         | { kind: 'thinking'; text: string; redacted: boolean }
-        | Extract<ChatEntryBody, { kind: 'notice' | 'compaction' | 'branchSummary' }>
+        | Extract<
+            ChatEntryBody,
+            { kind: 'notice' | 'compaction' | 'branchSummary' | 'modelChange' | 'thinkingChange' | 'contextMoved' }
+          >
       ))
 /** Recorded settings for this turn; null when absent from the transcript. */
 export type TurnConfig = { model: string | null; thinking: ChatThinking | null }
@@ -88,16 +91,14 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
       current = start(entry as UserEntry)
       continue
     }
-    if (body.kind === 'modelChange') {
-      settings.model = body.model
-      continue
-    }
-    if (body.kind === 'thinkingChange') {
-      settings.thinking = body.thinking
-      continue
-    }
+    if (body.kind === 'modelChange') settings.model = body.model
+    if (body.kind === 'thinkingChange') settings.thinking = body.thinking
+    // Selections before any content are the session's starting config, not command results.
+    if (!current && (body.kind === 'modelChange' || body.kind === 'thinkingChange')) continue
     current ??= start(null, entry.timestamp)
-    current.endedAt = entry.timestamp
+    // Only the run's own entries time a reply; picker changes and maintenance recorded later don't.
+    if (body.kind === 'assistant' || body.kind === 'toolResult' || body.kind === 'notice' || body.kind === 'runEnd')
+      current.endedAt = entry.timestamp
     if (body.kind === 'toolResult') continue
     if (body.kind === 'assistant') {
       current.config = { model: body.model, thinking: settings.thinking }

@@ -9,12 +9,14 @@
     text,
     streaming,
     folderPath,
+    sessionId,
     class: className,
     ...rest
   }: HTMLAttributes<HTMLDivElement> & {
     text: string
     streaming: boolean
     folderPath?: string
+    sessionId?: string | null
   } = $props()
 
   let sampled = $state(untrack(() => text))
@@ -42,6 +44,6 @@
 
 <div data-slot="message-response" class={cn('flex flex-col gap-3', className)} {...rest}>
   {#each blocks as block, i (i)}
-    <MarkdownRenderer source={block} {folderPath} class="p-0" />
+    <MarkdownRenderer source={block} {folderPath} {sessionId} class="p-0" />
   {/each}
 </div>

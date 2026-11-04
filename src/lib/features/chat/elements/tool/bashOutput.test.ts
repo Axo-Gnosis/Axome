@@ -71,7 +71,7 @@ test('only an exact final failure paragraph on an error result becomes a semanti
 })
 
 test('truncation notice and status are independent of the local tail without losing source text', () => {
-  const path = '/tmp/output with spaces.log'
+  const path = 'artifact://output-with-spaces.log'
   const body = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n')
   for (const notice of [
     `[Showing lines 1-800 and 801-2001 of 2001. Full output: ${path}]`,
@@ -79,27 +79,33 @@ test('truncation notice and status are independent of the local tail without los
     `[Lines longer than 768 bytes were cut. Full output: ${path}]`
   ]) {
     const source = `${body}\n\n${notice}\n\nCommand exited with code 1`
-    const output = bashOutput(call([text(source)], true, { fullOutputPath: path }), 12)
+    const output = bashOutput(call([text(source)], true, { fullOutput: path }), 12)
     assert.equal(output.notice, notice.slice(1, -`. Full output: ${path}]`.length))
     assert.equal(output.status, 'Command exited with code 1')
     assert.equal(output.hidden, 8)
     assert.deepEqual(output.parts, [text(body.split('\n').slice(8).join('\n'))])
-    assert.equal(output.fullOutputPath, path)
+    assert.equal(output.fullOutput, path)
   }
 })
 
-test('lookalike truncation logs stay in the source unless metadata path and paragraph match', () => {
-  const notice = '[Lines longer than 768 bytes were cut. Full output: /tmp/actual.log]'
-  for (const details of [null, {}, { fullOutputPath: '/tmp/other.log' }, { fullOutputPath: 12 }]) {
+test('lookalike truncation logs stay in the source unless metadata URL and paragraph match', () => {
+  const notice = '[Lines longer than 768 bytes were cut. Full output: artifact://actual.log]'
+  for (const details of [null, {}, { fullOutput: 'artifact://other.log' }, { fullOutput: 12 }]) {
     const source = `log\n\n${notice}`
     const output = bashOutput(call([text(source)], false, details))
     assert.equal(output.notice, null)
     assert.deepEqual(output.parts, [text(source)])
   }
   const source = `log\n${notice}`
-  assert.equal(bashOutput(call([text(source)], false, { fullOutputPath: '/tmp/actual.log' })).notice, null)
-  for (const path of ['', '/tmp/invalid\npath', '/tmp/invalid\u0000path']) {
-    assert.equal(bashOutput(call([], false, { fullOutputPath: path })).fullOutputPath, null)
+  assert.equal(bashOutput(call([text(source)], false, { fullOutput: 'artifact://actual.log' })).notice, null)
+  for (const path of [
+    '',
+    'artifact://',
+    '/tmp/output.log',
+    'artifact://invalid\npath',
+    'artifact://invalid\u0000path'
+  ]) {
+    assert.equal(bashOutput(call([], false, { fullOutput: path })).fullOutput, null)
   }
 })
 

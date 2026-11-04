@@ -13,6 +13,7 @@
     overrides,
     onView,
     folderPath,
+    sessionId,
     onOpenLocation,
     controller
   }: {
@@ -21,6 +22,7 @@
     overrides: Record<string, BlockView>
     onView: (id: string, view: BlockView) => void
     folderPath: string
+    sessionId: string | null
     onOpenLocation: (path: string, line?: number) => void
     controller: ChatController
   } = $props()
@@ -58,12 +60,24 @@
   <ToolFrame
     {header}
     {view}
+    {folderPath}
+    {sessionId}
     {onOpenLocation}
     onToggle={() => onView(viewId, view === 'collapsed' ? 'preview' : 'collapsed')}
   >
     <div class="flex min-w-0 flex-col border-l border-edge">
       {#each group.calls as call (call.id)}
-        <ToolBlock {call} {expansion} {overrides} {onView} {folderPath} {onOpenLocation} {controller} nested />
+        <ToolBlock
+          {call}
+          {expansion}
+          {overrides}
+          {onView}
+          {folderPath}
+          {sessionId}
+          {onOpenLocation}
+          {controller}
+          nested
+        />
       {/each}
     </div>
   </ToolFrame>
