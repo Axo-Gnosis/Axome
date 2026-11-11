@@ -31,6 +31,16 @@ Axome is a Linux-first desktop app for running coding-agent CLIs inside a local 
   - serialized models in `src-crates/axome-protocol`
 - Keep sessions folder-scoped; tabs drive the workbench, and a folder is open exactly while it has a tab.
 
+## Living Documentation
+
+Plans and the user-facing reference live in dedicated files. Do not duplicate them here, and never let them drift:
+
+- **`README.md`**: user-facing reference for implemented features, configuration (`.axome/settings.jsonc`, `.axome/tasks.jsonc`), and packaging. Update it with every user-visible behavior or config change.
+- **`docs/plan/design.md`**: goals, constraints, and settled decisions for Axome's axo integration. Record each decision as it is made; otherwise change it only when a goal changes.
+- **`docs/plan/plan.md`**: the live adoption plan: topics, open questions (stable IDs `Q1`…), the mechanical migration checklist, and remaining axo gaps. Update as topics progress or settle.
+- **`docs/plan/research/`**: axo surveys kept as evidence, each pinned to an axo revision. When axo moves, add a new `axo-<rev>/` folder rather than editing an old survey.
+- **`TODO.md`**: backlog outside the axo adoption.
+
 ## Validation
 
 Use the narrowest relevant checks that exist today:
