@@ -19,9 +19,8 @@
   import { Button } from '$lib/components/ui/button'
   import { Chip } from '$lib/components/ui/chip'
   import * as Command from '$lib/components/ui/command'
-  import { PaletteFooter } from '$lib/components/ui/command'
+  import { PaletteFooter, paletteSurfaceVariants } from '$lib/components/ui/command'
   import { inputVariants } from '$lib/components/ui/input'
-  import { Kbd } from '$lib/components/ui/kbd'
   import * as Popover from '$lib/components/ui/popover'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import { formatTokens } from '$lib/features/chat/format'
@@ -176,7 +175,7 @@
     {#if variant === 'ghost'}<Tooltip.Content>{label}</Tooltip.Content>{/if}
   </Tooltip.Root>
 
-  <Popover.Content {side} {align} class="flex w-104 flex-col overflow-hidden p-0">
+  <Popover.Content {side} {align} class={paletteSurfaceVariants({ class: 'w-104 p-0' })}>
     <Command.Root class="rounded-lg bg-transparent" {label} {filter}>
       <Command.Input placeholder="Search models and roles…" bind:value={search} />
       <Command.List class="max-h-80 overflow-y-auto">
@@ -228,8 +227,6 @@
         {/each}
       </Command.List>
     </Command.Root>
-    <PaletteFooter>
-      <span class="ms-auto flex items-center gap-1.5"><Kbd>↵</Kbd> select</span>
-    </PaletteFooter>
+    <PaletteFooter hints={[{ keys: ['↵'], label: 'select' }]} />
   </Popover.Content>
 </Popover.Root>

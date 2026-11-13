@@ -10,7 +10,6 @@
     commandItemVariants,
     commandGroupHeadingVariants
   } from '$lib/components/ui/command'
-  import { Kbd } from '$lib/components/ui/kbd'
   import { openFolderPicker } from '$lib/features/app-actions/actions.svelte'
   import { getRecentFolders } from '$lib/features/folders/state.svelte'
   import { getErrorMessage } from '$lib/utils/client-error'
@@ -21,9 +20,7 @@
   import { getActiveFolderPath } from '$lib/features/workbench/state.svelte'
   import FileIcon from '$lib/icons/FileIcon.svelte'
   import {
-    ArrowDown02Icon,
     ArrowLeft02Icon,
-    ArrowRight02Icon,
     ArrowUp02Icon,
     ChevronRightIcon,
     EyeIcon,
@@ -800,43 +797,29 @@
         </section>
       {/if}
     </div>
-    <PaletteFooter>
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span class="flex items-center gap-1.5"
-          ><Kbd><Icon icon={ArrowUp02Icon} size={12} /></Kbd><Kbd><Icon icon={ArrowDown02Icon} size={12} /></Kbd
-          >navigate</span
-        >
-        <span class="flex items-center gap-1.5"
-          ><Kbd>Enter</Kbd>{pickingFiles && selected?.kind === 'folder'
-            ? 'browse'
-            : selection
-              ? 'select'
-              : selected?.kind === 'server'
-                ? 'browse'
-                : 'open'}</span
-        >
-        {#if pickingFiles && path}
-          <span class="flex items-center gap-1.5"><Kbd>Ctrl+Enter</Kbd>select folder</span>
-        {/if}
-        {#if editing}
-          <span class="flex items-center gap-1.5"><Kbd>Tab</Kbd>complete</span>
-        {:else}
-          {#if selected?.kind === 'folder'}
-            <span class="flex items-center gap-1.5"
-              ><Kbd
-                >{#if search}Alt+{/if}<Icon icon={ArrowRight02Icon} size={12} /></Kbd
-              >browse</span
-            >
-          {/if}
-          {#if path}<span class="flex items-center gap-1.5"
-              ><Kbd
-                >{#if search}Alt+{/if}<Icon icon={ArrowLeft02Icon} size={12} /></Kbd
-              >parent</span
-            >{/if}
-          <span class="flex items-center gap-1.5"><Kbd>Ctrl+L</Kbd>path</span>
-        {/if}
-      </div>
-      <span class="flex shrink-0 items-center gap-1.5"><Kbd>Esc</Kbd>{editing ? 'cancel' : 'close'}</span>
-    </PaletteFooter>
+    <PaletteFooter
+      hints={[
+        {
+          keys: ['↵'],
+          label:
+            pickingFiles && selected?.kind === 'folder'
+              ? 'browse'
+              : selection
+                ? 'select'
+                : selected?.kind === 'server'
+                  ? 'browse'
+                  : 'open'
+        },
+        ...(pickingFiles && path ? [{ keys: ['Ctrl+Enter'], label: 'select folder' }] : []),
+        ...(editing
+          ? [{ keys: ['Tab'], label: 'complete' }]
+          : [
+              ...(selected?.kind === 'folder' ? [{ keys: [search ? 'Alt+→' : '→'], label: 'browse' }] : []),
+              ...(path ? [{ keys: [search ? 'Alt+←' : '←'], label: 'parent' }] : []),
+              { keys: ['Ctrl+L'], label: 'path' }
+            ])
+      ]}
+      dismiss={editing ? 'cancel' : 'close'}
+    />
   </PaletteDialog>
 {/if}

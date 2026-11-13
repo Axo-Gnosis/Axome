@@ -543,7 +543,7 @@ The two cursor gradients have a fixed 200px radius; the spotlight uses `var(--co
 
 ### 11.12 Command palette
 
-`bg-raised border border-edge rounded-xl shadow-popover` with `Dialog.Overlay` backdrop. `PaletteDialog` in `ui/command` imports Bits UI directly and owns the shared shell for `CommandCenter.svelte` and the location browser: `max-w-3xl` (48rem), 12px viewport gutters, top at 15vh, height capped at 80dvh. The dialog boundary is the visible palette so backdrop clicks dismiss it. Reuse `PaletteSearch`, `PaletteFooter`, and `commandItemVariants` for both surfaces; folder previews step down to `bg-surface`. Features use this wrapper, not raw dialog parts.
+`paletteSurfaceVariants` in `ui/command` owns the shared shell (`bg-raised border border-edge rounded-xl shadow-popover`), and `PaletteDialog` wraps it for modal palettes (`CommandCenter.svelte`, `Browser.svelte`: `max-w-3xl`, 12px viewport gutters, top at 15vh, height capped at 80dvh, backdrop dismiss). Inline/popover palettes (`PromptSuggestions.svelte`, `ModelPicker.svelte`) reuse `paletteSurfaceVariants`, `commandItemVariants`, `commandGroupHeadingVariants`, `paletteEmptyVariants`, and `Command.List` scroll-padding. `PaletteFooter` is data-driven (`hints` + `dismiss`, prepending `↑`/`↓ navigate` and trailing `Esc` automatically) — never hand-roll `<Kbd>` footer markup in consumers. Folder previews step down to `bg-surface`.
 
 ### 11.13 Toast / notification
 

@@ -15,6 +15,10 @@
   } = $props()
 </script>
 
-<Command.List bind:ref class={cn('max-h-[300px] overflow-x-hidden overflow-y-auto p-1', className)} {...rest}>
+<Command.List
+  bind:ref
+  class={cn('max-h-[300px] [scroll-padding-block:0.5rem] overflow-x-hidden overflow-y-auto p-1', className)}
+  {...rest}
+>
   {#if children}{@render children()}{/if}
 </Command.List>

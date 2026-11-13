@@ -1,3 +1,11 @@
+<script lang="ts" module>
+  import { tv } from 'tailwind-variants'
+
+  export const paletteEmptyVariants = tv({
+    base: 'py-6 text-center text-sm text-muted'
+  })
+</script>
+
 <script lang="ts">
   import { Command } from 'bits-ui'
   import { cn } from '$lib/utils/cn'
@@ -13,7 +21,7 @@
   } = $props()
 </script>
 
-<Command.Empty class={cn('py-6 text-center text-sm text-muted', className)} {...rest}>
+<Command.Empty class={cn(paletteEmptyVariants(), className)} {...rest}>
   {#if children}
     {@render children()}
   {:else}

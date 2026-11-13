@@ -19,8 +19,13 @@
 
 <script lang="ts">
   import Icon from '$lib/icons/Icon.svelte'
-  import { Kbd } from '$lib/components/ui/kbd'
-  import { PaletteFooter, commandGroupHeadingVariants, commandItemVariants } from '$lib/components/ui/command'
+  import {
+    PaletteFooter,
+    commandGroupHeadingVariants,
+    commandItemVariants,
+    paletteEmptyVariants,
+    paletteSurfaceVariants
+  } from '$lib/components/ui/command'
 
   let {
     id,
@@ -56,14 +61,14 @@
   data-slot="prompt-suggestions"
   role="presentation"
   onpointerdown={(event) => event.preventDefault()}
-  class="absolute inset-x-0 bottom-full z-20 mb-2 flex max-h-[min(26rem,50vh)] flex-col overflow-hidden rounded-xl border border-edge bg-raised shadow-popover"
+  class={paletteSurfaceVariants({ class: 'absolute inset-x-0 bottom-full z-20 mb-2 max-h-[min(26rem,50vh)]' })}
 >
   <div
     {id}
     role="listbox"
     aria-label={label}
     tabindex="-1"
-    class="min-h-0 flex-1 [scroll-padding-block:0.25rem] overflow-y-auto p-1"
+    class="min-h-0 flex-1 [scroll-padding-block:0.5rem] overflow-y-auto p-1"
   >
     {#each groups as group (group.heading)}
       <div role="group" aria-label={group.heading}>
@@ -97,15 +102,13 @@
         {/each}
       </div>
     {:else}
-      <p class="px-2 py-1.5 text-sm text-muted">No matches</p>
+      <p class={paletteEmptyVariants({ class: 'px-2 py-1.5 text-left' })}>No matches</p>
     {/each}
   </div>
-  <PaletteFooter>
-    <div class="flex items-center gap-3">
-      <span class="flex items-center gap-1.5"><Kbd>↑</Kbd><Kbd>↓</Kbd> navigate</span>
-      <span class="flex items-center gap-1.5"><Kbd>↵</Kbd> select</span>
-      {#if items[active]?.complete}<span class="flex items-center gap-1.5"><Kbd>Tab</Kbd> open folder</span>{/if}
-    </div>
-    <span class="flex items-center gap-1.5"><Kbd>Esc</Kbd> close</span>
-  </PaletteFooter>
+  <PaletteFooter
+    hints={[
+      { keys: ['↵'], label: 'select' },
+      ...(items[active]?.complete ? [{ keys: ['Tab'], label: 'open folder' }] : [])
+    ]}
+  />
 </div>

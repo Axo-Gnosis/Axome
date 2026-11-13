@@ -2,7 +2,6 @@
   import { untrack } from 'svelte'
   import * as Command from '$lib/components/ui/command'
   import { PaletteDialog, PaletteFooter } from '$lib/components/ui/command'
-  import { Kbd } from '$lib/components/ui/kbd'
   import RebindDialog from '$lib/features/command-palette/shortcuts/RebindDialog.svelte'
   import { HistoryIcon, PencilIcon, TerminalIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
@@ -302,7 +301,7 @@
       placeholder={filePick?.placeholder ?? MODE_PLACEHOLDERS[paletteMode]}
       bind:value={search}
     />
-    <Command.List bind:ref={commandListNode} class="max-h-[50vh] [scroll-padding-block:0.5rem]">
+    <Command.List bind:ref={commandListNode} class="max-h-[50vh]">
       <Command.Empty />
 
       {#each activeGroups as group, i (group.heading)}
@@ -366,37 +365,18 @@
   </Command.Root>
   <!-- Footer hints surface core palette shortcuts so users learn -->
   <!-- navigation/editor-mode affordances without a separate help pane. -->
-  <PaletteFooter>
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <span class="flex items-center gap-1.5">
-        <Kbd>↑</Kbd>
-        <Kbd>↓</Kbd>
-        navigate
-      </span>
-      <span class="flex items-center gap-1.5">
-        <Kbd>↵</Kbd>
-        run
-      </span>
-      {#if !isPrefixedMode}
-        <span class="flex items-center gap-1.5">
-          <Kbd>&gt;</Kbd>
-          editor
-        </span>
-        <span class="flex items-center gap-1.5">
-          <Kbd>!</Kbd>
-          tasks
-        </span>
-        <span class="flex items-center gap-1.5">
-          <Kbd>/</Kbd>
-          files
-        </span>
-      {/if}
-    </div>
-    <span class="flex items-center gap-1.5">
-      <Kbd>Esc</Kbd>
-      close
-    </span>
-  </PaletteFooter>
+  <PaletteFooter
+    hints={[
+      { keys: ['↵'], label: 'run' },
+      ...(!isPrefixedMode
+        ? [
+            { keys: ['>'], label: 'editor' },
+            { keys: ['!'], label: 'tasks' },
+            { keys: ['/'], label: 'files' }
+          ]
+        : [])
+    ]}
+  />
 </PaletteDialog>
 
 {#if rebindTarget}

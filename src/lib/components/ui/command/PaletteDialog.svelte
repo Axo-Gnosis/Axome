@@ -1,3 +1,11 @@
+<script lang="ts" module>
+  import { tv } from 'tailwind-variants'
+
+  export const paletteSurfaceVariants = tv({
+    base: 'flex flex-col overflow-hidden rounded-xl border border-edge bg-raised shadow-popover'
+  })
+</script>
+
 <script lang="ts">
   import { Dialog as DialogPrimitive } from 'bits-ui'
   import type { Snippet } from 'svelte'
@@ -26,7 +34,7 @@
     <!-- Keep the modal boundary on the palette, not the viewport, so backdrop clicks dismiss it. -->
     <DialogPrimitive.Content
       data-slot="palette-dialog"
-      class="fixed inset-x-3 top-[15vh] z-50 mx-auto flex max-h-[80dvh] max-w-3xl flex-col overflow-hidden rounded-xl border border-edge bg-raised shadow-popover"
+      class={paletteSurfaceVariants({ class: 'fixed inset-x-3 top-[15vh] z-50 mx-auto max-h-[80dvh] max-w-3xl' })}
       aria-label={label}
       {onkeydown}
       {onOpenAutoFocus}
