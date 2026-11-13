@@ -18,6 +18,7 @@ function call(args: Record<string, unknown>, output: string | ChatContent[], det
     arguments: args,
     status: 'done',
     output: content,
+    details,
     result: { kind: 'toolResult', callId: 'call', toolName: 'read', content, details, isError: false, durationMs: null }
   }
 }
@@ -31,7 +32,6 @@ function cut(body: string, overrides: Record<string, unknown> = {}) {
     outputBytes: new TextEncoder().encode(body).length,
     maxLines: 2000,
     maxBytes: 51200,
-    lastLinePartial: false,
     firstLineExceedsLimit: false,
     ...overrides
   }

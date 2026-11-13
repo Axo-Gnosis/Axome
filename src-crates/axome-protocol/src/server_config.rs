@@ -1,15 +1,23 @@
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::PathBuf};
 
 pub const DEFAULT_SERVER_PORT: u16 = 7420;
 
 pub const SERVER_CONFIG_FILE: &str = "server.jsonc";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Supervision {
+    #[default]
+    ProcessGroup,
+    Cgroup,
+}
+
 /// `server.jsonc`: how `axome-server` listens and admits clients. Separate from
 /// `settings.jsonc`, which paired clients can edit over RPC.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ServerConfig {
     /// UDP `host:port` for desktop connections.
     pub listen: SocketAddr,
@@ -20,6 +28,8 @@ pub struct ServerConfig {
     /// Absolute path to a read-only list of trusted client fingerprints, one
     /// `SHA256:<hex> [name]` per line, checked alongside paired clients.
     pub authorized_keys_file: Option<PathBuf>,
+    /// Command process supervision; cgroup requires delegated cgroup access.
+    pub supervision: Supervision,
     /// Serves the browser frontend when present. It has no authentication and
     /// grants the server user's full authority: keep it on loopback.
     pub web: Option<WebConfig>,
@@ -31,13 +41,14 @@ impl Default for ServerConfig {
             listen: SocketAddr::from(([0, 0, 0, 0], DEFAULT_SERVER_PORT)),
             identity_file: None,
             authorized_keys_file: None,
+            supervision: Supervision::default(),
             web: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct WebConfig {
     /// TCP `host:port` for the browser frontend.
     pub listen: SocketAddr,

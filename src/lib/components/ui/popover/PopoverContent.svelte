@@ -16,6 +16,8 @@
     sideOffset?: number
     align?: 'start' | 'center' | 'end'
     side?: 'top' | 'right' | 'bottom' | 'left'
+    /** Called when the popover would focus its first focusable child; prevent it to focus something else. */
+    onOpenAutoFocus?: (event: Event) => void
   } = $props()
 </script>
 

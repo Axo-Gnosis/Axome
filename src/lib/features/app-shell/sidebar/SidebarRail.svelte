@@ -14,12 +14,21 @@
   import NotificationsApplet from './applets/NotificationsApplet.svelte'
   import RemotesApplet from './applets/RemotesApplet.svelte'
   import ServerApplet from './applets/ServerApplet.svelte'
-  import { GitBranchIcon, FolderOpenIcon, ClipboardListIcon, MessageSquareIcon } from '@hugeicons/core-free-icons'
+  import {
+    GitBranchIcon,
+    FolderOpenIcon,
+    ClipboardListIcon,
+    MessageSquareIcon,
+    Settings01Icon
+  } from '@hugeicons/core-free-icons'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
   import { getGitSummary } from '$lib/features/git/state.svelte'
   import { describeOperation } from '$lib/features/git/operation'
   import { countLiveAgents } from '$lib/features/sessions/service.svelte'
   import { platform } from '$lib/platform'
+  import { openSettings } from '$lib/features/app-actions/actions.svelte'
+  import { isSettingsOpen } from '$lib/features/settings/dialog/state.svelte'
+  import { getSettingsIssueStatus } from '$lib/features/settings/state/diagnostics.svelte'
 
   let { folderPath }: { folderPath: string | null } = $props()
 
@@ -93,6 +102,10 @@
     {#if folderPath}<NixApplet {folderPath} />{/if}
     {#if platform.native}<RemotesApplet {folderPath} />{:else}<ServerApplet />{/if}
     <NotificationsApplet />
+    <!-- TEMPORARY: hamburger holding the old app menu; see AppMenu.svelte. -->
     <AppMenu />
+    <RailButton label="Settings" status={getSettingsIssueStatus()} active={isSettingsOpen()} onclick={openSettings}>
+      <Icon icon={Settings01Icon} size={16} />
+    </RailButton>
   </div>
 </div>

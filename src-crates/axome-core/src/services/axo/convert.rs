@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{errors::ApiError, services::history::normalize_title};
 use axo::store::{Entry, RunOutcome, SeqEntry, SubmissionKind};
-use axo_agent::{AgentMessage, AgentSnapshot};
+use axo::LiveSnapshot;
+use axo_agent::AgentMessage;
 use axo_ai::{AssistantBlock, Message, StopReason, ThinkingLevel, Usage, UserBlock};
 use axome_protocol::chat::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -79,8 +80,8 @@ fn parts_text(parts: &[axo::PromptPart]) -> String {
     result
 }
 
-pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
-    ChatCommand {
+pub(super) fn command(value: axo::CommandInfo) -> Option<ChatCommand> {
+    Some(ChatCommand {
         name: value.name,
         description: value.description,
         policy: match value.policy {
@@ -91,8 +92,9 @@ pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
         kind: match value.kind {
             axo::CommandKind::Builtin { parameters } => ChatCommandKind::Builtin { parameters },
             axo::CommandKind::Skill { argument_hint } => ChatCommandKind::Skill { argument_hint },
+            axo::CommandKind::Mode { .. } => return None,
         },
-    }
+    })
 }
 
 pub(super) fn thinking_to_wire(level: ThinkingLevel) -> ChatThinking {
@@ -179,13 +181,36 @@ pub(super) fn block(value: &AssistantBlock) -> ChatBlock {
     }
 }
 
-pub(super) fn is_user(value: &Entry) -> bool {
+fn submission<'a>(value: &Entry, entries: &'a [SeqEntry]) -> Option<&'a Entry> {
+    let Entry::Message {
+        submission_id: Some(id),
+        ..
+    } = value
+    else {
+        return None;
+    };
+    entries.iter().find_map(|seq| {
+        if let Entry::Submission { submission_id, .. } = &seq.entry {
+            (submission_id == id).then_some(&seq.entry)
+        } else {
+            None
+        }
+    })
+}
+
+pub(super) fn is_user(value: &Entry, entries: &[SeqEntry]) -> bool {
     matches!(
         value,
         Entry::Message {
             message: AgentMessage::Llm(Message::User(_)),
             ..
         }
+    ) && !matches!(
+        submission(value, entries),
+        Some(Entry::Submission {
+            kind: SubmissionKind::Quiet | SubmissionKind::Mail,
+            ..
+        })
     )
 }
 
@@ -203,6 +228,11 @@ fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&
             | Entry::Submission { .. }
             | Entry::RunStart { .. }
             | Entry::RunResumed { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Message {
                 message: AgentMessage::Llm(Message::System(_)),
                 ..
@@ -280,6 +310,11 @@ fn moved_blocks(entries: &[SeqEntry], at: usize) -> u32 {
                 | Entry::RunEnd { .. }
                 | Entry::RunResumed { .. }
                 | Entry::Submission { .. }
+                | Entry::AgentChange { .. }
+                | Entry::ModeChange { .. }
+                | Entry::JobStart { .. }
+                | Entry::ChildStart { .. }
+                | Entry::JobEnd { .. }
                 | Entry::Unknown(_) => return 0,
             };
             let Ok(content) = content else {
@@ -344,6 +379,33 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
             submission_id,
             ..
         } => {
+            if let Some(Entry::Submission {
+                kind: kind @ (SubmissionKind::Quiet | SubmissionKind::Mail),
+                sender,
+                ..
+            }) = submission(value, entries)
+            {
+                let text = text(&user.content);
+                return Some(ChatEntry {
+                    id: base.id.to_string(),
+                    timestamp: base.timestamp.clone(),
+                    body: ChatEntryBody::Notice {
+                        text: match (kind, sender) {
+                            (SubmissionKind::Mail, Some(sender)) => {
+                                format!("Mail from {sender}: {text}")
+                            }
+                            (
+                                SubmissionKind::Prompt
+                                | SubmissionKind::Steer
+                                | SubmissionKind::FollowUp
+                                | SubmissionKind::Quiet
+                                | SubmissionKind::Mail,
+                                _,
+                            ) => text,
+                        },
+                    },
+                });
+            }
             let by_id: HashMap<_, _> = entries
                 .iter()
                 .filter_map(|seq| Some((seq.entry.id()?, &seq.entry)))
@@ -351,7 +413,9 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
             let user_anchor = anchor(value, &by_id);
             let mut siblings: Vec<_> = entries
                 .iter()
-                .filter(|seq| is_user(&seq.entry) && anchor(&seq.entry, &by_id) == user_anchor)
+                .filter(|seq| {
+                    is_user(&seq.entry, entries) && anchor(&seq.entry, &by_id) == user_anchor
+                })
                 .collect();
             siblings.sort_by_key(|seq| seq.seq);
             ChatEntryBody::User {
@@ -473,6 +537,11 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
         | Entry::RunStart { .. }
         | Entry::RunResumed { .. }
         | Entry::Submission { .. }
+        | Entry::AgentChange { .. }
+        | Entry::ModeChange { .. }
+        | Entry::JobStart { .. }
+        | Entry::ChildStart { .. }
+        | Entry::JobEnd { .. }
         | Entry::Unknown(_) => return None,
     };
     Some(ChatEntry {
@@ -521,6 +590,11 @@ pub(super) fn title_of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Opti
             | Entry::RunEnd { .. }
             | Entry::RunResumed { .. }
             | Entry::Submission { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Unknown(_) => {}
         }
     }
@@ -550,6 +624,11 @@ pub(super) fn selection(entries: &[SeqEntry], path: &[usize]) -> (Option<String>
             | Entry::RunEnd { .. }
             | Entry::RunResumed { .. }
             | Entry::Submission { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Unknown(_) => {}
         }
     }
@@ -581,6 +660,11 @@ pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -
             | Entry::RunEnd { .. }
             | Entry::RunResumed { .. }
             | Entry::Submission { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Unknown(_) => None,
         })
         .unwrap_or(0);
@@ -621,6 +705,11 @@ pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -
             | Entry::RunEnd { .. }
             | Entry::RunResumed { .. }
             | Entry::Submission { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Unknown(_) => continue,
         };
         result.input += usage.input;
@@ -634,7 +723,7 @@ pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -
 
 pub(super) fn queue_at_attach(
     entries: &[SeqEntry],
-    snapshot: &AgentSnapshot,
+    snapshot: &LiveSnapshot,
 ) -> Vec<(String, ChatQueued)> {
     let matched: HashSet<_> = entries
         .iter()
@@ -659,6 +748,11 @@ pub(super) fn queue_at_attach(
             | Entry::RunEnd { .. }
             | Entry::RunResumed { .. }
             | Entry::Submission { .. }
+            | Entry::AgentChange { .. }
+            | Entry::ModeChange { .. }
+            | Entry::JobStart { .. }
+            | Entry::ChildStart { .. }
+            | Entry::JobEnd { .. }
             | Entry::Unknown(_) => None,
         })
         .collect();
@@ -678,7 +772,7 @@ pub(super) fn queue_at_attach(
             let (queue, kind) = match kind {
                 SubmissionKind::Steer => (&mut steering, ChatQueueKind::Steer),
                 SubmissionKind::FollowUp => (&mut follow_up, ChatQueueKind::FollowUp),
-                SubmissionKind::Prompt => continue,
+                SubmissionKind::Prompt | SubmissionKind::Quiet | SubmissionKind::Mail => continue,
             };
             queue.push((seq.seq, submission_id, kind, parts));
         }
@@ -770,6 +864,8 @@ mod tests {
             kind,
             parts: vec![axo::PromptPart::Text { text: id.into() }],
             request_id: None,
+            sender: None,
+            custom: None,
         }
     }
 
@@ -777,6 +873,8 @@ mod tests {
         Entry::Message {
             base: base(id, parent),
             submission_id: Some(submission.into()),
+            admitted_jobs: vec![],
+            delivered_jobs: vec![],
             message: AgentMessage::Llm(Message::User(UserMessage {
                 content: vec![UserBlock::Text { text: id.into() }],
                 timestamp: 0,
@@ -788,6 +886,8 @@ mod tests {
         Entry::Message {
             base: base(id, parent),
             submission_id: None,
+            admitted_jobs: vec![],
+            delivered_jobs: vec![],
             message: AgentMessage::Llm(Message::System(SystemMessage {
                 content: vec![],
                 sections: None,
@@ -820,6 +920,8 @@ mod tests {
                 run_id: "old".into(),
                 outcome: RunOutcome::Done,
                 reason: None,
+                usage: None,
+                queued: vec![],
             },
             submission("s1", Some("a"), SubmissionKind::Prompt),
             Entry::RunStart {
@@ -874,7 +976,6 @@ mod tests {
             error_message: None,
             failure: None,
             raw_stop_reason: None,
-            end_turn: None,
             timestamp: 0,
             duration_ms: None,
         };
@@ -901,12 +1002,16 @@ mod tests {
                 base: base("reply", Some("model")),
                 message: AgentMessage::Llm(Message::Assistant(assistant)),
                 submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec![],
             },
             Entry::RunEnd {
                 base: base("end", Some("reply")),
                 run_id: "run".into(),
                 outcome: RunOutcome::Done,
                 reason: Some("fork".into()),
+                usage: None,
+                queued: vec![],
             },
         ]);
         let converted: Vec<_> = branch(&entries)
@@ -919,6 +1024,33 @@ mod tests {
             ChatEntryBody::ModelChange { .. }
         ));
         assert!(matches!(converted[1].body, ChatEntryBody::Assistant { .. }));
+    }
+
+    #[test]
+    fn quiet_and_mail_inputs_are_not_editable_user_messages() {
+        for (kind, sender, expected) in [
+            (SubmissionKind::Quiet, None, "message"),
+            (
+                SubmissionKind::Mail,
+                Some("worker"),
+                "Mail from worker: message",
+            ),
+            (SubmissionKind::Mail, None, "message"),
+        ] {
+            let mut submitted = submission("submission", None, kind);
+            if let Entry::Submission { sender: value, .. } = &mut submitted {
+                *value = sender.map(str::to_owned);
+            }
+            let entries = log(vec![
+                submitted,
+                user("message", Some("submission"), "submission"),
+            ]);
+            assert!(!is_user(&entries[1].entry, &entries));
+            assert!(matches!(
+                entry(&entries, 1).unwrap().body,
+                ChatEntryBody::Notice { text } if text == expected
+            ));
+        }
     }
 
     #[test]
@@ -936,10 +1068,39 @@ mod tests {
             content: vec![],
             timestamp: 0,
         }));
-        let snapshot = AgentSnapshot {
+        let mut snapshot = LiveSnapshot {
+            run_id: None,
+            maintenance: None,
+            running: false,
+            streaming: None,
+            pending_tool_calls: vec![],
             queued_steering: vec![queued_message.clone()],
             queued_follow_up: vec![queued_message],
-            ..AgentSnapshot::default()
+            messages: vec![],
+            pending_questions: vec![],
+            pending_results: vec![],
+            jobs: vec![],
+            usage: Usage::default(),
+            tree_usage: Usage::default(),
+            model: axo_ai::Model {
+                id: "m".into(),
+                name: "Test".into(),
+                api: axo_ai::ApiKind::OpenAiCompletions,
+                provider: "test".into(),
+                base_url: String::new(),
+                reasoning: false,
+                thinking_level_map: None,
+                input: vec![],
+                cost: Default::default(),
+                context_window: 1000,
+                max_tokens: 100,
+                compat: Default::default(),
+            },
+            thinking: ThinkingLevel::Off,
+            agent: None,
+            mode: None,
+            context: None,
+            auto_paused: false,
         };
         assert_eq!(
             queue_at_attach(&entries, &snapshot),
@@ -964,6 +1125,8 @@ mod tests {
                 ),
             ]
         );
-        assert!(queue_at_attach(&entries, &AgentSnapshot::default()).is_empty());
+        snapshot.queued_steering.clear();
+        snapshot.queued_follow_up.clear();
+        assert!(queue_at_attach(&entries, &snapshot).is_empty());
     }
 }

@@ -17,7 +17,7 @@ fn router_constructs_without_a_tokio_runtime() -> anyhow::Result<()> {
     let events: EventSink<DesktopEvent> = Arc::new(|_| Ok(()));
     let desktop = Arc::clone(&events);
     let host = Arc::new(Host::new(
-        temporary.path().join("axome.db"),
+        axome_core::HostOptions::new(axome_core::HostDirs::under(temporary.path()), "test.db"),
         Arc::new(move |event| desktop(DesktopEvent::Host(event))),
     )?);
     let router = WorkspaceRouter::with_events(host, events);

@@ -2,6 +2,7 @@ import { backend } from '$lib/api/backend'
 import { refreshAllLspFolderEnvironments } from '$lib/features/editor/lsp/registry'
 import { notify } from '$lib/features/notifications/state.svelte'
 import { getActiveFolderPath } from '$lib/features/workbench/state.svelte'
+import type { ToneStatus } from '$lib/components/ui/status-dot'
 import type { SettingsDiagnostic } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 
@@ -12,6 +13,12 @@ let refreshRevision = 0
 
 export function getSettingsDiagnostics(): SettingsDiagnostic[] {
   return diagnostics
+}
+
+/** Rail status for the Settings button; null when every settings file is valid. */
+export function getSettingsIssueStatus(): ToneStatus | null {
+  const count = diagnostics.length
+  return count ? { tone: 'waiting', text: `${count} settings issue${count === 1 ? '' : 's'}` } : null
 }
 
 export async function refreshSettingsDiagnostics(folderPath?: string): Promise<void> {

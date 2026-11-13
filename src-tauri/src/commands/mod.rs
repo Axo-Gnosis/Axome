@@ -17,6 +17,33 @@ pub mod workbench;
 
 use crate::app_state::AppState;
 use axome_core::errors::ApiError;
+use axome_protocol::settings::SettingsFileResult;
+use tauri_plugin_opener::OpenerExt;
+
+pub(super) fn open_file(
+    app: &tauri::AppHandle,
+    result: SettingsFileResult,
+    what: &str,
+) -> Result<SettingsFileResult, ApiError> {
+    app.opener()
+        .open_path(result.path.clone(), None::<&str>)
+        .map_err(|error| {
+            ApiError::Internal(format!("Failed to open {what} {}: {error}", result.path))
+        })?;
+    Ok(result)
+}
+
+/// Host-global operations run on the server that owns the given folder URI, else on the desktop.
+fn target_server(folder_path: Option<&str>) -> Result<Option<String>, ApiError> {
+    use crate::router::Target;
+    match folder_path {
+        Some(path) => match Target::parse(path)? {
+            Target::Remote { server, .. } => Ok(Some(server.to_owned())),
+            Target::Local => Ok(None),
+        },
+        None => Ok(None),
+    }
+}
 
 macro_rules! forward_command {
     (#[route($route:ident)] FolderClaim => $($row:tt)*) => {};
@@ -42,7 +69,7 @@ macro_rules! forward_command {
         ) -> Result<$return_type, ApiError> {
             state
                 .router
-                .$method(settings::settings_server(folder_path.as_deref())?, $($argument),*)
+                .$method(target_server(folder_path.as_deref())?, $($argument),*)
                 .await
         }
     };
@@ -111,6 +138,7 @@ pub(crate) fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + S
         chat_steer,
         chat_follow_up,
         chat_abort,
+        chat_close,
         chat_answer,
         chat_dismiss,
         chat_run_command,
@@ -196,6 +224,18 @@ pub(crate) fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + S
         settings_patch_global_section,
         settings_create_global_file,
         settings::settings_open_global_file,
+        settings::axo_open_models_file,
+        axo_providers,
+        axo_models,
+        axo_provider_set_key,
+        axo_provider_remove,
+        axo_models_reload,
+        axo_login_start,
+        axo_login_submit,
+        axo_login_status,
+        axo_login_cancel,
+        axo_keywords,
+        settings_set_axo,
         settings_open_folder_file,
         settings_set_window,
         settings_set_typography,

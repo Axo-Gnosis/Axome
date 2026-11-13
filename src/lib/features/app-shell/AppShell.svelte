@@ -4,6 +4,7 @@
   import * as terminals from '$lib/features/terminal/registry'
   import * as chats from '$lib/features/chat/registry'
   import { backend } from '$lib/api/backend'
+  import { refreshChatModels } from '$lib/features/chat/models.svelte'
   import { refreshIssuesForFolder } from '$lib/features/issues/state.svelte'
   import { refreshNixForFolder } from '$lib/features/settings/state/nix.svelte'
   import { refreshHarnessListings } from '$lib/features/sessions/harnesses/state.svelte'
@@ -91,7 +92,7 @@
 
   $effect(() => void applyTerminalFont(getTerminalFontFamily(), getTerminalFontSize()))
 
-  // Settings diagnostics are app-global: the rail's Settings menu shows them
+  // Settings diagnostics are app-global: the rail's app menu shows them
   // with or without a folder open. Re-read whenever the active folder changes.
   $effect(() => {
     ensureSettingsDiagnosticsListener()
@@ -117,6 +118,7 @@
       backend.settings.onChanged((event) => {
         if (event.layer === 'global') void loadSettings()
         refreshHarnessListings(event)
+        refreshChatModels(event)
         refreshShellListings(event)
         refreshLoadedSessionIndexes((folderPath) => event.layer === 'global' || folderPath === event.folder_path)
       }),

@@ -255,7 +255,7 @@ pub(crate) fn parse_origin(value: &str) -> Option<Origin> {
     Some((scheme, host, port))
 }
 
-/// The page's own origin, or one `web.allowed_origins` trusts.
+/// The page's own origin, or one `web.allowedOrigins` trusts.
 fn trusted_origin(headers: &HeaderMap, allowed: &[Origin]) -> bool {
     if headers.get_all(header::ORIGIN).iter().count() != 1
         || headers.get_all(header::HOST).iter().count() != 1

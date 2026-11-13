@@ -123,7 +123,7 @@ export function createWebHostTransport(options: WebHostTransportOptions): WebHos
     const id = nextId++
     let body: string
     try {
-      body = JSON.stringify({ id, request: { method, params: toWireParams(method, params) } })
+      body = JSON.stringify({ id, request: { method, params: toWireParams(params) } })
       const byteLength = utf8ByteLength(body)
       if (byteLength > MAX_FRAME_BYTES) throw new Error('RPC request exceeds frame limit')
       if (connection.socket.bufferedAmount + byteLength > MAX_FRAME_BYTES)

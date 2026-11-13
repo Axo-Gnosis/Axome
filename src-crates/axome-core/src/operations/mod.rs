@@ -1,5 +1,6 @@
 mod activity_map;
 mod app;
+mod axo;
 mod chat;
 mod config_schemas;
 mod env;

@@ -14,6 +14,7 @@
     children?: Snippet
     onValueChange?: (value: string) => void
     shouldFilter?: boolean
+    filter?: (value: string, search: string, keywords?: string[]) => number
     loop?: boolean
     label?: string
     vimBindings?: boolean

@@ -12,7 +12,7 @@
   import { backend } from '$lib/api/backend'
   import { Button } from '$lib/components/ui/button'
   import { selectFolder } from '$lib/features/browser/state.svelte'
-  import { Select } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import { Switch } from '$lib/components/ui/switch'
   import { getWindowControls, setWindowControls } from '$lib/features/app-shell/window-controls/state.svelte'
   import { notify } from '$lib/features/notifications/state.svelte'
@@ -21,7 +21,8 @@
     getDesktopSettings,
     saveWindowSettings as saveWindowSettingsApi
   } from '$lib/features/settings/state/settings.svelte'
-  import type { ExternalFileOpenMode, ExternalFolderOpenMode, TabBeamPosition } from '$lib/types/backend'
+  import SettingRow from '../dialog/SettingRow.svelte'
+  import SettingsSection from '../dialog/SettingsSection.svelte'
 
   let wc = $derived(getWindowControls())
   let desktop = $derived(getDesktopSettings())
@@ -47,120 +48,102 @@
   }
 </script>
 
-<section class="flex flex-col gap-3 border-b border-edge px-5 py-4">
-  <h3 class="text-md font-semibold text-bright">Startup</h3>
-  <div class="flex items-center gap-4">
-    <div class="min-w-0 flex-1">
-      <span class="text-sm text-fg">Home Folder</span>
-      <p class="text-xs text-subtle">New windows open a New Tab on this folder, and the folder browser starts here.</p>
-      <p class="truncate font-mono text-xs text-muted">{desktop?.window.home_folder ?? 'Not set'}</p>
-    </div>
+<SettingsSection title="Startup">
+  <SettingRow label="Home Folder" as="div">
+    {#snippet description()}
+      <span class="block">New windows open a New Tab on this folder, and the folder browser starts here.</span>
+      <span class="block truncate font-mono">{desktop?.window.homeFolder ?? 'Not set'}</span>
+    {/snippet}
     <Button
       size="sm"
       disabled={!desktop}
       onclick={async () => {
-        const path = await selectFolder({ path: desktop?.window.home_folder ?? (await backend.folders.home()) })
-        if (path) saveWindowSettings({ home_folder: path })
+        const path = await selectFolder({ path: desktop?.window.homeFolder ?? (await backend.folders.home()) })
+        if (path) saveWindowSettings({ homeFolder: path })
       }}>Choose…</Button
     >
-    {#if desktop?.window.home_folder}
-      <Button size="sm" onclick={() => saveWindowSettings({ home_folder: null })}>Clear</Button>
+    {#if desktop?.window.homeFolder}
+      <Button size="sm" onclick={() => saveWindowSettings({ homeFolder: null })}>Clear</Button>
     {/if}
-  </div>
-</section>
+  </SettingRow>
+</SettingsSection>
 
-<section class="flex flex-col gap-3 border-b border-edge px-5 py-4">
-  <h3 class="text-md font-semibold text-bright">External Open Routing</h3>
-
-  <label class="flex items-center gap-4">
-    <div class="min-w-0 flex-1">
-      <span class="text-sm text-fg">Open Folders From External Applications</span>
-      <p class="text-xs text-subtle">Choose which window handles folders opened from the OS or command line.</p>
-    </div>
+<SettingsSection title="External Open">
+  <SettingRow
+    label="Open Folders From External Applications"
+    description="Choose which window handles folders opened from the OS or command line."
+  >
     <Select
-      class="w-44 shrink-0 text-sm"
-      value={desktop?.window.external_folder_open_mode ?? 'new_window'}
+      class="w-44 shrink-0"
+      value={desktop?.window.externalFolderOpenMode ?? 'newWindow'}
       disabled={!desktop}
-      onchange={(event) =>
+      onValueChange={(next) =>
         void saveWindowSettings({
-          external_folder_open_mode: event.currentTarget.value as ExternalFolderOpenMode
+          externalFolderOpenMode: next
         })}
-    >
-      <option value="new_window">New window</option>
-      <option value="focused_window">Focused window</option>
-    </Select>
-  </label>
+      items={[
+        { value: 'newWindow', label: 'New window' },
+        { value: 'focusedWindow', label: 'Focused window' }
+      ]}
+    />
+  </SettingRow>
 
-  <label class="flex items-center gap-4">
-    <div class="min-w-0 flex-1">
-      <span class="text-sm text-fg">Open Files From External Applications</span>
-      <p class="text-xs text-subtle">
-        Prefer a window already showing the file's folder, or choose another destination.
-      </p>
-    </div>
+  <SettingRow
+    label="Open Files From External Applications"
+    description="Prefer a window already showing the file's folder, or choose another destination."
+  >
     <Select
-      class="w-56 shrink-0 text-sm"
-      value={desktop?.window.external_file_open_mode ?? 'prefer_folder'}
+      class="w-56 shrink-0"
+      value={desktop?.window.externalFileOpenMode ?? 'preferFolder'}
       disabled={!desktop}
-      onchange={(event) =>
+      onValueChange={(next) =>
         void saveWindowSettings({
-          external_file_open_mode: event.currentTarget.value as ExternalFileOpenMode
+          externalFileOpenMode: next
         })}
-    >
-      <option value="prefer_folder">Prefer existing folder window</option>
-      <option value="focused_window">Focused window</option>
-      <option value="new_window">New window</option>
-    </Select>
-  </label>
-</section>
+      items={[
+        { value: 'preferFolder', label: 'Prefer existing folder window' },
+        { value: 'focusedWindow', label: 'Focused window' },
+        { value: 'newWindow', label: 'New window' }
+      ]}
+    />
+  </SettingRow>
+</SettingsSection>
 
-<section class="flex flex-col gap-2 border-b border-edge px-5 py-4">
-  <h3 class="text-md font-semibold text-bright">Title bar</h3>
-
-  <label class="flex items-center gap-3 py-1">
-    <div class="flex-1">
-      <span class="text-sm text-fg">Use system window decorations</span>
-      <p class="text-xs text-subtle">Revert to the OS-provided title bar and controls.</p>
-    </div>
+<SettingsSection title="Title Bar">
+  <SettingRow label="Use system window decorations" description="Revert to the OS-provided title bar and controls.">
     <Switch checked={wc.useSystemDecorations} disabled={!desktop} onCheckedChange={toggleSystemDecorations} />
-  </label>
+  </SettingRow>
 
-  <label class="flex items-center gap-4 py-1">
-    <div class="min-w-0 flex-1">
-      <span class="text-sm text-fg">Active tab bar position</span>
-      <p class="text-xs text-subtle">Position the animated indicator bar above or under the active tab.</p>
-    </div>
+  <SettingRow
+    label="Active tab bar position"
+    description="Position the animated indicator bar above or under the active tab."
+  >
     <Select
-      class="w-48 shrink-0 text-sm"
-      value={desktop?.window.tab_beam_position ?? 'top'}
+      class="w-48 shrink-0"
+      value={desktop?.window.tabBeamPosition ?? 'top'}
       disabled={!desktop}
-      onchange={(event) =>
+      onValueChange={(next) =>
         void saveWindowSettings({
-          tab_beam_position: event.currentTarget.value as TabBeamPosition
+          tabBeamPosition: next
         })}
-    >
-      <option value="top">Top (above tab)</option>
-      <option value="bottom">Bottom (under tab)</option>
-    </Select>
-  </label>
-</section>
+      items={[
+        { value: 'top', label: 'Top (above tab)' },
+        { value: 'bottom', label: 'Bottom (under tab)' }
+      ]}
+    />
+  </SettingRow>
+</SettingsSection>
 
 {#if !wc.useSystemDecorations}
-  <section class="flex flex-col gap-1 px-5 py-4">
-    <h3 class="text-md font-semibold text-bright">Buttons</h3>
-    <p class="pb-2 text-xs text-subtle">Hide individual custom-chrome buttons.</p>
-
-    <label class="flex items-center justify-between border-b border-edge py-2.5">
-      <span class="text-sm text-fg">Minimize</span>
+  <SettingsSection title="Buttons" description="Hide individual custom-chrome buttons.">
+    <SettingRow label="Minimize">
       <Switch checked={wc.showMinimize} disabled={!desktop} onCheckedChange={(v) => toggleButton('showMinimize', v)} />
-    </label>
-    <label class="flex items-center justify-between border-b border-edge py-2.5">
-      <span class="text-sm text-fg">Maximize</span>
+    </SettingRow>
+    <SettingRow label="Maximize">
       <Switch checked={wc.showMaximize} disabled={!desktop} onCheckedChange={(v) => toggleButton('showMaximize', v)} />
-    </label>
-    <label class="flex items-center justify-between py-2.5">
-      <span class="text-sm text-fg">Close</span>
+    </SettingRow>
+    <SettingRow label="Close">
       <Switch checked={wc.showClose} disabled={!desktop} onCheckedChange={(v) => toggleButton('showClose', v)} />
-    </label>
-  </section>
+    </SettingRow>
+  </SettingsSection>
 {/if}

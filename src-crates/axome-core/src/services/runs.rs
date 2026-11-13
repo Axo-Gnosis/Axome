@@ -522,7 +522,13 @@ mod tests {
                 "tasks": [{ "id": "once", "label": "Once", "command": command, "singleton": true }]
             }).to_string()).unwrap();
             let events: crate::events::EventSink<HostEvent> = Arc::new(|_| Ok(()));
-            let host = Arc::new(Host::new(folder.join("data.db"), events).unwrap());
+            let host = Arc::new(
+                Host::new(
+                    crate::HostOptions::new(crate::HostDirs::under(&folder), "test.db"),
+                    events,
+                )
+                .unwrap(),
+            );
             Self { host, folder }
         }
 
@@ -581,7 +587,7 @@ mod tests {
             fixture.folder.join(".axome/settings.jsonc"),
             serde_json::json!({
                 "shell": {
-                    "extra_args": ["--base"],
+                    "extraArgs": ["--base"],
                     "presets": {
                         "dev": {
                             "command": script.to_string_lossy(),
@@ -969,8 +975,8 @@ mod tests {
                 "harnesses": {
                     "omp": {
                         "enabled": true,
-                        "binary_path_override": "/bin/sh",
-                        "extra_args": ["-c", "printf x >> spawned; exec sleep 30"]
+                        "binaryPathOverride": "/bin/sh",
+                        "extraArgs": ["-c", "printf x >> spawned; exec sleep 30"]
                     }
                 }
             })

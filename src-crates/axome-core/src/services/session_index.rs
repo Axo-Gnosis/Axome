@@ -290,10 +290,10 @@ fn source_folders(conn: &Connection, key: &SourceKey) -> rusqlite::Result<BTreeS
     rows.collect()
 }
 
-pub(crate) fn configured_keys(folder: Option<&Path>) -> Result<Vec<SourceKey>, ApiError> {
+pub(crate) fn configured_keys(dirs: &crate::HostDirs, folder: Option<&Path>) -> Vec<SourceKey> {
     let catalog = ExtensionService::current();
-    let resolver = SettingsResolver::load(&catalog.settings_ids).map_err(ApiError::Internal)?;
-    Ok(keys_for(&catalog, &resolver, folder))
+    let resolver = SettingsResolver::load(dirs, &catalog.settings_ids);
+    keys_for(&catalog, &resolver, folder)
 }
 
 fn keys_for(
@@ -436,6 +436,7 @@ struct Jobs {
 }
 
 pub(crate) struct SessionIndexService {
+    dirs: crate::HostDirs,
     this: Weak<Self>,
     db: Arc<DatabaseService>,
     events: EventSink<HostEvent>,
@@ -451,10 +452,12 @@ impl SessionIndexService {
         db: Arc<DatabaseService>,
         events: EventSink<HostEvent>,
         axo: Arc<AxoService>,
+        dirs: crate::HostDirs,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             this: this.clone(),
             db,
+            dirs,
             events,
             axo,
             runtime: OnceLock::new(),
@@ -603,7 +606,7 @@ impl SessionIndexService {
         }
         let result = match &key.source {
             SourceId::Harness(id) => {
-                match resolve_harness_launch(&self.db, key.folder(), id, key.preset()) {
+                match resolve_harness_launch(&self.dirs, &self.db, key.folder(), id, key.preset()) {
                     Err(error) => Err((SessionIndexStatus::Missing, error.to_string())),
                     Ok(launch) => match HistorySource::from_launch(&launch) {
                         Ok(Some(source)) => source
@@ -694,11 +697,11 @@ impl SessionIndexService {
     }
 
     pub(crate) fn folder_snapshot(&self, folder: &Path) -> Result<SessionIndexSnapshot, ApiError> {
-        self.folder_snapshot_for(folder, &configured_keys(Some(folder))?)
+        self.folder_snapshot_for(folder, &configured_keys(&self.dirs, Some(folder)))
     }
 
     pub(crate) fn refresh_folder(&self, folder: &Path) -> Result<SessionIndexSnapshot, ApiError> {
-        let configured = configured_keys(Some(folder))?;
+        let configured = configured_keys(&self.dirs, Some(folder));
         let mut started = false;
         for key in &configured {
             started |= self
@@ -721,7 +724,7 @@ impl SessionIndexService {
 
     pub(crate) fn activity_map(&self) -> Result<Vec<DiscoveredProject>, ApiError> {
         let catalog = ExtensionService::current();
-        let resolver = SettingsResolver::load(&catalog.settings_ids).map_err(ApiError::Internal)?;
+        let resolver = SettingsResolver::load(&self.dirs, &catalog.settings_ids);
         let mut enabled: HashMap<String, HashSet<SourceKey>> = HashMap::new();
         enabled.insert(
             String::new(),
@@ -743,7 +746,7 @@ impl SessionIndexService {
     }
 
     pub(crate) fn refresh_global(&self) -> Result<(), ApiError> {
-        let configured = configured_keys(None)?;
+        let configured = configured_keys(&self.dirs, None);
         let mut receivers = Vec::new();
         let mut started = Vec::new();
         for key in configured {
@@ -955,8 +958,17 @@ mod tests {
             .sessions
             .iter()
             .all(|session| session.session_id == "shared"));
-        let axo = AxoService::new(Arc::clone(&db));
-        let service = SessionIndexService::new(db, Arc::new(|_| Ok(())), axo);
+        let axo = AxoService::new(
+            Arc::clone(&db),
+            crate::HostDirs::under(&_dir.0),
+            axome_protocol::server_config::Supervision::ProcessGroup,
+        );
+        let service = SessionIndexService::new(
+            db,
+            Arc::new(|_| Ok(())),
+            axo,
+            crate::HostDirs::under(&_dir.0),
+        );
         let projects = service.activity_map().unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].harnesses.len(), 1);
@@ -971,8 +983,17 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let events: EventSink<HostEvent> =
             Arc::new(move |event| sender.send(event).map_err(|error| error.to_string()));
-        let axo = AxoService::new(Arc::clone(&db));
-        let service = SessionIndexService::new(Arc::clone(&db), events, axo);
+        let axo = AxoService::new(
+            Arc::clone(&db),
+            crate::HostDirs::under(&_dir.0),
+            axome_protocol::server_config::Supervision::ProcessGroup,
+        );
+        let service = SessionIndexService::new(
+            Arc::clone(&db),
+            events,
+            axo,
+            crate::HostDirs::under(&_dir.0),
+        );
         let (mut done, started) = service
             .schedule_key(SourceKey::new(
                 Some(Path::new(FOLDER)),

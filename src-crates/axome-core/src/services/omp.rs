@@ -39,8 +39,12 @@ fn find_any_latest_session() -> Option<(PathBuf, PathBuf)> {
         .max_by(|left, right| left.0.file_name().cmp(&right.0.file_name()))
 }
 
-fn fallback_omp_read(uri: &str, home: &Path, slug: &str) -> Result<OmpResolvedTarget, ApiError> {
-    let cache_dir = home.join(".cache").join("axome").join("omp-docs");
+fn fallback_omp_read(
+    dirs: &crate::HostDirs,
+    uri: &str,
+    slug: &str,
+) -> Result<OmpResolvedTarget, ApiError> {
+    let cache_dir = dirs.cache.join("omp-docs");
     let safe_slug = slug.replace(['/', ':', ' '], "-");
     let doc_file = cache_dir.join(format!("{safe_slug}.md"));
     if doc_file.is_file() {
@@ -70,7 +74,11 @@ fn fallback_omp_read(uri: &str, home: &Path, slug: &str) -> Result<OmpResolvedTa
     })
 }
 
-pub fn resolve_omp_target(uri: &str, cwd: Option<&str>) -> Result<OmpResolvedTarget, ApiError> {
+pub fn resolve_omp_target(
+    dirs: &crate::HostDirs,
+    uri: &str,
+    cwd: Option<&str>,
+) -> Result<OmpResolvedTarget, ApiError> {
     let home =
         home_dir().ok_or_else(|| ApiError::NotFound("HOME directory not set".to_string()))?;
     let (scheme, rest) = uri
@@ -217,7 +225,7 @@ pub fn resolve_omp_target(uri: &str, cwd: Option<&str>) -> Result<OmpResolvedTar
             .or_else(|| file(home.join(".omp/agent/rules").join(format!("{target}.md")))),
         "omp" => {
             let slug = if target.is_empty() { "index" } else { target };
-            return fallback_omp_read(uri, &home, slug);
+            return fallback_omp_read(dirs, uri, slug);
         }
         _ => {
             return Err(ApiError::InvalidArgument(format!(
@@ -225,5 +233,5 @@ pub fn resolve_omp_target(uri: &str, cwd: Option<&str>) -> Result<OmpResolvedTar
             )))
         }
     };
-    resolved.map_or_else(|| fallback_omp_read(uri, &home, target), Ok)
+    resolved.map_or_else(|| fallback_omp_read(dirs, uri, target), Ok)
 }

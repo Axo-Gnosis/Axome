@@ -9,12 +9,18 @@ import {
   type Unsubscribe
 } from './transport'
 import type {
+  AxoSettings,
+  AxoProvidersPayload,
+  AxoLoginStarted,
+  AxoLoginStatus,
+  AxoKeywordInfo,
   AppRuntimeInfo,
   BranchSummary,
   ChatAnswer,
   ChatForkInfo,
   ChatLinkTarget,
   ChatModelCatalog,
+  ChatModel,
   ChatPart,
   ChatThinking,
   ExtensionCatalog,
@@ -238,6 +244,9 @@ export const backend = {
     },
     abort(folderPath: string, sessionId: string): Promise<void> {
       return invoke<void>('chat_abort', { folderPath, sessionId })
+    },
+    close(folderPath: string, sessionId: string): Promise<void> {
+      return invoke<void>('chat_close', { folderPath, sessionId })
     },
     answer(folderPath: string, sessionId: string, callId: string, answers: ChatAnswer[]): Promise<void> {
       return invoke<void>('chat_answer', { folderPath, sessionId, callId, answers })
@@ -580,7 +589,43 @@ export const backend = {
     }
   },
 
+  axo: {
+    models(folderPath?: string | null): Promise<ChatModel[]> {
+      return invoke('axo_models', { folderPath: folderPath ?? null })
+    },
+    providers(folderPath?: string | null): Promise<AxoProvidersPayload> {
+      return invoke('axo_providers', { folderPath: folderPath ?? null })
+    },
+    setProviderKey(provider: string, key: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_provider_set_key', { provider, key, folderPath: folderPath ?? null })
+    },
+    removeProvider(provider: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_provider_remove', { provider, folderPath: folderPath ?? null })
+    },
+    reloadModels(folderPath?: string | null): Promise<void> {
+      return invoke('axo_models_reload', { folderPath: folderPath ?? null })
+    },
+    loginStart(provider: string, folderPath?: string | null): Promise<AxoLoginStarted> {
+      return invoke('axo_login_start', { provider, folderPath: folderPath ?? null })
+    },
+    loginSubmit(loginId: string, redirect: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_login_submit', { loginId, redirect, folderPath: folderPath ?? null })
+    },
+    loginStatus(loginId: string, folderPath?: string | null): Promise<AxoLoginStatus> {
+      return invoke('axo_login_status', { loginId, folderPath: folderPath ?? null })
+    },
+    loginCancel(loginId: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_login_cancel', { loginId, folderPath: folderPath ?? null })
+    },
+    keywords(folderPath?: string | null): Promise<AxoKeywordInfo[]> {
+      return invoke('axo_keywords', { folderPath: folderPath ?? null })
+    }
+  },
+
   settings: {
+    setAxo(patch: Record<string, unknown>, folderPath?: string): Promise<AxoSettings> {
+      return invoke('settings_set_axo', { patch, folderPath: folderPath ?? null })
+    },
     // The global layer of the host that runs `folderPath` — the exact layer
     // the setters below write. Omit it for this desktop.
     get(folderPath?: string): Promise<SettingsPayload> {

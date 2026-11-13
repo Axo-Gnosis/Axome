@@ -13,7 +13,7 @@ import {
 import type { ChatAnswer, ChatBlock, ChatEntry, ChatEvent, ChatPart, ChatState } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 import { getOrCreate } from './registry'
-import { getChatModels, loadChatModels } from './models.svelte'
+import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
 import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent } from './parts/parts'
 
 export class ChatController {
@@ -25,6 +25,7 @@ export class ChatController {
   editing = $state<{ entryId: string; anchor: string | null; parts: ChatPart[] } | null>(null)
   #handle: StreamHandle<void> | null = null
   #generation = 0
+  #closing = false
 
   constructor(tabId: TabId) {
     this.tabId = tabId
@@ -54,12 +55,10 @@ export class ChatController {
       else {
         await loadChatModels(tab.folderPath)
         if (generation !== this.#generation) return
-        const models = getChatModels(tab.folderPath)
-        const model = models.catalog?.defaultModel ?? models.catalog?.models[0]?.selector
-        if (!model || !models.catalog) {
-          throw new Error(models.error ?? 'No axo models are available. Configure a default model and credentials.')
-        }
-        sessionId = await backend.chat.create(tab.folderPath, model, models.catalog.defaultThinking)
+        const { catalog, error } = getChatModels(tab.folderPath)
+        const model = catalog?.defaultModel ?? catalog?.models[0]?.selector
+        if (!catalog || !model) throw new Error(error ?? `No axo models are available. ${MODELS_HINT}`)
+        sessionId = await backend.chat.create(tab.folderPath, model, catalog.defaultThinking)
         // Kept even when superseded: the next attach reuses it, and the backend reclaims an unattached one.
         setChatTabSessionId(this.tabId, sessionId)
         if (generation !== this.#generation) return
@@ -108,7 +107,10 @@ export class ChatController {
           this.state.streaming = []
         } else if (delta.type === 'toolOutput') {
           const tool = this.state.live.tools.find((candidate) => candidate.callId === delta.callId)
-          if (tool) tool.output = delta.content
+          if (tool) {
+            tool.output = delta.content
+            tool.details = delta.details
+          }
         } else {
           const blocks = this.state.streaming
           if (!blocks || delta.index > blocks.length) break
@@ -140,6 +142,7 @@ export class ChatController {
         notify.error('axo', event.message)
         break
       case 'closed':
+        if (this.#closing) return
         if (event.missing) {
           setChatTabSessionId(this.tabId, null)
           this.state = null
@@ -166,6 +169,18 @@ export class ChatController {
             ? 'running'
             : 'idle'
     )
+  }
+
+  async close(): Promise<void> {
+    const tab = this.#tab
+    if (!tab?.sessionId) return
+    this.#closing = true
+    try {
+      await backend.chat.close(tab.folderPath, tab.sessionId)
+    } catch (error) {
+      this.#closing = false
+      throw error
+    }
   }
 
   async send(): Promise<void> {

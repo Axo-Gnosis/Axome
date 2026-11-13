@@ -6,7 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use super::settings::SettingsService;
 use super::settings_resolution::SettingsCatalogIds;
 
 struct BundledExtension {
@@ -314,7 +313,7 @@ struct PreparedExtension {
     harnesses: Vec<HarnessDescriptor>,
 }
 
-static INSTALLED_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+static INSTALLED_DIR: OnceLock<PathBuf> = OnceLock::new();
 static CURRENT: LazyLock<RwLock<Arc<LoadedExtensionCatalog>>> =
     LazyLock::new(|| RwLock::new(Arc::new(load_catalog(installed_dir()))));
 
@@ -322,9 +321,8 @@ pub struct ExtensionService;
 
 impl ExtensionService {
     /// Fix the installed-extensions directory before the first catalog read.
-    /// Returns false if already fixed.
-    pub fn set_installed_dir(dir: PathBuf) -> bool {
-        INSTALLED_DIR.set(Some(dir)).is_ok()
+    pub fn set_installed_dir(dir: PathBuf) {
+        let _ = INSTALLED_DIR.set(dir);
     }
 
     pub fn current() -> Arc<LoadedExtensionCatalog> {
@@ -343,13 +341,7 @@ impl ExtensionService {
 }
 
 fn installed_dir() -> Option<&'static Path> {
-    INSTALLED_DIR
-        .get_or_init(|| {
-            SettingsService::global_data_dir()
-                .ok()
-                .map(|dir| dir.join("extensions"))
-        })
-        .as_deref()
+    INSTALLED_DIR.get().map(PathBuf::as_path)
 }
 
 fn parse_bundled(asset: &BundledExtension) -> Result<PreparedExtension, String> {

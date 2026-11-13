@@ -84,7 +84,8 @@ const native: NativePlatform = {
     releaseFile: (filePath) => invoke<void>('window_release_file', { filePath })
   },
   settings: {
-    openGlobalFile: () => invoke<SettingsFileResult>('settings_open_global_file')
+    openGlobalFile: () => invoke<SettingsFileResult>('settings_open_global_file'),
+    openModelsFile: () => invoke<SettingsFileResult>('axo_open_models_file')
   },
   shortcuts: { openGlobalFile: () => invoke<ShortcutsFileResult>('shortcuts_open_global_file') },
   deepLinks: {

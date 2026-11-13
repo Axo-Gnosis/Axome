@@ -8,7 +8,8 @@
 -->
 
 <script lang="ts">
-  import { Input, Select } from '$lib/components/ui/input'
+  import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import { Button } from '$lib/components/ui/button'
   import type { IssueEpic } from '$lib/types/backend'
 
@@ -72,12 +73,15 @@
       <span class="ml-auto text-2xs text-subtle">↵ create · esc cancel</span>
     </div>
     {#if mode === 'issue'}
-      <Select bind:value={epicId} class="h-7 text-sm" aria-label="Issue epic">
-        <option value="">Choose epic…</option>
-        {#each epics as epic (epic.id)}
-          <option value={epic.id}>{epic.id} · {epic.title}</option>
-        {/each}
-      </Select>
+      <Select
+        bind:value={epicId}
+        class="h-7"
+        aria-label="Issue epic"
+        items={[
+          { value: '', label: 'Choose epic…' },
+          ...epics.map((epic) => ({ value: epic.id, label: `${epic.id} · ${epic.title}` }))
+        ]}
+      />
       {#if epics.length === 0}
         <p class="text-2xs text-warning">Create an epic before adding issues.</p>
       {/if}

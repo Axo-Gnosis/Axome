@@ -13,13 +13,13 @@ use tempfile::tempdir;
 /// wait for them, or the remote process is orphaned.
 #[tokio::test(flavor = "multi_thread")]
 async fn pending_stops_follow_remote_renames() -> anyhow::Result<()> {
-    // This binary owns process-global XDG/HOME for its whole lifetime.
+    // This binary owns process-global HOME for its whole lifetime.
     let temporary = tempdir()?;
     common::isolate(temporary.path())?;
 
     let fingerprint = Identity::load_or_generate(temporary.path(), "server")?.fingerprint();
     let host = Arc::new(Host::new(
-        temporary.path().join("axome.db"),
+        axome_core::HostOptions::new(axome_core::HostDirs::under(temporary.path()), "test.db"),
         Arc::new(|_| Ok(())),
     )?);
     let router = WorkspaceRouter::new(Arc::clone(&host));

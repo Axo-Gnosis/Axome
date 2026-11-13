@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatThinking {
     Off,
@@ -30,10 +30,19 @@ pub struct ChatModel {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatModelRole {
+    pub name: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatModelCatalog {
     /// Models of providers whose credentials resolve on the host, sorted by provider then name.
     pub models: Vec<ChatModel>,
-    /// axo `defaultModel` when it is in `models`.
+    /// Explicit user roles in configured order; fallback-only slots are omitted.
+    pub roles: Vec<ChatModelRole>,
+    /// Resolved `defaultModel`, or `@default` when unset, when it is in `models`.
     pub default_model: Option<String>,
     pub default_thinking: ChatThinking,
 }
@@ -227,6 +236,7 @@ pub struct ChatToolRun {
     pub arguments: serde_json::Value,
     /// Latest partial output.
     pub output: Vec<ChatContent>,
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -385,6 +395,7 @@ pub enum ChatDelta {
     ToolOutput {
         call_id: String,
         content: Vec<ChatContent>,
+        details: Option<serde_json::Value>,
     },
 }
 

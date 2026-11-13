@@ -638,13 +638,13 @@ impl Host {
         let common_dir = self.git.worktree_common_dir(Path::new(path))?;
         let patterns = if matches!(op, GitWorktreeOp::Add { .. }) {
             let source = self.git.worktree_checkout_root(Path::new(path))?;
-            let source = source.to_str().ok_or_else(|| {
-                ApiError::InvalidArgument("Invoking checkout path is not UTF-8".into())
-            })?;
-            self.settings_get_effective(Some(source.to_owned()))?
-                .settings
-                .git
-                .worktree_copy
+            crate::services::settings_resolution::resolve_effective_settings_for_folder_path(
+                &self.dirs,
+                Some(&source),
+            )
+            .settings
+            .git
+            .worktree_copy
         } else {
             BTreeMap::new()
         };
@@ -788,7 +788,11 @@ mod tests {
         std::fs::write(main.join("tracked.txt"), "committed\n").unwrap();
         git(&["add", "."]);
         git(&["commit", "-m", "initial"]);
-        let host = Host::new(temp.0.join("state.db"), Arc::new(|_| Ok(()))).unwrap();
+        let host = Host::new(
+            crate::HostOptions::new(crate::HostDirs::under(&temp.0), "test.db"),
+            Arc::new(|_| Ok(())),
+        )
+        .unwrap();
         let custom = temp.0.join("first custom root");
         let destination = custom.join("feature");
         let result = host

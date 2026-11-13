@@ -5,7 +5,7 @@
 //! - **exclude globs** hide entries outright (`.git`, OS droppings, whatever the
 //!   user configures);
 //! - **gitignore matching** marks entries as ignored so they can be dimmed, or
-//!   hidden when the user opts into `explorer.exclude_gitignore`.
+//!   hidden when the user opts into `explorer.excludeGitignore`.
 //!
 //! Gitignore state is evaluated lazily per directory, so opening a folder never
 //! pays for the whole tree.

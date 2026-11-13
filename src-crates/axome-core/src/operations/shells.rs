@@ -39,8 +39,8 @@ impl Host {
             }
             let (_, completed) = runs.reserve(&run_id, folder.clone(), kind);
             let result = (|| {
-                let effective = resolve_effective_settings_for_folder_path(Some(&folder))
-                    .map_err(ApiError::Internal)?;
+                let effective =
+                    resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder));
                 let launch = shells::resolve(
                     &effective.settings.shell,
                     preset.as_deref(),
@@ -94,8 +94,7 @@ impl Host {
     }
 
     pub fn shell_list(&self) -> Result<ShellListing, ApiError> {
-        let effective =
-            resolve_effective_settings_for_folder_path(None).map_err(ApiError::Internal)?;
+        let effective = resolve_effective_settings_for_folder_path(&self.dirs, None);
         let environment = EnvironmentService::current();
         Ok(shells::listing(
             &effective.settings.shell,
@@ -107,8 +106,7 @@ impl Host {
     pub fn shell_list_for_folder(&self, folder_path: String) -> Result<ShellListing, ApiError> {
         let folder = resolve_folder(&folder_path)?;
         let env = self.folder_env(&folder);
-        let effective = resolve_effective_settings_for_folder_path(Some(&folder))
-            .map_err(ApiError::Internal)?;
+        let effective = resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder));
         Ok(shells::listing(
             &effective.settings.shell,
             env.get("PATH").map(String::as_str).unwrap_or_default(),

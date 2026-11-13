@@ -4,6 +4,7 @@ This is the live planning document for adopting axo `843cd73` in Axome. It chang
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
+- **Pinned axo:** `97513d6` (Phase 1 Foundation: `5278fc5` plus `Models::providers()` / `Models::credential_source()`, [P3](design.md#decisions))
 
 ## How we work
 
@@ -17,16 +18,16 @@ This is the live planning document for adopting axo `843cd73` in Axome. It chang
 
 | Topic | Scope | Questions | Order | Status |
 |---|---|---|---|---|
-| [T1](#t1-foundation-config-storage-construction) | Config, storage, construction, supervision | Q1–Q4 | 1 | Open |
-| [T2](#t2-tool-model) | `kill`, `send`, `call`, deferred tools, tool cards, approval | Q5–Q10 | 3 | Open |
-| [T3](#t3-background-jobs) | Job surface, live output, wakes, closing with running jobs | Q11–Q16 | 4 | Open |
-| [T4](#t4-subagents-and-teams) | Children, teams, steering, results, sidebar | Q17–Q24 | 4 | Open |
-| [T5](#t5-personas) | Root agent per conversation, switching, authoring | Q25–Q28 | 2 | Open |
-| [T6](#t6-modes) | Plan mode, review, mode UI, user modes | Q29–Q35 | 2 | Open |
-| [T7](#t7-models-and-roles) | `@role` selectors, roles UI, model picker | Q36–Q37 | 2 | Open |
-| [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Open |
-| [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Open |
-| [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Open |
+| [T1](#t1-foundation-config-storage-construction) | Config, storage, construction, supervision | Q1–Q4 | 1 | Decided |
+| [T2](#t2-tool-model) | `kill`, `send`, `call`, deferred tools, tool cards, approval | Q5–Q10 | 3 | Decided |
+| [T3](#t3-background-jobs) | Job surface, live output, wakes, closing with running jobs | Q11–Q16 | 4 | Decided |
+| [T4](#t4-subagents-and-teams) | Children, teams, steering, results, sidebar | Q17–Q24 | 4 | Decided |
+| [T5](#t5-personas) | Root agent per conversation, switching, authoring | Q25–Q28 | 2 | Decided |
+| [T6](#t6-modes) | Plan/research modes, review, mode UI, keywords | Q29–Q35 | 2 | Decided |
+| [T7](#t7-models-and-roles) | `@role` selectors, roles UI, model picker | Q36–Q37 | 2 | Decided |
+| [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Decided |
+| [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Decided |
+| [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Decided |
 
 ```mermaid
 flowchart LR
@@ -66,7 +67,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T1. Foundation: config, storage, construction
 
-**Status:** Open · **Evidence:** [`research/axo-6cdaeb4/config-and-embedding.md`](research/axo-6cdaeb4/config-and-embedding.md)
+**Status:** Decided · **Evidence:** [`research/axo-6cdaeb4/config-and-embedding.md`](research/axo-6cdaeb4/config-and-embedding.md)
 
 **What axo gives**
 - `Axo::builder(Arc<Models>, Arc<dyn SessionStore>)` with `.config(ConfigSource)`, `.cache_dir`, `.name`, `.supervision`. axo no longer reads `~/.axo`.
@@ -82,13 +83,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q3.** Supervision: process group or cgroup?
 - **Q4.** Settings UI scope: which axo settings Axome surfaces (retry, `bash.promoteAfterMs`, `subagents.*`, `modelRoles`), and where project trust decisions come from.
 
-**Decisions:** none yet.
+**Decisions:** [D1](design.md#decisions), [D2](design.md#decisions), [D3](design.md#decisions), [D4](design.md#decisions).
 
 ---
 
 ## T2. Tool model
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md)
 
 **What axo gives**
 - **`kill`** (`{id}`, `bg_N` or `agent_N`) and **`send`** (`{to, message, steer?}`) are tools; `proc://` and `agent://` are read-only. Killing a child stops its current run, not the child. No team-wide kill.
@@ -111,13 +112,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q9.** Host tools: which tools of its own does Axome offer the model (open in editor, show diff, notify, task list), and which are direct or deferred?
 - **Q10.** Deferred catalog: user-visible anywhere, given a host read of `tool://<name>` triggers promotion?
 
-**Decisions:** none yet.
+**Decisions:** [D8](design.md#decisions), [D12](design.md#decisions), [D13](design.md#decisions), [D14](design.md#decisions), [D15](design.md#decisions).
 
 ---
 
 ## T3. Background jobs
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/jobs.md`](research/axo-6cdaeb4/jobs.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/jobs.md`](research/axo-6cdaeb4/jobs.md)
 
 **What axo gives**
 - Per-job events (`Job(JobInfo)` upsert, `JobGone`) and `snapshot.jobs`. A row has id, status (`Queued`, `Running`, `HelpersRunning`, `Finished`, `Failed`), `call_id`, `started_at`, and messages with delivery state. Command rows add label, tool, cwd, artifact, promotion cause and time, end time, and a typed exit (`exited`, `signaled`, `timedOut`, `killed{by}`, `aborted`, `interrupted`).
@@ -135,13 +136,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q15.** Closing a tab or the app with running jobs: stop, keep the session alive, or block. Axome's idle unload would drop the session, which stops its commands and children [INFERENCE: read from code, not run].
 - **Q16.** History views: how to label "was running when the session closed".
 
-**Decisions:** none yet.
+**Decisions:** [D12](design.md#decisions), [D16](design.md#decisions), [D17](design.md#decisions).
 
 ---
 
 ## T4. Subagents and teams
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md)
 
 **What axo gives**
 - Children are job rows (`JobKind::Child`): session id, path, depth, persona, model, team ref, `resident`, and progress (`turns`, `max_turns`, `wrapping_up`, `yield_failures`, `usage`), pushed after each child assistant message. `Queued` is a real status.
@@ -161,13 +162,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q23.** Cost: per-child and whole-tree usage (Axome sums it).
 - **Q24.** Agent definitions: where they live (app data, project, both), whether Axome ships any, and whether there is an editor.
 
-**Decisions:** none yet.
+**Decisions:** [D12](design.md#decisions), [D18](design.md#decisions), [D19](design.md#decisions), [D20](design.md#decisions).
 
 ---
 
 ## T5. Personas
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - `agent_change` entry; reopen restores the persona by name from the definitions loaded at that time. A missing definition gives a diagnostic and the session runs without it.
@@ -182,13 +183,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q27.** Switching mid-conversation: how the transcript marks it, and how the user learns the model may change with it.
 - **Q28.** Where personas are authored and stored, and their relation to T4's agent definitions (same files; `runAs` decides where each appears).
 
-**Decisions:** none yet.
+**Decisions:** [D5](design.md#decisions).
 
 ---
 
 ## T6. Modes
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md)
 
 **What axo gives**
 - Definitions are markdown with frontmatter: `name`, `description`, `argument-hint`, `disable-model-invocation`, `model`, `tools.allow`, `tools.deny`, `result.schema`, `result.review`, `result.then`, plus free extra keys for host policy. Roots come from `ConfigSource` or `SessionOptions`. axo ships none.
@@ -211,13 +212,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q34.** Read-only really meaning read-only: tool-name limits still allow `bash`. Deny bash in plan mode, or add a `ToolPolicy`?
 - **Q35.** User-defined modes: supported, where stored, and how they sit in the `/` picker next to skills and built-ins.
 
-**Decisions:** none yet.
+**Decisions:** [D6](design.md#decisions), [D7](design.md#decisions), [D8](design.md#decisions), [D9](design.md#decisions), [D10](design.md#decisions).
 
 ---
 
 ## T7. Models and roles
 
-**Status:** Open · **Evidence:** [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md), [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §1.5
+**Status:** Decided · **Evidence:** [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md), [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §1.5
 
 **What axo gives**
 - Selectors: `provider/model`, `@role`, `:thinking`, and combinations. `modelRoles` is a user-only setting. Personas, modes and `subagents.models` all take selectors.
@@ -226,13 +227,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q36.** A roles screen in settings (default, plan, fast, …): which roles Axome defines and what uses them.
 - **Q37.** The model picker offers concrete models only today; show roles too?
 
-**Decisions:** none yet.
+**Decisions:** [D11](design.md#decisions).
 
 ---
 
 ## T8. Host messages, sections, dynamic tools
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - `Session::post(HostMessage { custom_type, text, display, delivery: Steer | FollowUp | Quiet })`: durable; `Quiet` never starts a run. Seven engine custom types are reserved.
@@ -246,13 +247,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q38.** What Axome tells the model on its own (open file, selection, git state, UI events), and through which channel: quiet message, prompt section, or nothing.
 - **Q39.** Rendering custom messages: how job results, mail, child notes and host messages are told apart.
 
-**Decisions:** none yet.
+**Decisions:** [D21](design.md#decisions), [D22](design.md#decisions).
 
 ---
 
 ## T9. Session lifecycle and status
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - Context meter: `ContextUsage { tokens, window, trigger, reserve }` with `Context` events. Axome currently derives context from the last response's token count.
@@ -266,13 +267,13 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q41.** When Axome may unload a session, now that a session owns jobs and children (ties to Q15).
 - **Q42.** Does Axome keep its own registry of live sessions for a window-wide activity view?
 
-**Decisions:** none yet.
+**Decisions:** [D17](design.md#decisions), [D20](design.md#decisions), [D23](design.md#decisions).
 
 ---
 
 ## T10. Remaining axo gaps
 
-**Status:** Open · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md) §7–8, [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §7, [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md) §7
+**Status:** Decided · **Handoff:** [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md) §7–8, [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §7, [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md) §7
 
 Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) came back 14 shipped, 16 partly, 3 not shipped, 2 decided differently. What remains:
 
@@ -289,10 +290,16 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | Prompt and tool introspection with origin, config provenance, file ledger listing | Not shipped or partly | No "what the model sees" panel without more axo work |
 | Host `prepare_request` hook, retry detail | Not shipped | Sections and quiet messages instead (Q38) |
 | Mode: effective-mode signal, accept an edited result, durable review record | Not present | Shapes Q31–Q33 |
-| Typed deferred-tool catalog | Not present | Shapes Q10 |
+| **Pre-adoption blocker:** Side-effect-free tool & deferred-catalog inspection | `Session` has no public tools getter, and `Schemes::read("tool://<name>")` mutates promotion state | Request axo addition: `Session::tools()` returning direct/deferred/promoted/mode-restricted state, and keep host `Schemes::read` side-effect-free ([D15](design.md#decisions)) |
 | Typed `kill`/`send` receipts, dispatch provenance on events | Not present | Shapes Q5–Q6 |
+| **Pre-adoption blocker:** `AgentSpec.body` overwrites `<system>` | Root personas and spawned subagents both replace `SYSTEM.md`, losing harness mechanics (`local://`, resume, steering) | Request axo change: keep `<system>` strictly for `SYSTEM.md`/host override and place `AgentSpec.body` in its own `<agent>` section on both root and child sessions ([D5](design.md#decisions)) |
+| **Pre-adoption blocker:** `:` disallowed in mode and skill names | `markdown::name_problems` permits `[a-z0-9-]` only | Request axo change: allow `:` namespace separators (`plan:roadmap`, `plan:step`, `review:adversarial`) ([D6](design.md#decisions)) |
+| **Pre-adoption blocker:** Kernel-enforced read-only `bash` | Mode tool limits are name-only; no shell filesystem sandbox | Request axo feature: native Linux read-only `bash` execution mode (e.g. Landlock: writable `/tmp` + session `local/`, read-only everywhere else) usable by modes and subagents ([D8](design.md#decisions)) |
+| **Pre-adoption blocker:** Magic keywords (`orchestrate`, …) | Not implemented in axo | Request axo feature: `KeywordSpec` (`keywords/*.md` + host specs), standalone lowercase prose matching, tool gates, optional thinking overrides, hidden per-turn notice injection, and `Catalog` metadata ([D10](design.md#decisions)) |
+| Explicit `Session::resume_wakes()` for `auto_paused` | `auto_paused` clears on next user prompt; no dedicated host method | Request small axo helper so `SessionBar`'s `Resume` button clears `auto_paused` and delivers pending job results without sending a dummy prompt ([D16](design.md#decisions)) |
+| **Found in Phase 1:** no authoritative idle signal | `RunEnd` is published (`session/mod.rs:923–932`) before `release_or_deliver()` clears the busy claim or starts the next queued/job-result run (`:958`, `session/delivery.rs:143–172`) | Axome shows idle on `RunEnd` (`services/axo/live.rs`), so an edit/navigate, maintenance command or prompt sent right after a reply can fail with "axo is busy". Tests wait on the session snapshot; the app needs an axo activity/idle event covering host and autonomous runs |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.
 
-**Decisions:** none yet.
+**Decisions:** [D24](design.md#decisions) — 12 items batched for axo in [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md); remaining rows accepted/handled in Axome.

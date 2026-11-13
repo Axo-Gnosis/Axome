@@ -7,4 +7,7 @@ export { default as Title } from './DialogTitle.svelte'
 export { default as Description } from './DialogDescription.svelte'
 export { default as Footer } from './DialogFooter.svelte'
 
+// Standalone window-sized shell; import by name next to the namespace.
+export { default as WindowDialog } from './WindowDialog.svelte'
+
 export const Root = Primitive.Root

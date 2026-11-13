@@ -175,8 +175,48 @@ export interface ChatModel {
   images: boolean
 }
 
+export type AxoCredentialSource =
+  { kind: 'config' } | { kind: 'apiKey' } | { kind: 'oauth' } | { kind: 'env'; name: string } | { kind: 'none' }
+
+export interface AxoProvider {
+  id: string
+  env: string[]
+  requiresKey: boolean
+  oauth: boolean
+  source: AxoCredentialSource
+  models: number
+}
+
+export interface AxoModelsFile {
+  path: string
+  error: string | null
+}
+
+export interface AxoProvidersPayload {
+  providers: AxoProvider[]
+  modelsFile: AxoModelsFile
+}
+
+export interface AxoLoginStarted {
+  loginId: string
+  url: string
+}
+
+export type AxoLoginStatus = { state: 'pending' } | { state: 'done' } | { state: 'failed'; message: string }
+
+export interface AxoKeywordInfo {
+  name: string
+  description: string
+}
+
+export interface ChatModelRole {
+  name: string
+  model: string | null
+}
+
 export interface ChatModelCatalog {
   models: ChatModel[]
+  roles: ChatModelRole[]
   defaultModel: string | null
   defaultThinking: ChatThinking
 }
@@ -249,6 +289,7 @@ export interface ChatToolRun {
   name: string
   arguments: unknown
   output: ChatContent[]
+  details: unknown | null
 }
 
 export type ChatQueueKind = 'steer' | 'followUp'
@@ -333,7 +374,7 @@ export type ChatDelta =
   | { type: 'text'; index: number; text: string }
   | { type: 'thinking'; index: number; text: string }
   | { type: 'toolCall'; index: number; id: string; name: string; arguments: unknown | null }
-  | { type: 'toolOutput'; callId: string; content: ChatContent[] }
+  | { type: 'toolOutput'; callId: string; content: ChatContent[]; details: unknown | null }
 
 export type ChatEvent =
   | { type: 'snapshot'; state: ChatState }
@@ -381,34 +422,34 @@ export interface HarnessListing {
   default_preset: string | null
 }
 
-export type ExternalFolderOpenMode = 'new_window' | 'focused_window'
-export type ExternalFileOpenMode = 'prefer_folder' | 'focused_window' | 'new_window'
+export type ExternalFolderOpenMode = 'newWindow' | 'focusedWindow'
+export type ExternalFileOpenMode = 'preferFolder' | 'focusedWindow' | 'newWindow'
 export type TabBeamPosition = 'top' | 'bottom'
 
 export interface WindowSettings {
   theme: string
-  external_folder_open_mode?: ExternalFolderOpenMode
-  external_file_open_mode?: ExternalFileOpenMode
-  tab_beam_position?: TabBeamPosition
-  home_folder?: string | null
+  externalFolderOpenMode?: ExternalFolderOpenMode
+  externalFileOpenMode?: ExternalFileOpenMode
+  tabBeamPosition?: TabBeamPosition
+  homeFolder?: string | null
 }
 
 export interface TypographySettings {
-  ui_font_family: string
-  code_font_family: string
-  code_font_size: number
-  terminal_font_family: string | null
-  terminal_font_size: number | null
+  uiFontFamily: string
+  codeFontFamily: string
+  codeFontSize: number
+  terminalFontFamily: string | null
+  terminalFontSize: number | null
 }
 
 export interface NixSettings {
-  eval_timeout_secs: number
+  evalTimeoutSecs: number
 }
 
 export interface ExplorerSettings {
   exclude: Record<string, boolean>
-  exclude_gitignore: boolean
-  compact_folders: boolean
+  excludeGitignore: boolean
+  compactFolders: boolean
 }
 
 /** One row of a directory listing. A compacted chain's `name` carries the run. */
@@ -454,16 +495,16 @@ export interface FormattingLanguageSettings {
 export type FormattingSettings = Record<string, FormattingLanguageSettings>
 
 export interface HarnessConfig {
-  harness_id: string
+  harnessId: string
   enabled: boolean
-  binary_path_override: string | null
-  extra_args: string[]
+  binaryPathOverride: string | null
+  extraArgs: string[]
 }
 
 export interface HarnessSettings {
   enabled: boolean
-  binary_path_override: string | null
-  extra_args: string[]
+  binaryPathOverride: string | null
+  extraArgs: string[]
   presets: Record<string, PresetSettings>
 }
 
@@ -480,15 +521,15 @@ export interface ShellPresetSettings {
 }
 
 export interface ShellSettings {
-  binary_path_override?: string | null
-  extra_args: string[]
-  default_preset?: string | null
+  binaryPathOverride?: string | null
+  extraArgs: string[]
+  defaultPreset?: string | null
   presets: Record<string, ShellPresetSettings>
 }
 
 export interface ShellConfig {
-  binary_path_override: string | null
-  extra_args: string[]
+  binaryPathOverride: string | null
+  extraArgs: string[]
 }
 
 export interface ShellPresetEntry {
@@ -504,7 +545,7 @@ export interface ShellListing {
 
 export interface SessionsSettings {
   /** `<harness_id>` or `<harness_id>/<preset>`; launched by New Session and listed first. */
-  default_preset: string | null
+  defaultPreset: string | null
 }
 
 export interface RemoteSettings {
@@ -543,17 +584,95 @@ export interface FileReadProgress {
 
 export interface EffectiveLspServerSettings {
   enabled: boolean
-  binary_path_override: string | null
-  extra_args: string[]
+  binaryPathOverride: string | null
+  extraArgs: string[]
   trace: LspTraceLevel
   settings: unknown | null
 }
 
 export interface GitSettings {
-  worktree_copy: Record<string, boolean>
+  worktreeCopy: Record<string, boolean>
+}
+
+export type AxoQueueMode = 'all' | 'one-at-a-time'
+export type AxoDevShellMode = 'off' | 'direnv' | 'nix'
+export type AxoProjectAccess = 'ignore' | 'read' | 'trust'
+export type AxoSummaryRequest = 'live' | 'separate'
+export type AxoContextFiles = boolean | Record<string, boolean>
+
+export interface AxoBashSettings {
+  devShell: AxoDevShellMode
+  devShellRef: string
+  devShellWatch: string[]
+  devShellTimeoutMs: number
+  ci: boolean
+  promoteAfterMs: number
+}
+
+export interface AxoAskSettings {
+  timeoutMs: number | null
+}
+
+export interface AxoProjectFiles {
+  skills: boolean
+  config: boolean
+}
+
+export interface AxoProjectSettings {
+  files: AxoProjectFiles
+  access: AxoProjectAccess
+  paths: Record<string, AxoProjectAccess>
+}
+
+export interface AxoCompactionSettings {
+  enabled: boolean
+  maxContext: number | null
+  reserveTokens: number | null
+  keepRecentTokens: number | null
+  summaryRequest: AxoSummaryRequest
+}
+
+export interface AxoRetrySettings {
+  maxRetries: number
+  baseDelayMs: number
+  maxDelayMs: number
+}
+
+export interface AxoSubagentSettings {
+  maxDepth: number
+  maxConcurrent: number
+  maxTurns: number
+  defaultModel: string | null
+  models: Record<string, string>
+  contextFiles: AxoContextFiles
+}
+
+export interface AxoKeywordSettings {
+  enabled: boolean
+  disabled: string[]
+}
+
+export interface AxoSettings {
+  defaultModel: string | null
+  modelRoles: Record<string, string>
+  defaultThinkingLevel: ChatThinking
+  homeAgentsDir: boolean
+  steeringMode: AxoQueueMode
+  followUpMode: AxoQueueMode
+  contextFiles: Record<string, boolean>
+  nestedContextFiles: boolean
+  extendedContext: boolean
+  bash: AxoBashSettings
+  ask: AxoAskSettings
+  project: AxoProjectSettings
+  compaction: AxoCompactionSettings
+  retry: AxoRetrySettings
+  subagents: AxoSubagentSettings
+  keywords: AxoKeywordSettings
 }
 
 export interface EffectiveSettings {
+  axo: AxoSettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings
@@ -615,6 +734,7 @@ export interface HarnessSettingsEntry {
 }
 
 export interface SettingsPayload {
+  axo: AxoSettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings
@@ -735,10 +855,10 @@ export interface FormatterStatus {
 }
 
 export interface LspServerConfig {
-  server_definition_id: string
+  serverDefinitionId: string
   enabled: boolean
-  binary_path_override: string | null
-  extra_args: string[]
+  binaryPathOverride: string | null
+  extraArgs: string[]
   trace: LspTraceLevel
   settings: unknown | null
 }

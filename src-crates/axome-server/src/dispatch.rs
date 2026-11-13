@@ -23,7 +23,6 @@ use tokio::sync::{
 use tokio_util::task::TaskTracker;
 
 pub(crate) struct ServerContext {
-    pub config_dir: PathBuf,
     pub authorized_keys_file: Option<PathBuf>,
     pub pairing: Mutex<()>,
     folders: parking_lot::Mutex<HashMap<PathBuf, FolderState>>,
@@ -127,13 +126,8 @@ impl Drop for RunOperation<'_> {
 }
 
 impl ServerContext {
-    pub(crate) fn new(
-        config_dir: PathBuf,
-        authorized_keys_file: Option<PathBuf>,
-        host_events: HostEvents,
-    ) -> Self {
+    pub(crate) fn new(authorized_keys_file: Option<PathBuf>, host_events: HostEvents) -> Self {
         Self {
-            config_dir,
             authorized_keys_file,
             pairing: Mutex::new(()),
             folders: parking_lot::Mutex::new(HashMap::new()),
@@ -1487,7 +1481,7 @@ impl DispatchRuntime<'_> {
         if self.session.lock().await.authorized {
             return Ok(());
         }
-        let config_dir = self.context.config_dir.clone();
+        let config_dir = self.host.dirs.config.clone();
         let persisted = tokio::task::spawn_blocking(move || -> Result<bool, WireError> {
             let valid = auth::consume_pairing_token(&config_dir, &token).map_err(|error| {
                 WireError::Io {
@@ -1596,10 +1590,17 @@ mod tests {
                 "HEAD",
             ]);
             let host = Arc::new(
-                Host::new(scratch.path().join("server.db"), Arc::new(|_| Ok(()))).unwrap(),
+                Host::new(
+                    axome_core::HostOptions::new(
+                        axome_core::HostDirs::under(scratch.path()),
+                        "test.db",
+                    ),
+                    Arc::new(|_| Ok(())),
+                )
+                .unwrap(),
             );
             let (events, _) = tokio::sync::broadcast::channel(4);
-            let context = Arc::new(ServerContext::new(PathBuf::new(), None, events));
+            let context = Arc::new(ServerContext::new(None, events));
             Self {
                 scratch,
                 host,
@@ -2085,7 +2086,7 @@ mod tests {
     #[tokio::test]
     async fn canceled_folder_waiter_releases_its_gate() {
         let (events, _) = tokio::sync::broadcast::channel(2);
-        let context = Arc::new(ServerContext::new(PathBuf::new(), None, events));
+        let context = Arc::new(ServerContext::new(None, events));
         let admission = Arc::new(RwLock::new(()));
         let mut held = context.folder_operation(
             PathBuf::from("/same"),
@@ -2108,7 +2109,7 @@ mod tests {
     #[tokio::test]
     async fn canceled_waiter_releases_its_run_gate() {
         let (events, _) = tokio::sync::broadcast::channel(2);
-        let context = ServerContext::new(PathBuf::new(), None, events);
+        let context = ServerContext::new(None, events);
         let held = context.run_operation("same").await;
         let mut waiting = Box::pin(context.run_operation("same"));
         assert!(pending(&mut waiting).await);
@@ -2120,7 +2121,7 @@ mod tests {
     #[tokio::test]
     async fn queued_stop_invalidates_the_start_lease_before_id_reuse() {
         let (events, _) = tokio::sync::broadcast::channel(2);
-        let context = Arc::new(ServerContext::new(PathBuf::new(), None, events));
+        let context = Arc::new(ServerContext::new(None, events));
         let (entered, started) = tokio::sync::oneshot::channel();
         let (release, resume) = tokio::sync::oneshot::channel();
         let starting = Arc::clone(&context);
@@ -2179,10 +2180,17 @@ mod tests {
                 use axome_protocol::rpc::{AttachMode, WorkbenchAttached};
                 let scratch = tempfile::tempdir().unwrap();
                 let host = Arc::new(
-                    Host::new(scratch.path().join("server.db"), Arc::new(|_| Ok(()))).unwrap(),
+                    Host::new(
+                        axome_core::HostOptions::new(
+                            axome_core::HostDirs::under(scratch.path()),
+                            "test.db",
+                        ),
+                        Arc::new(|_| Ok(())),
+                    )
+                    .unwrap(),
                 );
                 let (events, _) = tokio::sync::broadcast::channel(4);
-                let context = Arc::new(ServerContext::new(PathBuf::new(), None, events));
+                let context = Arc::new(ServerContext::new(None, events));
                 let session = paired_session("desktop");
                 let runtime = DispatchRuntime {
                     host: &host,
@@ -2511,7 +2519,10 @@ mod tests {
                 let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
                 let host = Arc::new(
                     Host::new(
-                        scratch.path().join("server.db"),
+                        axome_core::HostOptions::new(
+                            axome_core::HostDirs::under(scratch.path()),
+                            "test.db",
+                        ),
                         Arc::new(move |event| {
                             if let axome_core::events::HostEvent::SettingsChanged(changed) = event {
                                 let _ = sender.send(changed);
@@ -2522,11 +2533,7 @@ mod tests {
                     .unwrap(),
                 );
                 let (broadcast, _) = tokio::sync::broadcast::channel(4);
-                let context = Arc::new(ServerContext::new(
-                    scratch.path().join("config"),
-                    None,
-                    broadcast,
-                ));
+                let context = Arc::new(ServerContext::new(None, broadcast));
                 let a = Arc::new(paired_session("a"));
                 let b = Arc::new(paired_session("b"));
                 let path = folder.to_string_lossy().into_owned();

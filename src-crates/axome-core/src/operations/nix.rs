@@ -83,8 +83,7 @@ impl Host {
             folder_path: folder_path.clone(),
         };
 
-        let timeout_secs = resolve_effective_settings_for_folder_path(Some(&folder))
-            .map_err(ApiError::Internal)?
+        let timeout_secs = resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder))
             .settings
             .nix
             .eval_timeout_secs

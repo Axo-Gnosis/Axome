@@ -7,7 +7,7 @@
       'data-selected:bg-accent/15 data-selected:text-bright',
       'data-disabled:pointer-events-none data-disabled:opacity-50 disabled:pointer-events-none disabled:opacity-50',
       'focus-visible:shadow-focus-ring',
-      '[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted'
+      "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg:not([class*='text-'])]:text-muted"
     ]
   })
 </script>
@@ -27,6 +27,7 @@
     value?: string
     keywords?: string[]
     disabled?: boolean
+    forceMount?: boolean
     onSelect?: () => void
   } = $props()
 </script>

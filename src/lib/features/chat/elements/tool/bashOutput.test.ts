@@ -14,6 +14,7 @@ function call(content: ChatContent[], isError = false, details: unknown = null):
     arguments: { command: 'command' },
     status: isError ? 'error' : 'done',
     output: content,
+    details,
     result: {
       kind: 'toolResult',
       callId: 'bash-call',

@@ -12,14 +12,14 @@ let
   authorizedKeysFile = pkgs.writeText "axome-authorized-keys" (
     lib.concatMapStrings (key: "${key}\n") cfg.authorizedKeys
   );
-  # Holds only addresses and file paths, never a private key.
+  # Holds only public configuration and file paths, never a private key.
   serverConfig = (pkgs.formats.json { }).generate "axome-server.jsonc" (
     {
-      inherit (cfg) listen;
+      inherit (cfg) listen supervision;
     }
-    // lib.optionalAttrs (cfg.identityFile != null) { identity_file = cfg.identityFile; }
+    // lib.optionalAttrs (cfg.identityFile != null) { identityFile = cfg.identityFile; }
     // lib.optionalAttrs (cfg.authorizedKeys != [ ]) {
-      authorized_keys_file = "${authorizedKeysFile}";
+      authorizedKeysFile = "${authorizedKeysFile}";
     }
     // lib.optionalAttrs cfg.web.enable { web.listen = cfg.web.listen; }
   );
@@ -49,6 +49,15 @@ in
       type = lib.types.str;
       default = "0.0.0.0:7420";
       description = "UDP address and port on which the Axome server listens.";
+    };
+
+    supervision = lib.mkOption {
+      type = lib.types.enum [
+        "processGroup"
+        "cgroup"
+      ];
+      default = "cgroup";
+      description = "Command process supervision; cgroup enables systemd delegation.";
     };
 
     identityFile = lib.mkOption {
@@ -84,6 +93,12 @@ in
       type = lib.types.nullOr (lib.types.strMatching "/.+");
       default = null;
       description = "XDG data home for the server; use the same path as the user's shell when customized.";
+    };
+
+    xdgCacheHome = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "/.+");
+      default = null;
+      description = "XDG cache home for the server; use the same path as the user's shell when customized.";
     };
 
     extraPackages = lib.mkOption {
@@ -157,6 +172,9 @@ in
       }
       // lib.optionalAttrs (cfg.xdgDataHome != null) {
         XDG_DATA_HOME = cfg.xdgDataHome;
+      }
+      // lib.optionalAttrs (cfg.xdgCacheHome != null) {
+        XDG_CACHE_HOME = cfg.xdgCacheHome;
       };
       serviceConfig = {
         User = cfg.user;
@@ -164,6 +182,7 @@ in
         ExecStart = "${cli}/bin/axome-server serve";
         Restart = "on-failure";
         KillMode = "mixed";
+        Delegate = cfg.supervision == "cgroup";
       };
     };
   };

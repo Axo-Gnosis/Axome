@@ -81,7 +81,9 @@ test('only the last turn runs and streaming and live output belong to it', () =>
     {
       ...live,
       running: true,
-      tools: [{ callId: 'call', name: 'read', arguments: {}, output: [{ type: 'text', text: 'Partial' }] }]
+      tools: [
+        { callId: 'call', name: 'read', arguments: {}, output: [{ type: 'text', text: 'Partial' }], details: null }
+      ]
     }
   )
   assert.equal(turns[0].running, false)

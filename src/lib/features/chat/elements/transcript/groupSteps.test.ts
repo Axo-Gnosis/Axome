@@ -4,7 +4,18 @@ import type { Step, ToolStep } from '../../turns'
 import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep } from './groupSteps'
 
 function tool(id: string, name = 'read', entryId: string | null = id): ToolStep {
-  return { id, entryId, kind: 'tool', callId: id, name, arguments: {}, status: 'running', result: null, output: [] }
+  return {
+    id,
+    entryId,
+    kind: 'tool',
+    callId: id,
+    name,
+    arguments: {},
+    status: 'running',
+    result: null,
+    output: [],
+    details: null
+  }
 }
 function thinking(id: string, text: string, redacted = false, entryId: string | null = id): Step {
   return { id, entryId, kind: 'thinking', text, redacted }

@@ -74,8 +74,10 @@ impl Fixture {
         let sink: EventSink<DesktopEvent> =
             Arc::new(move |event| send.send(event).map_err(|error| error.to_string()));
         let desktop = Arc::clone(&sink);
+        let mut dirs = axome_core::HostDirs::under(self.root.path());
+        dirs.data = dirs.data.join(name);
         let host = Arc::new(Host::new(
-            self.root.path().join(format!("{name}.db")),
+            axome_core::HostOptions::new(dirs, "test.db"),
             Arc::new(move |event| desktop(DesktopEvent::Host(event))),
         )?);
         let router = WorkspaceRouter::with_events(Arc::clone(&host), sink);
@@ -966,7 +968,7 @@ async fn settings_effective_merges_desktop_sections(fixture: &Fixture) -> anyhow
     fs::create_dir_all(workspace.path.join(".axome"))?;
     fs::write(
         workspace.path.join(".axome/settings.jsonc"),
-        r#"{"typography":{"code_font_size":11},"nix":{"eval_timeout_secs":123}}"#,
+        r#"{"typography":{"codeFontSize":11},"nix":{"evalTimeoutSecs":123}}"#,
     )?;
     bounded(
         "settings_patch_global_section",
@@ -974,7 +976,7 @@ async fn settings_effective_merges_desktop_sections(fixture: &Fixture) -> anyhow
             None,
             PatchSettingsSectionInput {
                 section: "typography".into(),
-                value: json!({ "code_font_size": 17 }),
+                value: json!({ "codeFontSize": 17 }),
             },
         ),
     )

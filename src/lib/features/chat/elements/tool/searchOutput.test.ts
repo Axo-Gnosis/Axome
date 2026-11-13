@@ -14,6 +14,7 @@ function call(name: 'grep' | 'find', source: string, details: unknown = null): T
     arguments: { pattern: '(a+)+$', limit: 2 },
     status: 'done',
     output,
+    details,
     result: {
       kind: 'toolResult',
       callId: 'call',

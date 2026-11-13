@@ -24,6 +24,7 @@ const MAX_COMPACT_HOPS: usize = 32;
 /// to the UI rather than silently dropping paths.
 const MAX_SEARCH_PATHS: usize = 200_000;
 
+#[derive(Default)]
 pub struct FileService {
     /// Compiled explorer filter per project, rebuilt when the settings
     /// generation moves so an edited `settings.jsonc` takes effect at once.
@@ -129,12 +130,6 @@ impl FileReadStream {
 }
 
 impl FileService {
-    pub fn new() -> Self {
-        Self {
-            filters: Mutex::new(HashMap::new()),
-        }
-    }
-
     pub fn stat(
         &self,
         project_path: &Path,
@@ -532,10 +527,11 @@ impl FileService {
         project_path: &Path,
         dir_path: &str,
         show_hidden: bool,
+        dirs: &crate::HostDirs,
         generation: u64,
     ) -> Result<Vec<DirEntry>, ApiError> {
         validate_path(dir_path)?;
-        let filter = self.filter(project_path, generation)?;
+        let filter = self.filter(project_path, dirs, generation)?;
         read_dir_with_filter(project_path, dir_path, show_hidden, &filter)
     }
 
@@ -546,9 +542,10 @@ impl FileService {
         &self,
         project_path: &Path,
         show_hidden: bool,
+        dirs: &crate::HostDirs,
         generation: u64,
     ) -> Result<PathList, ApiError> {
-        let filter = self.filter(project_path, generation)?;
+        let filter = self.filter(project_path, dirs, generation)?;
         Ok(list_paths_with_filter(
             project_path,
             show_hidden,
@@ -566,6 +563,7 @@ impl FileService {
     fn filter(
         &self,
         project_path: &Path,
+        dirs: &crate::HostDirs,
         generation: u64,
     ) -> Result<Arc<ExplorerFilter>, ApiError> {
         let mut filters = self.filters.lock();
@@ -575,8 +573,7 @@ impl FileService {
             }
         }
 
-        let resolved = resolve_effective_settings_for_folder_path(Some(project_path))
-            .map_err(|error| ApiError::Io(format!("Failed to resolve settings: {error}")))?;
+        let resolved = resolve_effective_settings_for_folder_path(dirs, Some(project_path));
         let filter = Arc::new(ExplorerFilter::build(
             project_path,
             &resolved.settings.explorer,
@@ -1121,7 +1118,7 @@ mod tests {
 
     #[test]
     fn paste_replace_refuses_destination_containing_source() {
-        let service = FileService::new();
+        let service = FileService::default();
         let mut failures = Vec::new();
         for op in ["cut", "copy"] {
             let mut cases = vec!["nested", "parent-traversal"];
@@ -1325,7 +1322,7 @@ mod tests {
         let source = dir.join("source.txt").to_string_lossy().into_owned();
         std::fs::write(&source, "source content").unwrap();
         std::fs::write(dir.join("other.txt"), "other content").unwrap();
-        let service = FileService::new();
+        let service = FileService::default();
         for name in ["source.txt", "other.txt"] {
             let rename_map = HashMap::from([(source.clone(), name.to_string())]);
             assert!(matches!(
@@ -1365,7 +1362,7 @@ mod tests {
             })
             .collect();
 
-        let mappings = FileService::new()
+        let mappings = FileService::default()
             .paste(
                 &dir,
                 "to",
@@ -1392,7 +1389,7 @@ mod tests {
 
     #[test]
     fn paste_validates_all_destinations_before_removal_or_transfer() {
-        let service = FileService::new();
+        let service = FileService::default();
         for op in ["copy", "cut"] {
             let dir = unique_test_dir(&format!("paste-batch-validation-{op}"));
             let from = dir.join("from");
@@ -1423,7 +1420,7 @@ mod tests {
 
     #[test]
     fn paste_replace_renames_batch_collisions_instead_of_dropping_items() {
-        let service = FileService::new();
+        let service = FileService::default();
         for op in ["copy", "cut"] {
             let dir = unique_test_dir(&format!("paste-batch-replace-{op}"));
             for sub in ["first", "second", "to"] {
@@ -1459,7 +1456,7 @@ mod tests {
         let dir = unique_test_dir("stream-eof");
         let content: Vec<u8> = (0..MAX_FILE_CHUNK_BYTES + 7).map(|i| i as u8).collect();
         std::fs::write(dir.join("a.txt"), &content).unwrap();
-        let service = FileService::new();
+        let service = FileService::default();
         let stat = service.stat(&dir, "a.txt").unwrap();
         let mut reader = service
             .open_read_stream(&dir, "a.txt", &stat.version)
@@ -1486,7 +1483,7 @@ mod tests {
         let dir = unique_test_dir("stream-mutation");
         let path = dir.join("a.txt");
         std::fs::write(&path, vec![b'a'; 2 * MAX_FILE_CHUNK_BYTES]).unwrap();
-        let service = FileService::new();
+        let service = FileService::default();
         let stat = service.stat(&dir, "a.txt").unwrap();
         let mut reader = service
             .open_read_stream(&dir, "a.txt", &stat.version)
@@ -1535,7 +1532,7 @@ mod tests {
             .unwrap()
             .set_len(limit + 1)
             .unwrap();
-        let service = FileService::new();
+        let service = FileService::default();
         assert_eq!(
             service.read(&dir, "at-limit").unwrap().content.len() as u64,
             limit
@@ -1560,7 +1557,7 @@ mod tests {
     fn file_write_conflict_detects_external_change() {
         let dir = unique_test_dir("write-conflict");
         std::fs::write(dir.join("a.txt"), "original\n").expect("seed file");
-        let service = FileService::new();
+        let service = FileService::default();
 
         let opened = service.read(&dir, "a.txt").expect("read");
         assert_eq!(opened.content, "original\n");
@@ -1608,7 +1605,7 @@ mod tests {
     fn file_write_refuses_to_resurrect_a_deleted_file() {
         let dir = unique_test_dir("write-deleted");
         std::fs::write(dir.join("a.txt"), "original\n").expect("seed file");
-        let service = FileService::new();
+        let service = FileService::default();
         let opened = service.read(&dir, "a.txt").expect("read");
 
         std::fs::remove_file(dir.join("a.txt")).expect("external delete");
@@ -1640,7 +1637,7 @@ mod tests {
     #[test]
     fn file_write_creates_a_new_file_but_not_a_missing_parent() {
         let dir = unique_test_dir("write-new");
-        let service = FileService::new();
+        let service = FileService::default();
 
         service
             .write(&dir, "new.txt", "hello\n", None)

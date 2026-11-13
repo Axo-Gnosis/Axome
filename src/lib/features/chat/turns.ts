@@ -12,6 +12,7 @@ export type ToolStep = StepBase & {
   status: 'running' | 'done' | 'error'
   result: ToolResult | null
   output: ChatContent[]
+  details: unknown
 }
 export type Step =
   | ToolStep
@@ -76,6 +77,7 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
           arguments: block.arguments,
           status: result ? (result.isError ? 'error' : 'done') : 'running',
           result,
+          details: result?.details ?? run?.details,
           output: result?.content ?? run?.output ?? []
         })
       } else if (block.type === 'text') {

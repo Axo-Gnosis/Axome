@@ -429,15 +429,15 @@ Rules:
 | destructive | `bg-danger-bg border border-danger-border text-danger hover:text-danger-bright`   |
 | accent      | `bg-accent-dim border border-accent-dim text-ground hover:bg-accent`              |
 
-| Size    | Classes                 |
-| ------- | ----------------------- |
-| default | `px-3.5 py-2 text-base` |
-| sm      | `px-2.5 py-1 text-sm`   |
-| xs      | `px-2 py-0.5 text-xs`   |
-| icon    | `w-7 h-7 p-0`           |
-| icon-sm | `w-5 h-5 p-0`           |
+| Size    | Classes                |
+| ------- | ---------------------- |
+| default | `px-4 py-2 text-base`  |
+| sm      | `px-3 py-1.5 text-sm`  |
+| xs      | `px-2.5 py-1 text-xs`  |
+| icon    | `w-7 h-7 p-0`          |
+| icon-sm | `w-5 h-5 p-0`          |
 
-Base: `inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50`.
+Base: `inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50`. Labels never wrap or squeeze; constrain the surrounding layout instead.
 
 ### 11.3 IconButton
 
@@ -451,7 +451,9 @@ Wraps `Button` with tooltip + `aria-label`. Always accepts `tooltip: string` and
 
 `w-full bg-surface border border-edge rounded px-2.5 py-1.5 text-base text-fg outline-none placeholder:text-subtle focus:border-accent transition-colors`.
 
-Select uses the same recipe; Textarea adds only `resize-none`. Native attributes pass through; Textarea exposes typed `HTMLTextareaAttributes` and `data-slot="textarea"`.
+Textarea adds only `resize-none`. Native attributes pass through; Textarea exposes typed `HTMLTextareaAttributes` and `data-slot="textarea"`.
+
+**Select** is `ui/select`, a Bits UI select (never a native `<select>`: WebKitGTK draws its popup with system chrome). The trigger reuses `inputVariants` plus a trailing `ArrowDown01Icon` and the open state's accent border; the list reuses the menu recipe (`menuContentVariants({ source: 'select' })`, `menuItemClass`) at least as wide as the trigger, with an accent check on the selected row. Use `SimpleSelect` (`items`, `value`, `onValueChange`, `placeholder`) for flat lists; compose `Select.Root/Trigger/Content/Item/Group/GroupHeading` for groups or custom rows.
 
 Focus uses border-swap (see §8.1). No outline.
 
@@ -504,6 +506,8 @@ Close affordance: hidden until hover, `text-muted hover:bg-edge hover:text-brigh
 `Dialog.Content` = `bg-raised border border-edge rounded-2xl shadow-popover p-5`. Inside it, cards step to `bg-overlay`; inputs step to `bg-surface`. Dialog title uses `text-xl font-semibold text-bright`.
 
 Overlay: `fixed inset-0 bg-ground/70 backdrop-blur-sm`. The one place blur is used.
+
+**Window dialog.** `WindowDialog` (standalone export of `ui/dialog`) is the shell for a modal that reads as a window over the app: `fixed inset-x-[4vw] inset-y-[4dvh] mx-auto max-w-7xl rounded-xl border border-edge bg-ground shadow-popover`, panes laid out by the caller. Its modal boundary is the visible window, so a backdrop click dismisses it like Esc; it registers with the modal registry. Settings is the user today; reach for it before overriding `Dialog.Content` into a large surface.
 
 ### 11.10 Dropdown / context menu
 
@@ -559,7 +563,7 @@ Variants: `info` (use `accent`), `success`, `warning`, `danger`. Leading icon us
 
 Everything at the sidebar rail is a `RailButton` (`app-shell/sidebar/RailButton.svelte`): an `IconButton size="md"` with a right-side tooltip, `active` pinning the hover look, and a bottom-right `StatusDot corner` unless the status is idle. Bits triggers wrap it through their `child` snippet.
 
-An **applet** is any item docked at the rail foot. Foot order: Nix, then Remotes (desktop) or Server (web), then Notifications, then Settings (`AppMenu`, a dropdown menu). Panel applets (Nix, Remotes, Server) wrap the button in `RailApplet`: a popover with a header (icon tile, label, status line), a body and an action row. Every applet:
+An **applet** is any item docked at the rail foot. Foot order: Nix, then Remotes (desktop) or Server (web), then Notifications, then the temporary app menu (`AppMenu`, a hamburger dropdown slated for removal), then Settings (a plain `RailButton` that opens the Settings window and carries the settings-issue dot). Panel applets (Nix, Remotes, Server) wrap the button in `RailApplet`: a popover with a header (icon tile, label, status line), a body and an action row. Every applet:
 
 - renders nothing when it has nothing to offer;
 - exposes its state as one `ToneStatus { tone, text }`; the corner dot, the tooltip `"<label> · <text>"`, the aria name and the panel status line all derive from it, so state is never shown by colour alone;
@@ -571,6 +575,25 @@ An **applet** is any item docked at the rail foot. Foot order: Nix, then Remotes
 `ui/progress`: `Spinner` is the one loading indicator: Hugeicons `RefreshCwIcon` rendered by `Icon`, whose paths spin around the viewBox center (`*:origin-[12px_12px] *:animate-spin`). Never spin the element box: at fractional display scales WebKit snaps a spinning layer to device pixels and the glyph swings off-center. It paints in `currentColor`, so tint it with a text class (`text-muted` in headers, inherited inside filled chips). Pass `label` when it is the only loading cue; it then reads as `role="status"`.
 
 Views that keep themselves current carry no Refresh buttons; a section shows a `Spinner` beside its heading or in its toolbar only while a background refresh runs. A view with no live source, like Home's activity map, keeps its Rescan button and swaps the icon for `Spinner` while scanning. Don't hand-roll another spinning icon.
+
+### 11.17 Settings
+
+`features/settings/dialog/SettingsDialog.svelte` sits in a `WindowDialog` (§11.9). Left: a `w-60 bg-surface` sidebar with an `h-12` Settings header, uppercase group labels (App, Agent, Workspace, Languages), page rows `gap-0.5` apart (selected `bg-accent-bg text-bright`, hover `bg-raised`, no hover transition; selection and hover never share a colour), and — only when the page scrolls — its sections as sub-entries on a left hairline (current one `border-accent`). Right: an `h-12` title bar (page name, Close), then a centred `max-w-3xl` column with the page description and host caption, then the view.
+
+Views compose two layout pieces and nothing else for structure:
+
+- `SettingsSection` — `text-xl` heading, optional description and `actions`, hairline between sections. Every section is a sidebar sub-entry, so titles are short Title Case nouns.
+- `SettingRow` — label (`text-base text-fg`) and description (`text-sm text-muted`) left, control right; `stacked` for paths, free text and lists. It renders a `<label>`; use `as="div"` for multi-control rows.
+
+No cards: hierarchy comes from spacing and hairlines. User-entry lists inside a section are hairline-divided rows.
+
+### 11.18 Chip and model picker
+
+`ui/chip` `Chip` is the inline token used for composer parts and `@role` names: `rounded-sm px-1`, `default` (`bg-raised text-fg`) or `accent` (`bg-accent-bg text-accent`) tone, mono for `@role`.
+
+Every model choice uses `ModelPicker` (`features/chat/elements/model-picker`), never a select or text field: a trigger (`ghost` in the composer toolbar, `field` in forms) opening a searchable popover with an optional "none" row, Roles as accent chips with their resolved model, then models grouped by provider with context size, and a `PaletteFooter` of key hints. `custom` lets forms accept a typed `provider/model` or `@role` that isn't listed. Reasoning effort lives in the companion `EffortPicker` beside `ModelPicker`: its trigger pairs `EffortGlyph` (an animated radial gauge sweeping from empty `off`, 1/8 `minimal`, 1/4 `low`, 2/4 `medium`, 3/4 `high` to full `xhigh`, and igniting a `warning` halo + star flare on `max`) with the level name, and opens a compact popover with a ticked `Slider`. `model:effort` selectors go through `splitSelector`/`joinSelector`/`levelsForSelector`.
+
+`ui/slider` `Slider` is the single-value slider: `h-5` pill track in `bg-surface`, filled range `bg-accent-dim`, `bg-max` thumb with `shadow-focus-ring` focus; `ticks` dots every step (`bg-subtle`, `bg-ground/40` inside the range) for discrete scales.
 
 ---
 

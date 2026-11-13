@@ -1,5 +1,5 @@
 use crate::errors::ApiError;
-use axome_protocol::settings::{self, SettingsLayerPayload};
+use axome_protocol::settings::SettingsLayerPayload;
 use jsonc_parser::{
     cst::{CstInputValue, CstRootNode},
     ParseOptions,
@@ -7,7 +7,6 @@ use jsonc_parser::{
 use parking_lot::{Mutex, MutexGuard};
 use serde_json::{json, Map, Value};
 use std::{
-    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -68,62 +67,6 @@ impl SettingsService {
             let _ = std::fs::remove_file(&temporary);
         }
         result.map_err(|error| format!("Failed to write settings file {}: {error}", path.display()))
-    }
-
-    pub fn global_config_dir() -> Result<PathBuf, String> {
-        Self::global_config_dir_from_env_vars(
-            std::env::var_os("XDG_CONFIG_HOME"),
-            std::env::var_os("HOME"),
-        )
-    }
-
-    pub fn global_data_dir() -> Result<PathBuf, String> {
-        Self::global_data_dir_from_env_vars(
-            std::env::var_os("XDG_DATA_HOME"),
-            std::env::var_os("HOME"),
-        )
-    }
-
-    pub fn global_settings_path() -> Result<PathBuf, String> {
-        Ok(Self::global_config_dir()?.join(settings::SETTINGS_FILE_NAME))
-    }
-
-    pub fn global_shortcuts_path() -> Result<PathBuf, String> {
-        Ok(Self::global_config_dir()?.join(settings::SHORTCUTS_FILE_NAME))
-    }
-
-    pub fn global_config_dir_from_env_vars(
-        xdg_config_home: Option<OsString>,
-        home: Option<OsString>,
-    ) -> Result<PathBuf, String> {
-        if let Some(path) = non_empty_env_path(xdg_config_home) {
-            return Ok(path.join(settings::GLOBAL_SETTINGS_DIR_NAME));
-        }
-
-        let home = non_empty_env_path(home)
-            .ok_or_else(|| "HOME is required to resolve global config path".to_string())?;
-        Ok(home
-            .join(".config")
-            .join(settings::GLOBAL_SETTINGS_DIR_NAME))
-    }
-
-    pub fn global_data_dir_from_env_vars(
-        xdg_data_home: Option<OsString>,
-        home: Option<OsString>,
-    ) -> Result<PathBuf, String> {
-        if let Some(path) = non_empty_env_path(xdg_data_home) {
-            return Ok(path.join(settings::GLOBAL_SETTINGS_DIR_NAME));
-        }
-
-        let home = non_empty_env_path(home)
-            .ok_or_else(|| "HOME is required to resolve data path".to_string())?;
-        Ok(home
-            .join(".local/share")
-            .join(settings::GLOBAL_SETTINGS_DIR_NAME))
-    }
-
-    pub fn folder_settings_path(folder_path: &Path) -> PathBuf {
-        folder_path.join(settings::FOLDER_SETTINGS_PATH)
     }
 
     pub fn update_section(
@@ -214,6 +157,7 @@ impl SettingsService {
                 | "shell"
                 | "lsp"
                 | "remotes"
+                | "axo"
         ) {
             Ok(())
         } else {
@@ -302,20 +246,13 @@ fn serde_value_to_cst_input(value: &Value) -> Result<CstInputValue, String> {
         ),
     })
 }
-fn non_empty_env_path(value: Option<OsString>) -> Option<PathBuf> {
-    let value = value?;
-    if value.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(value))
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Host;
     use axome_protocol::settings::{LspServerConfigRecord, LspTraceLevel};
-    use std::{ffi::OsString, fs};
+    use std::fs;
     use uuid::Uuid;
 
     fn temp_root(name: &str) -> PathBuf {
@@ -387,7 +324,7 @@ mod tests {
   "future_top": { "keep": true },
   "general": {
     // Touched-section comments may be lost.
-    "terminal_font_size": 13
+    "terminalFontSize": 13
   }
 }
 "#;
@@ -396,8 +333,8 @@ mod tests {
             original,
             "general",
             &json!({
-                "terminal_font_family": "Iosevka",
-                "terminal_font_size": 15
+                "terminalFontFamily": "Iosevka",
+                "terminalFontSize": 15
             }),
         )
         .expect("patch succeeds");
@@ -405,12 +342,12 @@ mod tests {
         assert!(patched.contains("Harness comment must stay"));
         assert!(patched.contains("future_top"));
         assert!(patched.contains("Iosevka"));
-        assert!(patched.contains("terminal_font_size"));
+        assert!(patched.contains("terminalFontSize"));
 
         let parsed = jsonc_parser::parse_to_serde_value::<Value>(&patched, &Default::default())
             .expect("patched JSONC parses");
         assert_eq!(parsed["future_top"]["keep"], json!(true));
-        assert_eq!(parsed["general"]["terminal_font_size"], json!(15));
+        assert_eq!(parsed["general"]["terminalFontSize"], json!(15));
     }
 
     #[test]
@@ -518,29 +455,10 @@ mod tests {
     }
 
     #[test]
-    fn validates_known_top_level_sections() {
-        for section in [
-            "window",
-            "typography",
-            "nix",
-            "explorer",
-            "git",
-            "formatting",
-            "harnesses",
-            "sessions",
-            "shell",
-            "lsp",
-            "remotes",
-        ] {
-            SettingsService::validate_top_level_section(section).expect("section valid");
-        }
-        assert!(SettingsService::validate_top_level_section("nope").is_err());
-    }
-    #[test]
     fn ensure_folder_settings_file_creates_parent_and_file() {
         let root = temp_root("folder-file");
         fs::create_dir_all(&root).expect("folder root created");
-        let path = SettingsService::folder_settings_path(&root);
+        let path = crate::dirs::folder_settings_path(&root);
         SettingsService::ensure_file(&path).expect("settings file created");
         assert_eq!(path, root.join(".axome/settings.jsonc"));
         assert_eq!(fs::read_to_string(&path).expect("file read"), "{\n}\n");
@@ -554,18 +472,16 @@ mod tests {
         let path = root.join("settings.jsonc");
         fs::write(
             &path,
-            "{\n  \"future_top\": true,\n  \"typography\": { \"code_font_size\": 13 }\n}\n",
+            "{\n  \"future_top\": true,\n  \"typography\": { \"codeFontSize\": 13 }\n}\n",
         )
         .expect("settings file written");
-        SettingsService::update_section(&path, "typography", |_| {
-            Ok(json!({ "code_font_size": 16 }))
-        })
-        .expect("section patched");
+        SettingsService::update_section(&path, "typography", |_| Ok(json!({ "codeFontSize": 16 })))
+            .expect("section patched");
         let patched = fs::read_to_string(&path).expect("patched file read");
         let parsed = jsonc_parser::parse_to_serde_value::<Value>(&patched, &Default::default())
             .expect("patched parses");
         assert_eq!(parsed["future_top"], json!(true));
-        assert_eq!(parsed["typography"]["code_font_size"], json!(16));
+        assert_eq!(parsed["typography"]["codeFontSize"], json!(16));
         fs::remove_dir_all(root).expect("temp dir removed");
     }
 
@@ -584,7 +500,7 @@ mod tests {
             let entries = SettingsService::object_property(&mut root, "harnesses")?;
             entries.insert(
                 "claude_code".to_string(),
-                json!({ "binary_path_override": "/bin/claude" }),
+                json!({ "binaryPathOverride": "/bin/claude" }),
             );
             Ok(Value::Object(std::mem::take(entries)))
         })
@@ -594,51 +510,11 @@ mod tests {
             .expect("patched parses");
         assert_eq!(parsed["harnesses"]["codex"]["enabled"], json!(false));
         assert_eq!(
-            parsed["harnesses"]["claude_code"]["binary_path_override"],
+            parsed["harnesses"]["claude_code"]["binaryPathOverride"],
             json!("/bin/claude")
         );
         fs::remove_dir_all(root).expect("temp dir removed");
     }
-    #[test]
-    fn global_settings_path_prefers_xdg_config_home() {
-        let directory = SettingsService::global_config_dir_from_env_vars(
-            Some(OsString::from("/tmp/xdg")),
-            Some(OsString::from("/home/test")),
-        )
-        .expect("path resolves");
-        assert_eq!(directory, PathBuf::from("/tmp/xdg/axome"));
-        assert_eq!(
-            directory.join(settings::SETTINGS_FILE_NAME),
-            PathBuf::from("/tmp/xdg/axome/settings.jsonc")
-        );
-    }
-
-    #[test]
-    fn global_shortcuts_path_uses_same_config_dir() {
-        let directory = SettingsService::global_config_dir_from_env_vars(
-            Some(OsString::from("/tmp/xdg")),
-            Some(OsString::from("/home/test")),
-        )
-        .expect("path resolves");
-        assert_eq!(
-            directory.join(settings::SHORTCUTS_FILE_NAME),
-            PathBuf::from("/tmp/xdg/axome/shortcuts.jsonc")
-        );
-    }
-
-    #[test]
-    fn global_settings_path_falls_back_to_home_config() {
-        let directory = SettingsService::global_config_dir_from_env_vars(
-            None,
-            Some(OsString::from("/home/test")),
-        )
-        .expect("path resolves");
-        assert_eq!(
-            directory.join(settings::SETTINGS_FILE_NAME),
-            PathBuf::from("/home/test/.config/axome/settings.jsonc")
-        );
-    }
-
     #[test]
     fn missing_jsonc_layer_is_empty_unloaded_object() {
         let path = temp_root("missing").join("settings.jsonc");

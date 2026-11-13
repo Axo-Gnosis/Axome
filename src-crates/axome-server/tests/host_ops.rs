@@ -1,8 +1,7 @@
-//! Host operations run in scratch HOME/XDG child processes before constructing a runtime.
+//! Host operations run in scratch HOME child processes before constructing a runtime.
 mod support;
 
-use anyhow::{bail, Context, Result};
-use axome_core::services::settings::SettingsService;
+use anyhow::{Context, Result};
 use axome_protocol::{
     folder::PathRootKind,
     harness::HarnessConnectionStatus,
@@ -379,12 +378,11 @@ async fn kv_and_recent(daemon: &mut Daemon) -> Result<()> {
     Ok(())
 }
 
-async fn shortcuts(client: &RemoteClient, home: &Path) -> Result<()> {
+async fn shortcuts(client: &RemoteClient, config: &Path) -> Result<()> {
     let missing = client
         .call_as(&Request::ShortcutsGetGlobal {}, Reply::shortcuts_get_global)
         .await?;
-    let path = SettingsService::global_shortcuts_path().map_err(anyhow::Error::msg)?;
-    assert!(path.starts_with(home));
+    let path = config.join("shortcuts.jsonc");
     assert_eq!(missing.path, path_string(&path));
     assert!(!missing.loaded);
     assert_eq!(missing.value, serde_json::json!({}));
@@ -516,10 +514,10 @@ async fn catalogs_and_harnesses(client: &RemoteClient, home: &Path) -> Result<()
     fs::set_permissions(&binary, permissions)?;
     let absent = path_string(&home.join("no-such-cli"));
     let config = serde_json::json!({
-        "omp": {"binary_path_override": path_string(&binary)},
-        "claude_code": {"binary_path_override": absent},
-        "codex": {"binary_path_override": absent},
-        "antigravity": {"binary_path_override": absent}
+        "omp": {"binaryPathOverride": path_string(&binary)},
+        "claude_code": {"binaryPathOverride": absent},
+        "codex": {"binaryPathOverride": absent},
+        "antigravity": {"binaryPathOverride": absent}
     });
     client
         .call_as(
@@ -654,15 +652,6 @@ fn workbench_operations_over_paired_quic() -> Result<()> {
     let working_directory = home.join("host-working-directory");
     fs::create_dir(&working_directory)?;
     std::env::set_current_dir(&working_directory)?;
-    for path in [
-        SettingsService::global_settings_path(),
-        SettingsService::global_shortcuts_path(),
-    ] {
-        let path = path.map_err(anyhow::Error::msg)?;
-        if !path.starts_with(home.as_path()) {
-            bail!("global file escaped scratch HOME: {}", path.display());
-        }
-    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -685,7 +674,7 @@ fn workbench_operations_over_paired_quic() -> Result<()> {
             path_string(&fs::canonicalize(&working_directory)?)
         );
         assert_ne!(actual_working_directory, actual_home);
-        shortcuts(&client, home.as_path()).await?;
+        shortcuts(&client, daemon.config.path()).await?;
         catalogs_and_harnesses(&client, home.as_path()).await?;
         activity_and_root(&client, home.as_path()).await?;
         client.close();
@@ -732,9 +721,9 @@ fn session_index_over_quic() -> Result<()> {
                             value: serde_json::json!({
                                 "omp": {
                                     "enabled": true,
-                                    "binary_path_override": path_string(&home.join("no-such-omp")),
+                                    "binaryPathOverride": path_string(&home.join("no-such-omp")),
                                     // Ignore inherited omp profile and store overrides.
-                                    "extra_args": ["--session-dir", path_string(&session_dir)]
+                                    "extraArgs": ["--session-dir", path_string(&session_dir)]
                                 }
                             }),
                         },
@@ -821,7 +810,7 @@ fn daemon_persists_presentation_sections_but_rejects_remotes() -> Result<()> {
 async fn settings_scenarios() -> Result<()> {
     let daemon = Daemon::start(None).await?;
     let client = daemon.paired_client().await?;
-    let path = SettingsService::global_settings_path().map_err(anyhow::Error::msg)?;
+    let path = daemon.config.path().join("settings.jsonc");
     assert!(!path.exists(), "scratch global file must start absent");
 
     let missing = client
@@ -844,7 +833,7 @@ async fn settings_scenarios() -> Result<()> {
         .await?;
     assert_eq!(Path::new(&created.path), path);
     assert_eq!(fs::read_to_string(&path)?, "{\n}\n");
-    let existing = "{\n  \"nix\": { \"eval_timeout_secs\": 41 }\n}\n";
+    let existing = "{\n  \"nix\": { \"evalTimeoutSecs\": 41 }\n}\n";
     fs::write(&path, existing)?;
     let again = client
         .call_as(
@@ -863,7 +852,7 @@ async fn settings_scenarios() -> Result<()> {
     assert!(layer.loaded);
     assert_eq!(
         layer.value,
-        serde_json::json!({"nix":{"eval_timeout_secs":41}})
+        serde_json::json!({"nix":{"evalTimeoutSecs":41}})
     );
     assert!(layer.diagnostics.is_empty());
 
@@ -918,10 +907,10 @@ async fn settings_scenarios() -> Result<()> {
 
     let patched_window = serde_json::json!({
         "theme": "patched-theme",
-        "external_folder_open_mode": "new_window",
-        "external_file_open_mode": "focused_window",
-        "tab_beam_position": "top",
-        "home_folder": "/tmp/patched-home"
+        "externalFolderOpenMode": "newWindow",
+        "externalFileOpenMode": "focusedWindow",
+        "tabBeamPosition": "top",
+        "homeFolder": "/tmp/patched-home"
     });
     let result = client
         .call_as(
@@ -943,11 +932,11 @@ async fn settings_scenarios() -> Result<()> {
     assert_eq!(disk_settings(&path)?["window"], patched_window);
 
     let patched_typography = serde_json::json!({
-        "ui_font_family": "Lexend",
-        "code_font_family": "Monaspace",
-        "code_font_size": 19,
-        "terminal_font_family": null,
-        "terminal_font_size": 15
+        "uiFontFamily": "Lexend",
+        "codeFontFamily": "Monaspace",
+        "codeFontSize": 19,
+        "terminalFontFamily": null,
+        "terminalFontSize": 15
     });
     let result = client
         .call_as(
@@ -974,7 +963,7 @@ async fn settings_scenarios() -> Result<()> {
     let disk = disk_settings(&path)?;
     assert_eq!(disk["window"], patched_window);
     assert_eq!(disk["typography"], patched_typography);
-    assert_eq!(disk["nix"]["eval_timeout_secs"], 41);
+    assert_eq!(disk["nix"]["evalTimeoutSecs"], 41);
 
     let rejection = client
         .call_as(
@@ -1068,10 +1057,10 @@ async fn settings_barrier(
                     let ready = client.call_as(&Request::SettingsPatchGlobalSection {
                         input: PatchSettingsSectionInput {
                             section: "explorer".into(),
-                            value: serde_json::json!({"compact_folders": false}),
+                            value: serde_json::json!({"compactFolders": false}),
                         },
                     }, Reply::settings_patch_global_section).await?;
-                    assert_eq!(ready.value["explorer"]["compact_folders"], false);
+                    assert_eq!(ready.value["explorer"]["compactFolders"], false);
                 }
             }
         }

@@ -163,14 +163,15 @@ mod tests {
             "typography",
             "nix",
             "explorer",
-            "exclude_gitignore",
-            "compact_folders",
+            "excludeGitignore",
+            "compactFolders",
             "formatting",
             "harnesses",
             "sessions",
             "shell",
             "lsp",
             "remotes",
+            "axo",
         ] {
             assert!(rendered.contains(section), "schema includes {section}");
         }
@@ -190,12 +191,12 @@ mod tests {
         );
         let rendered = schema.to_string();
 
-        assert!(rendered.contains("binary_path_override"));
+        assert!(rendered.contains("binaryPathOverride"));
         assert!(rendered.contains("\"string\",\"null\""));
         let typography = &schema["definitions"]["TypographySettings"]["properties"];
-        assert_eq!(typography["code_font_size"]["type"], json!("integer"));
+        assert_eq!(typography["codeFontSize"]["type"], json!("integer"));
         assert_eq!(
-            typography["terminal_font_size"]["type"],
+            typography["terminalFontSize"]["type"],
             json!(["integer", "null"])
         );
     }

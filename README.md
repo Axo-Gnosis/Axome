@@ -94,6 +94,14 @@ The Axo chat composer works like a chat app's:
 - **Links:** `artifact://`, `local://`, and `skill://` links open the file from that chat's own session, even when the chat isn't loaded.
 - **Keys:** a chip sits in the text like one character: the caret steps over it, `Backspace` deletes it whole, and it selects, copies, and pastes with the text around it. `Esc` closes a list first, then stops the run.
 
+Axo chats are configured entirely by Axome; `~/.axo` is never read:
+
+- **Providers:** **Settings → Providers** sets or removes API keys, logs in to `openai-codex` (in the browser, or by pasting the redirect URL), and shows where each provider's credential comes from (`models.jsonc`, a stored key, a login, or an environment variable). Custom models and providers live in `~/.config/axome/models.jsonc`, edited as a file; **Reload models** picks up changes, and a broken file is reported there while the built-in models keep working.
+- **Model roles:** **Settings → Models** sets the default model and effort and maps `@default`, `@reason`, `@work`, `@dash`, `@conduct` and your own roles to models; configured roles appear in the model picker. An unset role falls back to `@default`, and an unset `@default` to the last model you picked in a chat. Effort sits in its own `EffortPicker` button beside each model picker (chat composer, Models, Tools), with a radial gauge icon that fills from empty (`off`), 1/8 (`minimal`), 1/4 (`low`), 2/4 (`medium`), 3/4 (`high`) to full (`xhigh`) and ignites a star crown on `max`; its popover opens a ticked slider. In a chat, `Shift+Tab` still cycles effort from the composer.
+- **Agent settings:** the **Agent** pages of Settings (**Providers**, **Models**, **Behavior**, **Tools**, **Project Access**) edit everything under `"axo"` in `~/.config/axome/settings.jsonc` (default model and thinking, queueing, context files, keywords, compaction, retries, `bash` dev shells, subagents, project access). A folder's `.axome/settings.jsonc` may override `"axo"` too, except `project`, `homeAgentsDir`, `modelRoles`, `subagents` and `extendedContext`, which are global only. Changes apply to chats started or reopened afterwards.
+- **Your files:** user prompts, agents, modes, keywords and skills live in `~/.config/axome/{prompts,agents,modes,keywords,skills}` and `~/.config/axome/AGENTS.md`; a folder adds `.axome/{prompts,agents,modes,keywords}`. Credentials are stored in `~/.local/share/axome/axo/auth.json`, sessions in `~/.local/share/axome/axo/sessions/`, and the model catalog cache in `~/.cache/axome/axo/`.
+- **Closing a chat tab ends its session,** stopping its background jobs and subagents, even when another window or browser is attached (that one shows Reconnect). Closing a secondary desktop window or a web workbench does the same for its chats. Just closing the browser leaves server-side sessions running.
+
 <details>
 <summary>📷 See the dashboard and an agent workspace</summary>
 
@@ -135,12 +143,12 @@ Use `Ctrl+Shift+P` for workbench commands, `Ctrl+P` to find files, or `Ctrl+O` t
 
 Because tabs in the same folder share its working tree, you can spin up separate Git worktrees when running multiple agents in parallel. Create, open, and remove worktrees from the Git sidebar's **Worktrees** tab, branch menus, or commit history, or use **Migrate Changes to Main** to move uncommitted work back to the primary checkout.
 
-To copy untracked local files (such as `.env`) into new worktrees automatically, configure `git.worktree_copy` in `.axome/settings.jsonc`:
+To copy untracked local files (such as `.env`) into new worktrees automatically, configure `git.worktreeCopy` in `.axome/settings.jsonc`:
 
 ```jsonc
 {
   "git": {
-    "worktree_copy": {
+    "worktreeCopy": {
       ".env": true,
       ".local": true,
       ".local/private": false
@@ -183,12 +191,12 @@ The sidebar rail's foot holds the Nix environment, remote servers, notifications
 
 ### Terminal presets
 
-Define shell launch variants under `shell.presets` in `~/.config/axome/settings.jsonc` or a folder's `.axome/settings.jsonc`. Each preset can override the shell `command`, append `args`, add `env`, and type a `startup` line into the shell after it starts. `shell.default_preset` picks what **New Terminal** (Ctrl+T) opens; every preset also gets its own New Tab card and palette command.
+Define shell launch variants under `shell.presets` in `~/.config/axome/settings.jsonc` or a folder's `.axome/settings.jsonc`. Each preset can override the shell `command`, append `args`, add `env`, and type a `startup` line into the shell after it starts. `shell.defaultPreset` picks what **New Terminal** (Ctrl+T) opens; every preset also gets its own New Tab card and palette command.
 
 ```jsonc
 {
   "shell": {
-    "default_preset": "dev",
+    "defaultPreset": "dev",
     "presets": {
       "dev": { "args": ["-l"], "env": { "RUST_LOG": "debug" }, "startup": "git status -sb" }
     }
@@ -215,10 +223,23 @@ Run `axome-server` on another Linux machine to open remote folders from the desk
 
 The flake exports `packages.<system>.axome-server`, `nixosModules.axome-server`, and `homeManagerModules.axome` for declarative setups, alongside `.deb`, `.rpm`, and tarball server artifacts on GitHub Releases.
 
+Set `"supervision": "processGroup"` (the default) or `"supervision": "cgroup"` in
+`~/.config/axome/server.jsonc` to choose command process supervision. Cgroup mode
+requires delegated cgroup access; without it, command execution fails with
+`Command supervision unavailable:` rather than falling back.
+
+The NixOS module exposes `services.axome-server.supervision`, defaulting to
+`"cgroup"`, and enables systemd delegation for that mode. Set it to `"processGroup"`
+to disable delegation. Supported cgroup deployments are the NixOS module and
+direct binaries with delegated cgroups. The portable tarball's `ld.so` launcher
+makes `current_exe()` point to the loader, so cgroup supervision fails closed there;
+use `"processGroup"` with that package.
+
 ## Worth knowing
 
 - **Active development, Linux-first.** Expect rough edges and changes as the project grows. I do daily-drive it however, so it's stable enough.
 - **Sessions in the same folder share its working tree.** Tabs do not create isolated worktrees; create a separate worktree for independent edits.
+- **Where Axome keeps things.** The desktop app and `axome-server` share one XDG layout: config in `~/.config/axome`, data in `~/.local/share/axome` (desktop `axome.db` and its webview storage under `webview/`, server `server.db`), cache in `~/.cache/axome`. `axome-server` relocates each with `--config-dir`, `--data-dir` and `--cache-dir`, or through `XDG_*_HOME`; the NixOS module sets those variables through its `xdgConfigHome`, `xdgDataHome` and `xdgCacheHome` options. All config files use `camelCase` keys and values; old `snake_case` keys are reported as unknown settings.
 - **Your agent is still your agent.** Axome runs the CLI itself; model information and other output inside its terminal come from that CLI.
 - **Coming from Sworm?** Global settings, app-owned state (the cached session index, Nix env cache) and server state start fresh under the Axome names; nothing in `~/.config/sworm`, `~/.local/share/dev.sworm` or `~/.cache/sworm` is read or migrated. Sessions that harnesses keep in their own files are still discovered. Only per-project folders carry over: rename each repo's `.sworm/` to `.axome/` (its `issues.db` keeps working as-is), then update `.sworm/` paths and `dev.sworm.*` extension ids in its settings and tasks. Remote desktop and `axome-server` must both be Axome builds; the wire protocol is `axome/1`.
 

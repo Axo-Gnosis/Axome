@@ -6,7 +6,7 @@ use crate::{
         harnesses,
         settings::SettingsService,
         settings_resolution::{
-            harness_config_record, parse_error_diagnostic,
+            harness_config_record, load_settings_layer, parse_error_diagnostic,
             resolve_effective_settings_for_folder_path, SettingsLayerLoad,
         },
     },
@@ -23,8 +23,7 @@ use std::path::{Path, PathBuf};
 impl Host {
     pub fn settings_get(&self) -> Result<SettingsPayload, ApiError> {
         self.watch_settings_paths(None);
-        let resolved =
-            resolve_effective_settings_for_folder_path(None).map_err(ApiError::Internal)?;
+        let resolved = resolve_effective_settings_for_folder_path(&self.dirs, None);
         let harnesses = harnesses::detect_all(
             &ExtensionService::current(),
             &resolved.settings,
@@ -45,6 +44,7 @@ impl Host {
         }
 
         Ok(SettingsPayload {
+            axo: resolved.settings.axo,
             window: resolved.settings.window,
             typography: resolved.settings.typography,
             nix: resolved.settings.nix,
@@ -65,8 +65,8 @@ impl Host {
             .filter(|path| !path.starts_with("axome://"))
             .map(PathBuf::from);
         self.watch_settings_paths(folder_path.as_deref());
-        let resolved = resolve_effective_settings_for_folder_path(folder_path.as_deref())
-            .map_err(ApiError::Internal)?;
+        let resolved =
+            resolve_effective_settings_for_folder_path(&self.dirs, folder_path.as_deref());
         Ok(EffectiveSettingsPayload {
             settings: resolved.settings,
             diagnostics: resolved.diagnostics,
@@ -75,7 +75,10 @@ impl Host {
 
     pub fn settings_get_global_layer(&self) -> Result<SettingsLayerPayload, ApiError> {
         self.watch_settings_paths(None);
-        global_layer_payload()
+        Ok(layer_payload(load_settings_layer(
+            SettingsLayerKind::Global,
+            self.dirs.settings_path(),
+        )))
     }
 
     pub fn settings_patch_global_section(
@@ -91,7 +94,7 @@ impl Host {
         section: &str,
         update: impl FnOnce(Value) -> Result<Value, ApiError>,
     ) -> Result<SettingsLayerPayload, ApiError> {
-        let path = SettingsService::global_settings_path().map_err(ApiError::Internal)?;
+        let path = self.dirs.settings_path();
         let payload = SettingsService::update_section(&path, section, update)?;
         self.settings_watchers
             .notify(SettingsLayerKind::Global, None);
@@ -99,7 +102,7 @@ impl Host {
     }
 
     pub fn settings_create_global_file(&self) -> Result<SettingsFileResult, ApiError> {
-        let path = SettingsService::global_settings_path().map_err(ApiError::Internal)?;
+        let path = self.dirs.settings_path();
         SettingsService::ensure_file(&path)?;
         Ok(SettingsFileResult {
             path: path.to_string_lossy().into_owned(),
@@ -110,7 +113,7 @@ impl Host {
         &self,
         folder_path: String,
     ) -> Result<SettingsFileResult, ApiError> {
-        let path = SettingsService::folder_settings_path(Path::new(&folder_path));
+        let path = crate::dirs::folder_settings_path(Path::new(&folder_path));
         SettingsService::ensure_file(&path)?;
         Ok(SettingsFileResult {
             path: path.to_string_lossy().into_owned(),
@@ -152,8 +155,8 @@ impl Host {
             if !shell.is_object() {
                 shell = json!({});
             }
-            shell["binary_path_override"] = json!(config.binary_path_override);
-            shell["extra_args"] = json!(config.extra_args);
+            shell["binaryPathOverride"] = json!(config.binary_path_override);
+            shell["extraArgs"] = json!(config.extra_args);
             Ok(shell)
         })?;
         Ok(config)
@@ -181,8 +184,8 @@ impl Host {
                 *entry = json!({});
             }
             entry["enabled"] = json!(config.enabled);
-            entry["binary_path_override"] = json!(config.binary_path_override);
-            entry["extra_args"] = json!(config.extra_args);
+            entry["binaryPathOverride"] = json!(config.binary_path_override);
+            entry["extraArgs"] = json!(config.extra_args);
             Ok(Value::Object(std::mem::take(map)))
         })?;
         Ok(config)
@@ -205,12 +208,6 @@ impl Host {
     }
 }
 
-fn global_layer_payload() -> Result<SettingsLayerPayload, ApiError> {
-    let path = SettingsService::global_settings_path().map_err(ApiError::Internal)?;
-    Ok(layer_payload(
-        crate::services::settings_resolution::load_settings_layer(SettingsLayerKind::Global, path),
-    ))
-}
 fn layer_payload(layer: SettingsLayerLoad) -> SettingsLayerPayload {
     match layer {
         SettingsLayerLoad::Loaded(layer) => SettingsLayerPayload {
@@ -235,32 +232,17 @@ fn layer_payload(layer: SettingsLayerLoad) -> SettingsLayerPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, process::Command, sync::Arc};
+    use std::{fs, sync::Arc};
 
     #[test]
     fn shell_config_write_preserves_presets() {
-        const TEST: &str = "operations::settings::tests::shell_config_write_preserves_presets";
-        const MARKER: &str = "AXOME_ISOLATED_TEST";
-        if std::env::var(MARKER).as_deref() != Ok(TEST) {
-            // Keep global settings writes out of the user's config and other tests' environment.
-            let home =
-                std::env::temp_dir().join(format!("axome-shell-settings-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&home).unwrap();
-            let status = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", TEST, "--nocapture"])
-                .env(MARKER, TEST)
-                .env("HOME", &home)
-                .env("XDG_CONFIG_HOME", home.join("config"))
-                .env("XDG_DATA_HOME", home.join("data"))
-                .status()
-                .expect("launch isolated settings test");
-            fs::remove_dir_all(home).unwrap();
-            assert!(status.success(), "isolated settings test failed: {status}");
-            return;
-        }
-
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-        let host = Host::new(home.join("data.db"), Arc::new(|_| Ok(()))).unwrap();
+        let home =
+            std::env::temp_dir().join(format!("axome-shell-settings-{}", uuid::Uuid::new_v4()));
+        let host = Host::new(
+            crate::HostOptions::new(crate::HostDirs::under(&home), "test.db"),
+            Arc::new(|_| Ok(())),
+        )
+        .unwrap();
         let preset = json!({
             "command": "/bin/sh",
             "args": ["-l"],
@@ -269,10 +251,10 @@ mod tests {
         });
         host.settings_update_global_section("shell", |_| {
             Ok(json!({
-                "binary_path_override": "/old/shell",
-                "extra_args": ["--old"],
+                "binaryPathOverride": "/old/shell",
+                "extraArgs": ["--old"],
                 "presets": { "dev": preset },
-                "default_preset": "dev",
+                "defaultPreset": "dev",
                 "future_key": true
             }))
         })
@@ -288,13 +270,15 @@ mod tests {
             );
             let shell = host.settings_get_global_layer().unwrap().value["shell"].clone();
             assert_eq!(shell["presets"]["dev"], preset);
-            assert_eq!(shell["default_preset"], "dev");
+            assert_eq!(shell["defaultPreset"], "dev");
             assert_eq!(shell["future_key"], true);
             assert_eq!(
-                shell["binary_path_override"],
+                shell["binaryPathOverride"],
                 json!(config.binary_path_override)
             );
-            assert_eq!(shell["extra_args"], json!(config.extra_args));
+            assert_eq!(shell["extraArgs"], json!(config.extra_args));
         }
+        drop(host);
+        fs::remove_dir_all(home).unwrap();
     }
 }

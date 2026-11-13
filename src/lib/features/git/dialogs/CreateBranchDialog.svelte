@@ -14,7 +14,8 @@
   import { Button } from '$lib/components/ui/button'
   import { Checkbox } from '$lib/components/ui/checkbox'
   import * as Dialog from '$lib/components/ui/dialog'
-  import { Input, Select } from '$lib/components/ui/input'
+  import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import * as branches from '$lib/features/git/branches.svelte'
   import { runGitAction } from '$lib/features/git/state.svelte'
   import { validateBranchName } from '$lib/utils/git/branchValidation'
@@ -77,11 +78,7 @@
 
         <label class="block space-y-1">
           <span class="text-xs font-medium text-muted">Based on</span>
-          <Select bind:value={base} class="text-sm">
-            {#each baseOptions as option (option)}
-              <option value={option}>{option}</option>
-            {/each}
-          </Select>
+          <Select bind:value={base} items={baseOptions} />
         </label>
 
         <label class="flex items-center gap-2 text-sm text-fg">

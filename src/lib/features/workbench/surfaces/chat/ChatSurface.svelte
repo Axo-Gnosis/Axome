@@ -6,7 +6,7 @@
   import { IconButton } from '$lib/components/ui/button'
   import { Particles } from '$lib/components/ui/particles'
   import * as chats from '$lib/features/chat/registry'
-  import { getChatModels } from '$lib/features/chat/models.svelte'
+  import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
   import { resolveChatKey } from '$lib/features/chat/chatKeymap'
   import { transcriptTurns, turnDurationMs } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
@@ -15,7 +15,7 @@
   import { SessionBar } from '$lib/features/chat/elements/session-bar'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { fileReference } from '$lib/features/chat/elements/prompt-input/attachments'
-  import { ConfigPicker } from '$lib/features/chat/elements/model-picker'
+  import { ModelPicker, EffortPicker } from '$lib/features/chat/elements/model-picker'
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
   import { hasContent, isImagePart, partsText } from '$lib/features/chat/parts/parts'
   import { selectFile } from '$lib/features/browser/state.svelte'
@@ -33,35 +33,24 @@
   const chat = $derived(controller.state)
   const models = $derived(getChatModels(tab.folderPath))
   const catalog = $derived(models.catalog)
+  const available = $derived(catalog?.models ?? [])
   const turns = $derived(chat ? transcriptTurns(chat.entries, chat.streaming, chat.live) : [])
   const running = $derived(chat?.live.running ?? false)
   const model = $derived(chat?.live.model ?? null)
+  const current = $derived(available.find((item) => item.selector === model))
   const thinking = $derived(chat?.live.thinking ?? 'off')
-  const choices = $derived.by(() => {
-    const choices = (catalog?.models ?? []).map((item) => ({
-      value: item.selector,
-      name: item.name,
-      group: item.provider
-    }))
-    if (model && !choices.some((choice) => choice.value === model)) {
-      choices.push({ value: model, name: model, group: model.split('/')[0] })
-    }
-    return choices
-  })
-  const levels = $derived(catalog?.models.find((item) => item.selector === model)?.thinking ?? [thinking])
+  const levels = $derived(current?.thinking ?? [thinking])
   const disabled = $derived(controller.connection !== 'live' || !model || !!chat?.live.maintenance)
-  const modelDisabled = $derived(disabled || !choices.length)
+  const modelDisabled = $derived(disabled || !available.length)
   const canSend = $derived(!disabled && hasContent(controller.draft))
-  const imageWarning = $derived(
-    catalog?.models.find((item) => item.selector === model)?.images === false && controller.draft.some(isImagePart)
-  )
+  const imageWarning = $derived(current?.images === false && controller.draft.some(isImagePart))
   const owner = $derived({ folderPath: tab.folderPath, sessionId: tab.sessionId })
   const canBranch = $derived(controller.connection === 'live' && !controller.busy)
   const catalogMessage = $derived(
     models.error
-      ? `${models.error} Check ~/.axo/settings.jsonc and credentials in ~/.axo/auth.json or the environment.`
-      : catalog && !catalog.models.length
-        ? 'No axo models are available on this host. Set defaultModel in ~/.axo/settings.jsonc and credentials in ~/.axo/auth.json or the environment.'
+      ? `${models.error} ${MODELS_HINT}`
+      : catalog && !available.length
+        ? `No axo models are available on this host. ${MODELS_HINT}`
         : null
   )
   let expansion = $state<BlockView>('collapsed')
@@ -228,7 +217,7 @@
             {canBranch}
             {owner}
             commands={chat?.commands ?? []}
-            models={catalog?.models ?? []}
+            models={available}
           />{/if}
         {#if turn.steps.length || turn.running || turn.end}
           <AgentBlock
@@ -267,7 +256,7 @@
           bind:this={composer}
           bind:parts={controller.draft}
           {owner}
-          models={catalog?.models ?? []}
+          models={available}
           {running}
           onCommand={(name, args) => controller.runCommand(name, args)}
           {disabled}
@@ -289,23 +278,28 @@
             </IconButton>
           {/snippet}
           {#snippet end()}
-            <ConfigPicker
+            <ModelPicker
+              variant="ghost"
               label="Model"
               value={model ?? ''}
-              {choices}
+              models={available}
+              roles={catalog?.roles ?? []}
+              side="top"
+              align="end"
               bind:open={modelOpen}
               disabled={modelDisabled}
               onSelect={(value) => configure('model', { model: value })}
             />
-            {#if levels.some((level) => level !== 'off')}
-              <ConfigPicker
-                label="Effort"
-                value={thinking}
-                choices={levels.map((level) => ({ value: level, name: level }))}
-                {disabled}
-                onSelect={(value) => configure('thinking', { level: value })}
-              />
-            {/if}
+            <EffortPicker
+              variant="ghost"
+              label="Reasoning effort (Shift+Tab)"
+              value={thinking}
+              {levels}
+              side="top"
+              align="end"
+              {disabled}
+              onSelect={(level) => configure('thinking', { level })}
+            />
           {/snippet}
         </PromptInput>
         {#if imageWarning}

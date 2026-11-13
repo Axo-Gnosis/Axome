@@ -17,8 +17,11 @@ pub const FAKE_LSP_SERVER_ID: &str = "dev.axome.nix::nil";
 
 pub fn serve_dirs(config: &Path, data: &Path) -> ServeOptions {
     ServeOptions {
-        config_dir: config.to_path_buf(),
-        data_dir: data.to_path_buf(),
+        dirs: axome_core::HostDirs {
+            config: config.to_path_buf(),
+            data: data.to_path_buf(),
+            cache: data.join("cache"),
+        },
         listen: Some("127.0.0.1:0".parse().unwrap()),
         config_file: None,
         web_assets_dir: None,
@@ -108,7 +111,7 @@ pub fn init_repo(path: &Path) -> Result<()> {
     fs::write(path.join(".git/info/exclude"), ".axome/\n")?;
     fs::write(
         path.join(".axome/settings.jsonc"),
-        r#"{"shell":{"binary_path_override":"sh","extra_args":[]}}"#,
+        r#"{"shell":{"binaryPathOverride":"sh","extraArgs":[]}}"#,
     )?;
     Ok(())
 }
@@ -195,8 +198,8 @@ done
     )?;
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
     fs::write(repo.join(".axome/settings.jsonc"), serde_json::json!({
-        "shell": {"binary_path_override": "sh", "extra_args": []},
-        "lsp": {"servers": {FAKE_LSP_SERVER_ID: {"enabled": true, "binary_path_override": script}}}
+        "shell": {"binaryPathOverride": "sh", "extraArgs": []},
+        "lsp": {"servers": {FAKE_LSP_SERVER_ID: {"enabled": true, "binaryPathOverride": script}}}
     }).to_string())?;
     Ok(())
 }

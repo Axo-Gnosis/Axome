@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axo::{Axo, Command, PromptRequest, SessionOptions, Settings};
+use axo::store::JsonlStore;
+use axo::{Axo, Command, ConfigLayer, ConfigSource, PromptRequest, SessionOptions, UserConfig};
 use axo_ai::testing::{reply_text, reply_tool_calls};
 use axo_ai::{FileCredentialStore, Models, ModelsConfig, ModelsOptions, ScriptedApi, ScriptedTurn};
 use axome_protocol::chat::{
@@ -15,9 +16,29 @@ use parking_lot::Mutex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+use super::engine::Engine;
 use super::AxoService;
 use crate::events::EventSink;
 use crate::services::db::DatabaseService;
+
+struct FixtureConfig(Value);
+
+impl ConfigSource for FixtureConfig {
+    fn user(&self) -> Result<UserConfig, axo::Error> {
+        Ok(UserConfig {
+            layer: ConfigLayer {
+                origin: "fixture".into(),
+                settings: Some(self.0.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn project(&self, _cwd: &Path) -> Result<ConfigLayer, axo::Error> {
+        Ok(ConfigLayer::default())
+    }
+}
 
 type Events = Arc<Mutex<Vec<ChatEvent>>>;
 
@@ -30,10 +51,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new(turns: Vec<ScriptedTurn>) -> Self {
-        Self::with_settings(turns, Settings::default()).await
+        Self::with_settings(turns, json!({})).await
     }
 
-    async fn with_settings(turns: Vec<ScriptedTurn>, settings: Settings) -> Self {
+    async fn with_settings(turns: Vec<ScriptedTurn>, settings: Value) -> Self {
         let dir = std::env::temp_dir().join(format!("axome-axo-{}", uuid::Uuid::new_v4()));
         let folder = dir.join("work");
         std::fs::create_dir_all(&folder).unwrap();
@@ -67,22 +88,28 @@ impl Fixture {
                 config,
                 extended_context: false,
                 credentials: Arc::new(FileCredentialStore::new(dir.join("auth.json"))),
+                http_client: None,
             })
             .await
             .unwrap(),
         );
         let api = Arc::new(ScriptedApi::new(turns));
-        let axo = Axo::builder()
-            .dir(dir.clone())
-            .settings(settings)
-            .models(models)
-            .streamer(api.clone())
-            .build()
-            .await
-            .unwrap();
+        let axo = Axo::builder(
+            models.clone(),
+            Arc::new(JsonlStore::new(dir.join("sessions"))),
+        )
+        .config(Arc::new(FixtureConfig(settings)))
+        .streamer(api.clone())
+        .build();
         let db = Arc::new(DatabaseService::new(dir.join("test.db")).unwrap());
-        let service = AxoService::with_axo(db, Arc::new(axo));
-        service.bind_runtime();
+        let service = AxoService::with_engine(
+            db,
+            Engine {
+                axo: Arc::new(axo),
+                models,
+                models_error: None,
+            },
+        );
         Self {
             service,
             folder,
@@ -122,7 +149,27 @@ impl Fixture {
             )
             .await
             .unwrap();
+        self.wait_settled(id, events, runs).await;
+    }
+
+    async fn wait_settled(&self, id: &str, events: &Events, runs: usize) {
         wait_until(|| settled(&events.lock(), runs)).await;
+        let session = self.service.sessions.lock()[id].session.clone();
+        // axo 97513d6 publishes RunEnd before releasing its busy claim; Axome's
+        // idle event is therefore not an admission barrier. Until axo exposes an
+        // activity notification, fixture sequencing must also check its snapshot.
+        // This does not fix the production race for actions immediately after a reply.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let live = session.attach(None).await.live;
+                if !live.running && live.maintenance.is_none() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for axo to release its busy claim");
     }
 }
 
@@ -477,7 +524,11 @@ fn list_history_rejects_a_stopped_runtime() {
     std::fs::create_dir_all(&dir).unwrap();
     let db = Arc::new(DatabaseService::new(dir.join("test.db")).unwrap());
     let fixture = Fixture {
-        service: AxoService::new(db),
+        service: AxoService::new(
+            db,
+            crate::HostDirs::under(&dir),
+            axome_protocol::server_config::Supervision::ProcessGroup,
+        ),
         folder: dir.clone(),
         dir,
         api: Arc::new(ScriptedApi::default()),
@@ -569,7 +620,7 @@ async fn submit_parts(fixture: &Fixture, id: &str, events: &Events) {
         )
         .await
         .unwrap();
-    wait_until(|| settled(&events.lock(), 1)).await;
+    fixture.wait_settled(id, events, 1).await;
 }
 
 fn jsonl(path: &Path) -> Vec<Value> {
@@ -641,8 +692,8 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
     let wrapped = Fixture::new(replies()).await;
     let session = direct
         .service
-        .axo
-        .get()
+        .axo()
+        .await
         .unwrap()
         .create_session(SessionOptions {
             cwd: direct.folder.clone(),
@@ -978,9 +1029,7 @@ async fn invalid_thinking_preserves_axo_error_without_appending() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn maintenance_command_returns_once_started() {
-    let mut settings = Settings::default();
-    settings.compaction.enabled = true;
-    settings.compaction.keep_recent_tokens = Some(0);
+    let settings = json!({"compaction": {"enabled": true, "keepRecentTokens": 0}});
     let fixture = Fixture::with_settings(
         vec![
             ScriptedTurn::Reply(reply_text(&"history ".repeat(1000))),
@@ -1024,4 +1073,130 @@ async fn unwritten_sessions_are_reclaimed_after_grace() {
     fixture.attach(&id, "b").await;
     fixture.service.detach(&id, "b");
     wait_until(|| fixture.service.loaded() == 0).await;
+}
+
+#[test]
+fn settings_mirror_defaults_match_axo() {
+    let mirrored = serde_json::to_value(axome_protocol::axo_settings::AxoSettings::default())
+        .expect("Axome settings serialize");
+    let settings = serde_json::from_value::<axo::Settings>(mirrored)
+        .expect("Axome settings deserialize as axo settings");
+    assert_eq!(settings, axo::Settings::default());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn active_job_keeps_detached_session_loaded_until_completion() {
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "job",
+            "bash",
+            json!({"command": "while [ ! -f release-job ]; do sleep 0.05; done; echo done", "async": true}),
+        )])),
+        ScriptedTurn::Reply(reply_text("started")),
+        ScriptedTurn::Reply(reply_text("finished")),
+    ]).await;
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+    fixture.prompt(&id, "start a job", &events, 1).await;
+    {
+        let sessions = fixture.service.sessions.lock();
+        let jobs = sessions[&id].session.jobs();
+        assert_eq!(jobs.len(), 1);
+        assert!(matches!(jobs[0].status, axo::JobStatus::Running));
+    }
+    fixture.service.detach(&id, "a");
+    assert_eq!(
+        fixture.service.loaded(),
+        1,
+        "detach must retain an active job"
+    );
+    std::fs::write(fixture.folder.join("release-job"), "").unwrap();
+    wait_until(|| fixture.service.loaded() == 0).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn close_shuts_down_and_notifies_other_attachment_then_reopens() {
+    if isolated_reopen_test("close_shuts_down_and_notifies_other_attachment_then_reopens") {
+        return;
+    }
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "job",
+            "bash",
+            json!({"command": "sleep 300", "async": true}),
+        )])),
+        ScriptedTurn::Reply(reply_text("started")),
+    ])
+    .await;
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+    let other = fixture.attach(&id, "b").await;
+    fixture.prompt(&id, "start a job", &events, 1).await;
+    let session = fixture.service.sessions.lock()[&id].session.clone();
+    assert_eq!(session.jobs().len(), 1);
+    fixture.service.close(&id).await.unwrap();
+    assert_eq!(fixture.service.loaded(), 0);
+    assert!(other
+        .lock()
+        .iter()
+        .any(|event| matches!(event, ChatEvent::Closed { .. })));
+    assert!(matches!(
+        session.jobs()[0].kind,
+        axo::JobKind::Command {
+            exit: Some(axo::CommandExit::Interrupted),
+            ..
+        }
+    ));
+    drop(session);
+    let reopened = fixture.attach(&id, "reopened").await;
+    assert!(matches!(
+        reopened.lock().first(),
+        Some(ChatEvent::Snapshot { state }) if state.session_id == id && !state.live.running
+    ));
+    assert_eq!(fixture.service.loaded(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_history_excludes_spawned_child() {
+    let fixture = Fixture::new(vec![ScriptedTurn::Reply(reply_text("noted"))]).await;
+    fixture
+        .api
+        .lane("m2", vec![ScriptedTurn::Reply(reply_text("child done"))]);
+    let id = fixture.create().await;
+    let _events = fixture.attach(&id, "a").await;
+    let session = fixture.service.sessions.lock()[&id].session.clone();
+    let child = session
+        .spawn(axo::SpawnRequest {
+            task: "check".into(),
+            model: Some("test/m2".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let all = fixture
+        .service
+        .axo()
+        .await
+        .unwrap()
+        .list_sessions(&fixture.folder)
+        .await
+        .unwrap();
+    assert!(all
+        .iter()
+        .any(|info| info.id == child.session.id() && info.spawn.is_some()));
+    let service = fixture.service.clone();
+    let folder = fixture.folder.clone();
+    let history = tokio::task::spawn_blocking(move || service.list_history(&folder))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        history
+            .rows
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        [id.as_str()]
+    );
+    session.shutdown().await;
 }

@@ -25,21 +25,9 @@ export function utf8ByteLength(value: string): number {
   return bytes
 }
 
-const globalMethods: Record<string, true> = {
-  settings_get: true,
-  settings_set_nix: true,
-  settings_set_formatting: true,
-  settings_set_harness_config: true,
-  settings_set_shell_config: true,
-  lsp_set_server_config: true,
-  folder_home: true,
-  folder_working_directory: true
-}
-
-export function toWireParams(method: string, params: object): Record<string, unknown> {
+export function toWireParams(params: object): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(params)) {
-    if (key === 'folderPath' && globalMethods[method]) continue
     result[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = value
   }
   return result

@@ -11,7 +11,8 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { Button } from '$lib/components/ui/button'
-  import { Input, Select } from '$lib/components/ui/input'
+  import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import { DetailPanel, DetailPanelRow } from '$lib/components/ui/detail-panel'
   import { getIssues, updateEpic } from '$lib/features/issues/state.svelte'
   import { updateEpicTabTitle } from '$lib/features/workbench/state.svelte'
@@ -102,22 +103,20 @@
     <aside class="w-full @3xl:w-72 @3xl:shrink-0">
       <DetailPanel>
         <DetailPanelRow label="Status">
-          <Select bind:value={form.drafts.status}>
-            {#each ALL_EPIC_STATUSES as status (status)}
-              <option value={status}>{statusLabel(status)}</option>
-            {/each}
-          </Select>
+          <Select
+            bind:value={form.drafts.status}
+            items={ALL_EPIC_STATUSES.map((value) => ({ value, label: statusLabel(value) }))}
+          />
           <span class="text-2xs {statusGlyphTone(detail.status)}">
             now: {statusLabel(detail.status)}
           </span>
         </DetailPanelRow>
 
         <DetailPanelRow label="Priority">
-          <Select bind:value={form.drafts.priority}>
-            {#each ALL_PRIORITIES as p (p)}
-              <option value={String(p)}>P{p}</option>
-            {/each}
-          </Select>
+          <Select
+            bind:value={form.drafts.priority}
+            items={ALL_PRIORITIES.map((p) => ({ value: String(p), label: `P${p}` }))}
+          />
           <span class="font-mono text-2xs {priorityToneClass(detail.priority)}">
             now: P{detail.priority}
           </span>

@@ -13,7 +13,7 @@ import type {
   WindowSettings
 } from '$lib/types/backend'
 
-const REMOTE_PREFIX = 'axome://'
+import { splitRemotePath } from '$lib/utils/paths'
 
 let settings = $state<SettingsPayload | null>(null)
 /**
@@ -64,7 +64,7 @@ export async function loadSettings(folderPath: string | null = getActiveFolderPa
   // A remote folder's daemon owns its host sections; anything else is this
   // desktop's. Both are read as that host's global layer, the one the setters
   // write.
-  const host = folderPath?.startsWith(REMOTE_PREFIX) ? folderPath : null
+  const host = folderPath && splitRemotePath(folderPath) ? folderPath : null
   if (inFlightLoad?.host === host) return inFlightLoad.promise
 
   // The newest request owns the store: a slow response for a host the user
@@ -96,7 +96,7 @@ export async function saveTypographySettings(nextSettings: TypographySettings) {
   return saved
 }
 
-async function saveHostSection<T>(
+export async function saveHostSection<T>(
   host: string | null,
   write: (folder?: string) => Promise<T>,
   merge: (current: SettingsPayload, saved: T) => SettingsPayload
@@ -135,7 +135,7 @@ export async function saveHarnessConfig(nextConfig: HarnessConfig, host: string 
     (current, saved) => ({
       ...current,
       harnesses: current.harnesses.map((entry) =>
-        entry.harness.id === saved.harness_id ? { ...entry, config: saved } : entry
+        entry.harness.id === saved.harnessId ? { ...entry, config: saved } : entry
       )
     })
   )
@@ -154,15 +154,15 @@ export async function saveLspServerConfig(nextConfig: LspServerConfig, host: str
     host,
     (folder) => backend.lsp.setServerConfig(nextConfig, folder),
     (current, saved) => {
-      const { server_definition_id, ...config } = saved
+      const { serverDefinitionId, ...config } = saved
       return {
         ...current,
-        lsp: { ...current.lsp, servers: { ...current.lsp.servers, [server_definition_id]: config } }
+        lsp: { ...current.lsp, servers: { ...current.lsp.servers, [serverDefinitionId]: config } }
       }
     }
   )
   invalidateLspServerEntries()
-  await restartLspServerDefinition(saved.server_definition_id)
+  await restartLspServerDefinition(saved.serverDefinitionId)
   await loadLspServers(getActiveFolderPath() ?? undefined)
   return saved
 }
@@ -181,8 +181,4 @@ export function getSettingsHost(): string | null {
  * null when it is this desktop. Host-section editors caption it so the user
  * knows which machine the values they see — and write — belong to.
  */
-export function getSettingsServer(): string | null {
-  if (!settingsHost) return null
-  const [server] = settingsHost.slice(REMOTE_PREFIX.length).split('/')
-  return server || null
-}
+export const getSettingsServer = () => (settingsHost ? (splitRemotePath(settingsHost)?.server ?? null) : null)

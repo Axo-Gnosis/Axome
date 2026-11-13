@@ -40,13 +40,13 @@ function withFallback(name: string | null | undefined, fallback: string): string
 }
 
 const typography = $derived(getDesktopSettings()?.typography)
-const uiFontFamily = $derived(withFallback(typography?.ui_font_family, SANS_FALLBACK))
-const codeFontFamily = $derived(withFallback(typography?.code_font_family, MONO_FALLBACK))
-const codeFontSize = $derived(typography?.code_font_size ?? DEFAULT_CODE_FONT_SIZE)
+const uiFontFamily = $derived(withFallback(typography?.uiFontFamily, SANS_FALLBACK))
+const codeFontFamily = $derived(withFallback(typography?.codeFontFamily, MONO_FALLBACK))
+const codeFontSize = $derived(typography?.codeFontSize ?? DEFAULT_CODE_FONT_SIZE)
 const terminalFontFamily = $derived(
-  withFallback(typography?.terminal_font_family?.trim() || typography?.code_font_family, MONO_FALLBACK)
+  withFallback(typography?.terminalFontFamily?.trim() || typography?.codeFontFamily, MONO_FALLBACK)
 )
-const terminalFontSize = $derived(typography?.terminal_font_size ?? codeFontSize)
+const terminalFontSize = $derived(typography?.terminalFontSize ?? codeFontSize)
 
 export const getUiFontFamily = () => uiFontFamily
 export const getCodeFontFamily = () => codeFontFamily

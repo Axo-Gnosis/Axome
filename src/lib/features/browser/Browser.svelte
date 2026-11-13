@@ -303,7 +303,7 @@
 
   /** The home folder when it lives on `server` (null = this host), else that host's working directory. */
   async function startPath(server: string | null): Promise<string> {
-    const home = getDesktopSettings()?.window.home_folder
+    const home = getDesktopSettings()?.window.homeFolder
     if (home && (splitRemotePath(home)?.server ?? null) === server) return home
     return backend.folders.workingDirectory(server ?? undefined)
   }

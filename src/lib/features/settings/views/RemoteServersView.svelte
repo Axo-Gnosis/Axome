@@ -11,6 +11,8 @@
   import { StatusDot } from '$lib/components/ui/status-dot'
   import { getRemoteStatus, refreshRemoteStatus, watchRemoteStatuses } from '$lib/features/remotes/status.svelte'
   import type { RemoteSettings } from '$lib/types/backend'
+  import SettingRow from '../dialog/SettingRow.svelte'
+  import SettingsSection from '../dialog/SettingsSection.svelte'
 
   let remotes = $state<Record<string, RemoteSettings>>({})
   let renameServer = $state<string | null>(null)
@@ -95,89 +97,82 @@
   }
 </script>
 
-<section class="flex flex-col gap-3 border-b border-edge px-5 py-4">
-  <div>
-    <h3 class="text-md font-semibold text-bright">This Device</h3>
-    <p class="text-xs text-subtle">
-      Servers admit this fingerprint once paired, or when it is listed in their <span class="font-mono"
-        >authorizedKeys</span
-      >.
-    </p>
-  </div>
-  <div class="flex items-start gap-2">
-    <p class="min-w-0 flex-1 font-mono text-xs break-all text-muted">{deviceFingerprint || 'Loading…'}</p>
+<SettingsSection title="This Device">
+  <SettingRow label="Fingerprint" as="div">
+    {#snippet description()}
+      <span class="block">
+        Servers admit this fingerprint once paired, or when it is listed in their <span class="font-mono"
+          >authorizedKeys</span
+        >.
+      </span>
+      <span class="block font-mono break-all">{deviceFingerprint || 'Loading…'}</span>
+    {/snippet}
     <Button size="xs" disabled={!deviceFingerprint} onclick={() => copy(deviceFingerprint)}>Copy Fingerprint</Button>
-  </div>
-</section>
+  </SettingRow>
+</SettingsSection>
 
 <RemotePairForm {remotes} />
 
-<section class="flex flex-col gap-3 px-5 py-4">
-  <div>
-    <h3 class="text-md font-semibold text-bright">Saved Servers</h3>
-    <p class="text-xs text-subtle">Close their tabs in every window before renaming or removing.</p>
-  </div>
+<SettingsSection title="Saved Servers" description="Close their tabs in every window before renaming or removing.">
   {#if error}<p class="text-sm text-danger" role="alert">{error}</p>{/if}
   {#if !loaded}<p class="text-sm text-muted">Loading servers…</p>
   {:else if !Object.keys(remotes).length}<p class="text-sm text-muted">No servers paired yet.</p>{/if}
-  {#each Object.entries(remotes) as [server, remote] (server)}
-    {@const status = getRemoteStatus(server)}
-    <article
-      class="flex flex-col gap-3 rounded-lg border bg-surface p-3 {pairForm.name === server
-        ? 'border-accent/50'
-        : 'border-edge'}"
-    >
-      <div class="flex items-center justify-between gap-3">
-        <h4 class="text-md text-bright">{server}</h4>
-        <span class="flex items-center gap-1.5 text-sm text-muted">
-          <StatusDot tone={remoteTone(status?.state ?? 'disconnected')} />
-          {status?.state ?? 'disconnected'}
-        </span>
-      </div>
-      <p class="font-mono text-sm break-all">{remote.address}</p>
-      <div class="flex items-start gap-2">
-        <p class="min-w-0 flex-1 font-mono text-xs break-all text-muted">{remote.fingerprint}</p>
-        <Button size="xs" onclick={() => copy(remote.fingerprint)}>Copy Fingerprint</Button>
-      </div>
-      {#if status?.last_error}<p class="text-sm text-danger" role="alert">{status.last_error}</p>{/if}
-      {#if renameServer === server}
-        <form
-          class="flex gap-2"
-          onsubmit={(event) => {
-            event.preventDefault()
-            void change(server, 'rename')
-          }}
-        >
-          <Input aria-label="New server name" bind:value={name} disabled={!!busy} />
-          <Button
-            size="sm"
-            type="submit"
-            disabled={!!busy || !/^[A-Za-z0-9_-]+$/.test(name) || (name !== server && name in remotes)}>Save</Button
+  <div class="divide-y divide-edge">
+    {#each Object.entries(remotes) as [server, remote] (server)}
+      {@const status = getRemoteStatus(server)}
+      <article class="flex flex-col gap-3 py-5 {pairForm.name === server ? 'border-l-2 border-l-accent/50 pl-3' : ''}">
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-md text-bright">{server}</p>
+          <span class="flex items-center gap-1.5 text-sm text-muted">
+            <StatusDot tone={remoteTone(status?.state ?? 'disconnected')} />
+            {status?.state ?? 'disconnected'}
+          </span>
+        </div>
+        <p class="font-mono text-sm break-all">{remote.address}</p>
+        <div class="flex items-start gap-2">
+          <p class="min-w-0 flex-1 font-mono text-xs break-all text-muted">{remote.fingerprint}</p>
+          <Button size="xs" onclick={() => copy(remote.fingerprint)}>Copy Fingerprint</Button>
+        </div>
+        {#if status?.last_error}<p class="text-sm text-danger" role="alert">{status.last_error}</p>{/if}
+        {#if renameServer === server}
+          <form
+            class="flex gap-2"
+            onsubmit={(event) => {
+              event.preventDefault()
+              void change(server, 'rename')
+            }}
           >
+            <Input aria-label="New server name" bind:value={name} disabled={!!busy} />
+            <Button
+              size="sm"
+              type="submit"
+              disabled={!!busy || !/^[A-Za-z0-9_-]+$/.test(name) || (name !== server && name in remotes)}>Save</Button
+            >
+            <Button
+              size="sm"
+              type="button"
+              disabled={!!busy}
+              onclick={() => {
+                renameServer = null
+              }}>Cancel</Button
+            >
+          </form>
+        {/if}
+        <div class="flex flex-wrap gap-2">
           <Button
-            size="sm"
-            type="button"
+            size="xs"
             disabled={!!busy}
             onclick={() => {
-              renameServer = null
-            }}>Cancel</Button
+              renameServer = server
+              name = server
+            }}>Rename</Button
           >
-        </form>
-      {/if}
-      <div class="flex flex-wrap gap-2">
-        <Button
-          size="xs"
-          disabled={!!busy}
-          onclick={() => {
-            renameServer = server
-            name = server
-          }}>Rename</Button
-        >
-        <Button size="xs" variant="destructive" disabled={!!busy} onclick={() => change(server, 'remove')}
-          >Remove</Button
-        >
-        <Button size="xs" disabled={!!busy} onclick={() => void startRepair(server)}>Re-pair</Button>
-      </div>
-    </article>
-  {/each}
-</section>
+          <Button size="xs" variant="destructive" disabled={!!busy} onclick={() => change(server, 'remove')}
+            >Remove</Button
+          >
+          <Button size="xs" disabled={!!busy} onclick={() => void startRepair(server)}>Re-pair</Button>
+        </div>
+      </article>
+    {/each}
+  </div>
+</SettingsSection>

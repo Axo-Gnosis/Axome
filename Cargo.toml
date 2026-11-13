@@ -11,8 +11,9 @@ default-members = ["src-tauri"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-schemars = "0.8"
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = { version = "0.8", features = ["indexmap2"] }
+indexmap = { version = "2", features = ["serde"] }
 jsonc-parser = { version = "0.32", features = ["serde", "cst"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -24,8 +25,8 @@ parking_lot = "0.12"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
-axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "26066e2ee0669265a069f23dbde149160c3e2fa6" }
-axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "26066e2ee0669265a069f23dbde149160c3e2fa6" }
-axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "26066e2ee0669265a069f23dbde149160c3e2fa6" }
+axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9" }
+axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9" }
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9" }
 async-trait = "0.1"
 tokio-util = "0.7"

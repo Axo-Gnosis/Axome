@@ -23,8 +23,7 @@ export function truncation(value: unknown): Truncation | null {
     cut.totalLines >= cut.outputLines &&
     cut.totalBytes >= cut.outputBytes &&
     cut.maxBytes === 51200 &&
-    cut.outputBytes <= 51200 &&
-    cut.lastLinePartial === false
+    cut.outputBytes <= 51200
     ? (cut as Truncation)
     : null
 }

@@ -62,7 +62,7 @@
     const isCurrent = () => !disposed && attempt === current
     const adapter = createWebHostTransport({
       // `bun run dev:web` serves this shell from Vite; the dev daemon lists that
-      // origin in web.allowed_origins (.axome/scripts/dev-remote.fish).
+      // origin in web.allowedOrigins (.axome/scripts/dev-remote.fish).
       origin: import.meta.env.DEV
         ? ((import.meta.env.VITE_AXOME_ORIGIN as string | undefined) ?? 'http://127.0.0.1:7431')
         : window.location.href,

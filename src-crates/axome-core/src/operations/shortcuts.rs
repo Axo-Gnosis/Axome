@@ -8,7 +8,7 @@ const SHORTCUTS_FILE_TEMPLATE: &str =
 
 impl Host {
     pub fn shortcuts_get_global(&self) -> Result<ShortcutsFilePayload, ApiError> {
-        let path = SettingsService::global_shortcuts_path().map_err(ApiError::Internal)?;
+        let path = self.dirs.shortcuts_path();
         let layer =
             SettingsService::read_jsonc_layer_or_empty(&path).map_err(ApiError::Internal)?;
         Ok(ShortcutsFilePayload {
@@ -25,7 +25,7 @@ impl Host {
             ));
         }
 
-        let path = SettingsService::global_shortcuts_path().map_err(ApiError::Internal)?;
+        let path = self.dirs.shortcuts_path();
         let serialized = serde_json::to_string_pretty(&value).map_err(|error| {
             ApiError::Internal(format!("Failed to serialize shortcuts: {error}"))
         })?;
@@ -40,15 +40,15 @@ impl Host {
     }
 
     pub fn shortcuts_create_global_file(&self) -> Result<SettingsFileResult, ApiError> {
-        let path = ensure_global_shortcuts_file()?;
+        let path = ensure_global_shortcuts_file(&self.dirs)?;
         Ok(SettingsFileResult {
             path: path.to_string_lossy().into_owned(),
         })
     }
 }
 
-fn ensure_global_shortcuts_file() -> Result<PathBuf, ApiError> {
-    let path = SettingsService::global_shortcuts_path().map_err(ApiError::Internal)?;
+fn ensure_global_shortcuts_file(dirs: &crate::HostDirs) -> Result<PathBuf, ApiError> {
+    let path = dirs.shortcuts_path();
     let _guard = SettingsService::mutation_lock();
     if !path.exists() {
         SettingsService::write_atomic(&path, SHORTCUTS_FILE_TEMPLATE).map_err(ApiError::Io)?;

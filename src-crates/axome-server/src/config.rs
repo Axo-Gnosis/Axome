@@ -28,8 +28,8 @@ pub fn load(path: &Path) -> anyhow::Result<ServerConfig> {
     let config: ServerConfig = serde_json::from_value(value)
         .map_err(|error| anyhow!("invalid {}: {error}", path.display()))?;
     for (field, file) in [
-        ("identity_file", &config.identity_file),
-        ("authorized_keys_file", &config.authorized_keys_file),
+        ("identityFile", &config.identity_file),
+        ("authorizedKeysFile", &config.authorized_keys_file),
     ] {
         if let Some(file) = file {
             ensure!(file.is_absolute(), "{field} must be an absolute path");
@@ -38,7 +38,7 @@ pub fn load(path: &Path) -> anyhow::Result<ServerConfig> {
     Ok(config)
 }
 
-/// The daemon's TLS identity: the provisioned `identity_file`, else one
+/// The daemon's TLS identity: the provisioned `identityFile`, else one
 /// generated in the config dir on first use.
 pub fn identity(config_dir: &Path, config: &ServerConfig) -> anyhow::Result<Identity> {
     Ok(match &config.identity_file {
@@ -47,7 +47,7 @@ pub fn identity(config_dir: &Path, config: &ServerConfig) -> anyhow::Result<Iden
     })
 }
 
-/// `web.assets_dir` wins over the launcher-supplied default.
+/// `web.assetsDir` wins over the launcher-supplied default.
 pub fn resolve_web_assets(
     web: &WebConfig,
     config_path: &Path,
@@ -57,7 +57,7 @@ pub fn resolve_web_assets(
         (Some(dir), _) => {
             ensure!(
                 !dir.as_os_str().is_empty(),
-                "web.assets_dir must not be empty"
+                "web.assetsDir must not be empty"
             );
             config_path
                 .parent()
@@ -65,7 +65,7 @@ pub fn resolve_web_assets(
         }
         (None, Some(dir)) => dir.to_path_buf(),
         (None, None) => {
-            bail!("web.assets_dir is required; packaged launchers pass --web-assets-dir")
+            bail!("web.assetsDir is required; packaged launchers pass --web-assets-dir")
         }
     };
     ensure!(
@@ -98,7 +98,7 @@ mod tests {
         assert!(load(&config_path).unwrap().web.is_none());
         fs::write(
             &config_path,
-            "{\n  // comments are fine\n  \"web\": { \"assets_dir\": \"web\" }\n}\n",
+            "{\n  // comments are fine\n  \"web\": { \"assetsDir\": \"web\" }\n}\n",
         )
         .unwrap();
         let config = load(&config_path).unwrap();
@@ -114,7 +114,7 @@ mod tests {
     fn relative_key_paths_and_unknown_fields_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join(SERVER_CONFIG_FILE);
-        fs::write(&config_path, r#"{ "identity_file": "server.pem" }"#).unwrap();
+        fs::write(&config_path, r#"{ "identityFile": "server.pem" }"#).unwrap();
         assert!(load(&config_path)
             .unwrap_err()
             .to_string()

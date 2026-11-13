@@ -2,7 +2,7 @@ use crate::app_state::AppState;
 use axome_core::services::app_state_kv::AppStateKvService;
 use axome_core::services::pty::{PtyService, PtySubscriber};
 use axome_core::services::settings_resolution::resolve_effective_settings_for_folder_path;
-use axome_protocol::settings::{ExternalFileOpenMode, ExternalFolderOpenMode, WindowSettings};
+use axome_protocol::settings::{ExternalFileOpenMode, ExternalFolderOpenMode};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -464,8 +464,10 @@ impl WindowCoordinatorService {
         });
         let label = entry.label.clone();
         let mut valid_bounds = None;
+        let state = app.state::<AppState>();
         let mut builder =
             WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+                .data_directory(state.host.dirs.data.join("webview"))
                 .title(app.package_info().name.clone())
                 .decorations(false)
                 .min_inner_size(800.0, 500.0);
@@ -1307,13 +1309,10 @@ impl WindowCoordinatorService {
         let canonical = requested
             .canonicalize()
             .map_err(|error| format!("Cannot open path {}: {error}", requested.display()))?;
-        let window = match resolve_effective_settings_for_folder_path(None) {
-            Ok(resolved) => resolved.settings.window,
-            Err(error) => {
-                tracing::warn!("Cannot resolve open routing settings: {error}");
-                WindowSettings::default()
-            }
-        };
+        let state = app.state::<AppState>();
+        let window = resolve_effective_settings_for_folder_path(&state.host.dirs, None)
+            .settings
+            .window;
 
         if canonical.is_dir() {
             return self.route_open_folder(
@@ -1369,13 +1368,11 @@ impl WindowCoordinatorService {
     }
 
     fn route_open_folder(&self, app: &tauri::AppHandle, folder_path: String) -> Result<(), String> {
-        let mode = match resolve_effective_settings_for_folder_path(None) {
-            Ok(resolved) => resolved.settings.window.external_folder_open_mode,
-            Err(error) => {
-                tracing::warn!("Cannot resolve open routing settings: {error}");
-                WindowSettings::default().external_folder_open_mode
-            }
-        };
+        let state = app.state::<AppState>();
+        let mode = resolve_effective_settings_for_folder_path(&state.host.dirs, None)
+            .settings
+            .window
+            .external_folder_open_mode;
         let target = OpenTarget::Folder { folder_path };
         match mode {
             ExternalFolderOpenMode::FocusedWindow => match self.get_focused_window_label() {
@@ -1563,18 +1560,23 @@ fn finish_window_close(
     if !discard_snapshot {
         return;
     }
-    let db = state.host.db.write();
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<Option<String>, String> {
+        let db = state.host.db.write();
         let tx = db
             .conn()
             .unchecked_transaction()
             .map_err(|error| error.to_string())?;
-        AppStateKvService::delete(&tx, &format!("workbench:{label}"))?;
+        let key = format!("workbench:{label}");
+        let snapshot = AppStateKvService::get(&tx, &key)?;
+        AppStateKvService::delete(&tx, &key)?;
         state.windows.save_manifest_with(&tx)?;
-        tx.commit().map_err(|error| error.to_string())
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(snapshot)
     })();
-    if let Err(error) = result {
-        tracing::error!("Failed to persist window close: {error}");
+    match result {
+        Ok(Some(snapshot)) => state.host.chat_close_snapshot(&snapshot),
+        Ok(None) => {}
+        Err(error) => tracing::error!("Failed to persist window close: {error}"),
     }
 }
 
@@ -2047,8 +2049,14 @@ mod tests {
                 .expect("create transfer window");
         }
         let host = Arc::new(
-            Host::new(temporary.path().join("axome.db"), Arc::new(|_| Ok(())))
-                .expect("create local host"),
+            Host::new(
+                axome_core::HostOptions::new(
+                    axome_core::HostDirs::under(temporary.path()),
+                    "test.db",
+                ),
+                Arc::new(|_| Ok(())),
+            )
+            .expect("create local host"),
         );
         let router = crate::router::WorkspaceRouter::new(Arc::clone(&host));
         app.manage(AppState {

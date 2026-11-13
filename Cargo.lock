@@ -351,7 +351,7 @@ dependencies = [
 [[package]]
 name = "axo"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=26066e2ee0669265a069f23dbde149160c3e2fa6#26066e2ee0669265a069f23dbde149160c3e2fa6"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9#97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9"
 dependencies = [
  "async-trait",
  "axo-agent",
@@ -359,14 +359,14 @@ dependencies = [
  "base64 0.23.1",
  "futures",
  "globset",
- "grep-matcher",
  "grep-regex",
  "grep-searcher",
  "ignore",
  "image",
  "indexmap 2.14.2",
  "jiff",
- "jsonc-parser 0.34.0",
+ "jsonschema 0.59.0",
+ "landlock",
  "rand 0.10.3",
  "regex",
  "rustix",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "axo-agent"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=26066e2ee0669265a069f23dbde149160c3e2fa6#26066e2ee0669265a069f23dbde149160c3e2fa6"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9#97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "axo-ai"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=26066e2ee0669265a069f23dbde149160c3e2fa6#26066e2ee0669265a069f23dbde149160c3e2fa6"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9#97513d6f9f8d3c29f0161efc7ff21d9a7e8577b9"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -499,6 +499,7 @@ dependencies = [
 name = "axome-protocol"
 version = "0.0.0"
 dependencies = [
+ "indexmap 2.14.2",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -3161,6 +3162,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "landlock"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cca98e95f35b29d469dade6724c6f96cec9236640f745a0e99b0334ec320ab1"
+dependencies = [
+ "enumflags2",
+ "libc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4773,6 +4785,7 @@ checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
 dependencies = [
  "dyn-clone",
  "indexmap 1.9.3",
+ "indexmap 2.14.2",
  "schemars_derive 0.8.22",
  "serde",
  "serde_json",

@@ -172,7 +172,7 @@ fn compile_patterns(patterns: &BTreeMap<String, bool>) -> Result<(GlobSet, GlobS
                 .build()
                 .map_err(|error| {
                     ApiError::InvalidArgument(format!(
-                        "Invalid git.worktree_copy glob {pattern:?}: {error}"
+                        "Invalid git.worktreeCopy glob {pattern:?}: {error}"
                     ))
                 })?;
             builder.add(glob);
@@ -180,7 +180,7 @@ fn compile_patterns(patterns: &BTreeMap<String, bool>) -> Result<(GlobSet, GlobS
     }
     let build = |builder: GlobSetBuilder| {
         builder.build().map_err(|error| {
-            ApiError::InvalidArgument(format!("Invalid git.worktree_copy globs: {error}"))
+            ApiError::InvalidArgument(format!("Invalid git.worktreeCopy globs: {error}"))
         })
     };
     Ok((build(include)?, build(veto)?))

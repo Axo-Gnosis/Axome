@@ -1,45 +1,62 @@
 import { backend } from '$lib/api/backend'
-import type { ChatModelCatalog } from '$lib/types/backend'
+import type { ChatModelCatalog, SettingsChangedEvent } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 import { splitRemotePath } from '$lib/utils/paths'
 
 type ModelState = { catalog: ChatModelCatalog | null; loading: boolean; error: string | null }
 
-const hosts = new Map<string, ModelState>()
+export const MODELS_HINT = 'Add a provider in Settings › Providers.'
+
+const states = new Map<string, ModelState>()
 const loads = new Map<string, Promise<void>>()
 
 export function getChatModels(folderPath: string): ModelState {
-  const key = splitRemotePath(folderPath)?.server ?? ''
-  let host = hosts.get(key)
-  if (!host) {
-    const state = $state<ModelState>({ catalog: null, loading: false, error: null })
-    host = state
-    hosts.set(key, host)
-  }
-  return host
+  const existing = states.get(folderPath)
+  if (existing) return existing
+  const state = $state<ModelState>({ catalog: null, loading: false, error: null })
+  states.set(folderPath, state)
+  return state
 }
 
 export function loadChatModels(folderPath: string, force = false): Promise<void> {
-  const key = splitRemotePath(folderPath)?.server ?? ''
-  const existing = loads.get(key)
-  if (existing) return existing
-  const host = getChatModels(folderPath)
-  if (host.catalog && !force) return Promise.resolve()
+  const existing = loads.get(folderPath)
+  // A provider change must fetch again after any pre-change request has settled.
+  if (existing) return force ? existing.then(() => loadChatModels(folderPath, true)) : existing
+  const state = getChatModels(folderPath)
+  if (state.catalog && !force) return Promise.resolve()
 
-  host.loading = true
-  host.error = null
+  state.loading = true
+  state.error = null
   const load = backend.chat
     .models(folderPath)
     .then((catalog) => {
-      host.catalog = catalog
+      state.catalog = catalog
     })
     .catch((error: unknown) => {
-      host.error = getErrorMessage(error)
+      state.error = getErrorMessage(error)
     })
     .finally(() => {
-      host.loading = false
-      loads.delete(key)
+      state.loading = false
+      loads.delete(folderPath)
     })
-  loads.set(key, load)
+  loads.set(folderPath, load)
   return load
+}
+
+export async function reloadChatModels(host: string | null): Promise<void> {
+  const server = host === null ? null : (splitRemotePath(host)?.server ?? null)
+  await Promise.all(
+    [...states.keys()]
+      .filter((folder) => (splitRemotePath(folder)?.server ?? null) === server)
+      .map((folder) => loadChatModels(folder, true))
+  )
+}
+
+/** Settings changes affect every loaded folder in the layer's scope. */
+export function refreshChatModels(event: SettingsChangedEvent): void {
+  if (event.layer === 'global') {
+    for (const folder of states.keys()) void loadChatModels(folder, true)
+  } else if (event.folder_path && states.has(event.folder_path)) {
+    void loadChatModels(event.folder_path, true)
+  }
 }

@@ -307,7 +307,11 @@ mod tests {
     async fn cancelled_local_waiter_does_not_unfence_blocking_host_work() {
         let folder = tempfile::tempdir().unwrap();
         let host = Arc::new(
-            axome_core::Host::new(folder.path().join("state.db"), Arc::new(|_| Ok(()))).unwrap(),
+            axome_core::Host::new(
+                axome_core::HostOptions::new(axome_core::HostDirs::under(folder.path()), "test.db"),
+                Arc::new(|_| Ok(())),
+            )
+            .unwrap(),
         );
         let router = WorkspaceRouter::new(Arc::clone(&host));
         let (entered, started) = tokio::sync::oneshot::channel();

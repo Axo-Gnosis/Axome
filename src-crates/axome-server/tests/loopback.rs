@@ -682,8 +682,8 @@ async fn provisioned_keys_admit_without_pairing() -> Result<()> {
     let declared = keys.path().join("authorized");
     fs::write(&declared, format!("{} desktop\n", desktop.fingerprint()))?;
     let fixture = Daemon::start(Some(serde_json::json!({
-        "identity_file": server_key,
-        "authorized_keys_file": declared,
+        "identityFile": server_key,
+        "authorizedKeysFile": declared,
     })))
     .await?;
     let repo = tempfile::tempdir()?;
@@ -1166,8 +1166,8 @@ async fn shell_start_status_and_stop_are_idempotent() -> Result<()> {
         repo.path().join(".axome/settings.jsonc"),
         serde_json::json!({
             "shell": {
-                "binary_path_override": "sh",
-                "extra_args": ["-c", "printf x >> shell-starts; exec sh"]
+                "binaryPathOverride": "sh",
+                "extraArgs": ["-c", "printf x >> shell-starts; exec sh"]
             }
         })
         .to_string(),

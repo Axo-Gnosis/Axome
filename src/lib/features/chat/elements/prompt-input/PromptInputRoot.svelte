@@ -543,7 +543,7 @@
         'aria-multiline': 'true',
         'aria-label': placeholder,
         class:
-          'min-h-10 max-h-60 overflow-y-auto whitespace-pre-wrap break-words px-3 pt-2.5 pb-1 text-base leading-normal text-fg outline-none selection:bg-selection selection:text-bright [&_img.ProseMirror-separator]:inline [&_img.ProseMirror-separator]:border-0 [&_img.ProseMirror-separator]:m-0'
+          'min-h-14 max-h-60 overflow-y-auto whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-base leading-relaxed text-fg outline-none selection:bg-selection selection:text-bright [&_img.ProseMirror-separator]:inline [&_img.ProseMirror-separator]:border-0 [&_img.ProseMirror-separator]:m-0'
       },
       editable: () => !disabled,
       dispatchTransaction(transaction) {
@@ -667,7 +667,7 @@
   role="group"
   aria-label="Message composer"
   tabindex="-1"
-  class="relative flex flex-col rounded-lg border border-edge bg-surface transition-colors outline-none focus-within:border-accent"
+  class="relative flex flex-col rounded-xl border border-edge bg-surface transition-colors outline-none focus-within:border-accent"
   {@attach promptInputDropTarget({ id, canAcceptDrop: () => !disabled, onDrop: dropPayload })}
 >
   {#if open}
@@ -687,7 +687,7 @@
     />
   {/if}
   {#if context || validation}
-    <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-3 py-1.5 text-sm">
+    <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-4 py-2 text-sm">
       {#if validation}
         <span role="alert" class="truncate text-danger">{validation}</span>
       {:else if context}
@@ -699,13 +699,12 @@
   {/if}
   <div class="relative">
     <div bind:this={host}></div>
-    {#if !parts.length}<span class="pointer-events-none absolute top-2.5 left-3 text-base text-subtle"
-        >{placeholder}</span
+    {#if !parts.length}<span class="pointer-events-none absolute top-3 left-4 text-base text-subtle">{placeholder}</span
       >{/if}
   </div>
-  <div class="flex items-center gap-1 px-1.5 pb-1.5">
+  <div class="flex items-center gap-1.5 px-2.5 pt-1 pb-2.5">
     {#if start}{@render start()}{/if}
-    <div class="ms-auto flex min-w-0 items-center gap-1">
+    <div class="ms-auto flex min-w-0 items-center gap-1.5">
       {#if end}{@render end()}{/if}
     </div>
   </div>

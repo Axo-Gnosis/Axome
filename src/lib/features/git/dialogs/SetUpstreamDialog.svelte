@@ -8,7 +8,8 @@
   import { backend } from '$lib/api/backend'
   import { Button } from '$lib/components/ui/button'
   import * as Dialog from '$lib/components/ui/dialog'
-  import { Input, Select } from '$lib/components/ui/input'
+  import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import * as branches from '$lib/features/git/branches.svelte'
   import { runGitAction } from '$lib/features/git/state.svelte'
   import DialogError from '$lib/features/git/dialogs/DialogError.svelte'
@@ -63,11 +64,7 @@
         </p>
 
         {#if suggestions.length > 0}
-          <Select bind:value={upstream} class="text-sm">
-            {#each suggestions as option (option)}
-              <option value={option}>{option}</option>
-            {/each}
-          </Select>
+          <Select bind:value={upstream} items={suggestions} />
         {/if}
 
         <Input bind:value={upstream} placeholder="origin/main" class="text-sm" spellcheck={false} />

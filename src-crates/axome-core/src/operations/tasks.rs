@@ -107,8 +107,7 @@ impl Host {
         // exactly as a user would type them in their own terminal.
         let environment = EnvironmentService::current();
         let (shell, args, env) = if let Some(name) = task.shell.as_deref() {
-            let effective = resolve_effective_settings_for_folder_path(Some(&folder))
-                .map_err(ApiError::Internal)?;
+            let effective = resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder));
             // Keep the task resolver's expanded values above the preset layer.
             let task_env: Vec<_> = task
                 .env

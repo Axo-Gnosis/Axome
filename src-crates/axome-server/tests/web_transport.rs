@@ -37,7 +37,7 @@ use tokio_tungstenite::{
 };
 
 const WAIT: Duration = Duration::from_secs(8);
-/// The fixture's `web.allowed_origins` entry, standing in for the Vite dev server.
+/// The fixture's `web.allowedOrigins` entry, standing in for the Vite dev server.
 const TRUSTED_ORIGIN: &str = "http://trusted.example:1430";
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -65,8 +65,8 @@ impl Fixture {
             config.join("server.jsonc"),
             serde_json::json!({ "web": {
                 "listen": "127.0.0.1:0",
-                "assets_dir": assets,
-                "allowed_origins": [TRUSTED_ORIGIN],
+                "assetsDir": assets,
+                "allowedOrigins": [TRUSTED_ORIGIN],
             } })
             .to_string(),
         )?;
@@ -3277,7 +3277,7 @@ async fn run(home: &Path) -> Result<()> {
             serde_json::json!({ "web": web }).to_string(),
         )
     };
-    write_web(serde_json::json!({ "listen": "127.0.0.1:0", "assets_dir": missing }))?;
+    write_web(serde_json::json!({ "listen": "127.0.0.1:0", "assetsDir": missing }))?;
     fs::create_dir_all(home.join("assets"))?;
     fs::write(
         home.join("assets/index.html"),
@@ -3289,8 +3289,8 @@ async fn run(home: &Path) -> Result<()> {
     );
     write_web(serde_json::json!({
         "listen": "127.0.0.1:0",
-        "assets_dir": home.join("assets"),
-        "allowed_origins": ["http://127.0.0.1:1430/"],
+        "assetsDir": home.join("assets"),
+        "allowedOrigins": ["http://127.0.0.1:1430/"],
     }))?;
     assert!(
         serve(options()).await.is_err(),
@@ -3299,14 +3299,14 @@ async fn run(home: &Path) -> Result<()> {
     let occupied = TcpListener::bind("127.0.0.1:0")?;
     write_web(serde_json::json!({
         "listen": occupied.local_addr()?.to_string(),
-        "assets_dir": home.join("assets"),
+        "assetsDir": home.join("assets"),
     }))?;
     assert!(
         serve(options()).await.is_err(),
         "occupied web bind started successfully"
     );
     drop(occupied);
-    write_web(serde_json::json!({ "assets_dir": home.join("assets") }))?;
+    write_web(serde_json::json!({ "assetsDir": home.join("assets") }))?;
     let mut default_web_config = axome_server::config::load(&startup_config.join("server.jsonc"))?
         .web
         .context("default web configuration missing")?;
@@ -3318,7 +3318,7 @@ async fn run(home: &Path) -> Result<()> {
     default_web_config.listen.set_port(0);
     write_web(serde_json::json!({
         "listen": default_web_config.listen.to_string(),
-        "assets_dir": default_web_config.assets_dir,
+        "assetsDir": default_web_config.assets_dir,
     }))?;
     let default_web = serve(options()).await?;
     assert!(
@@ -3330,7 +3330,7 @@ async fn run(home: &Path) -> Result<()> {
         "default bind exposed non-loopback interface"
     );
     default_web.shutdown().await;
-    write_web(serde_json::json!({ "listen": "0.0.0.0:0", "assets_dir": home.join("assets") }))?;
+    write_web(serde_json::json!({ "listen": "0.0.0.0:0", "assetsDir": home.join("assets") }))?;
     let exposed = serve(options()).await?;
     assert!(
         exposed

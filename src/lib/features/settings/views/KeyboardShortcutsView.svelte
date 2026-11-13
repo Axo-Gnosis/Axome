@@ -19,6 +19,7 @@
     getShortcutInfos,
     type ShortcutCommandInfo
   } from '$lib/features/command-palette/shortcuts/registry.svelte'
+  import SettingsSection from '../dialog/SettingsSection.svelte'
 
   type Filter = 'all' | 'modified' | 'unassigned' | 'conflicts'
   const FILTERS = ['all', 'modified', 'unassigned', 'conflicts'] as const satisfies readonly Filter[]
@@ -97,15 +98,12 @@
   })
 </script>
 
-<section class="flex flex-col gap-3 border-b border-edge px-5 py-4">
+<div class="flex flex-col gap-3 pb-8">
   <div class="flex items-start justify-between gap-3">
-    <div class="space-y-1">
-      <h3 class="text-md font-semibold text-bright">Keyboard Shortcuts</h3>
-      <p class="text-xs text-subtle">
-        Overrides save to <span class="font-mono">shortcuts.jsonc</span>{#if shortcutsPath}
-          at <span class="font-mono">{shortcutsPath}</span>{/if}.
-      </p>
-    </div>
+    <p class="text-sm text-muted">
+      Overrides save to <span class="font-mono">shortcuts.jsonc</span>{#if shortcutsPath}
+        at <span class="font-mono">{shortcutsPath}</span>{/if}.
+    </p>
     {#if platform.native}
       <Button size="xs" variant="outline" onclick={openShortcutsFile}>Open File</Button>
     {/if}
@@ -125,15 +123,14 @@
       </Tabs.List>
     </Tabs.Root>
   </div>
-</section>
+</div>
 
-<section class="px-5 py-2">
+<div>
   {#if grouped.length === 0}
     <div class="py-8 text-sm text-subtle">No commands match.</div>
   {:else}
     {#each grouped as group (group.heading)}
-      <div class="py-2">
-        <h4 class="px-1 py-2 text-xs font-medium tracking-wide text-subtle uppercase">{group.heading}</h4>
+      <SettingsSection title={group.heading}>
         <div class="divide-y divide-edge border-y border-edge">
           {#each group.entries as command (command.id)}
             <div class="flex items-center gap-4 py-2">
@@ -179,10 +176,10 @@
             </div>
           {/each}
         </div>
-      </div>
+      </SettingsSection>
     {/each}
   {/if}
-</section>
+</div>
 
 {#if rebindTarget}
   <RebindDialog

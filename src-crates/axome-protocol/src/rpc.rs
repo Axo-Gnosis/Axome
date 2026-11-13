@@ -630,6 +630,28 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             SettingsGet => settings_get() -> $crate::settings::SettingsPayload;
             #[route(server)]
+            AxoProviders => axo_providers() -> $crate::axo::AxoProvidersPayload;
+            #[route(server)]
+            AxoModels => axo_models() -> Vec<$crate::chat::ChatModel>;
+            #[route(server)]
+            AxoProviderSetKey => axo_provider_set_key(provider: String, key: String) -> ();
+            #[route(server)]
+            AxoProviderRemove => axo_provider_remove(provider: String) -> ();
+            #[route(server)]
+            AxoModelsReload => axo_models_reload() -> ();
+            #[route(server)]
+            AxoLoginStart => axo_login_start(provider: String) -> $crate::axo::AxoLoginStarted;
+            #[route(server)]
+            AxoLoginSubmit => axo_login_submit(login_id: String, redirect: String) -> ();
+            #[route(server)]
+            AxoLoginStatus => axo_login_status(login_id: String) -> $crate::axo::AxoLoginStatus;
+            #[route(server)]
+            AxoLoginCancel => axo_login_cancel(login_id: String) -> ();
+            #[route(server)]
+            AxoKeywords => axo_keywords() -> Vec<$crate::axo::AxoKeywordInfo>;
+            #[route(server)]
+            SettingsSetAxo => settings_set_axo(patch: serde_json::Value) -> $crate::axo_settings::AxoSettings;
+            #[route(server)]
             SettingsPatchGlobalSection => settings_patch_global_section(
                 input: $crate::settings::PatchSettingsSectionInput,
             ) -> $crate::settings::SettingsLayerPayload;
@@ -706,6 +728,8 @@ macro_rules! axome_rpc_ops {
             ChatFollowUp => chat_follow_up(folder_path: String, session_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
             ChatAbort => chat_abort(folder_path: String, session_id: String) -> ();
+            #[route(folder_path)]
+            ChatClose => chat_close(folder_path: String, session_id: String) -> ();
             #[route(folder_path)]
             ChatAnswer => chat_answer(folder_path: String, session_id: String, call_id: String, answers: Vec<$crate::chat::ChatAnswer>) -> ();
             #[route(folder_path)]

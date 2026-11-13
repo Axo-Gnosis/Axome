@@ -99,7 +99,7 @@ export function getLaunchOptions(folderPath: string | null): LaunchOption[] {
   return options
 }
 
-/** Parse `sessions.default_preset` against connected options; null when unset. */
+/** Parse `sessions.defaultPreset` against connected options; null when unset. */
 export function resolveDefaultLaunch(folderPath: string | null): {
   option: LaunchOption | null
   configured: string | null

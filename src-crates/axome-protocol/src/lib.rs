@@ -1,5 +1,7 @@
 pub mod activity_map;
 pub mod app;
+pub mod axo;
+pub mod axo_settings;
 pub mod branch;
 pub mod chat;
 pub mod config_schemas;

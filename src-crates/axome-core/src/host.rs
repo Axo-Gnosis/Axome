@@ -1,5 +1,6 @@
 use crate::errors::ApiError;
 use crate::events::{deliver, EventSink, HostEvent};
+use crate::services::extensions::ExtensionService;
 use crate::services::{
     axo::AxoService,
     db::DatabaseService,
@@ -18,15 +19,34 @@ use crate::services::{
     settings_watcher::SettingsWatcherService,
     tasks::TaskService,
 };
+use crate::HostDirs;
 use axome_protocol::rpc::WorkbenchRun;
+use axome_protocol::server_config::Supervision;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
+
+pub struct HostOptions {
+    pub dirs: HostDirs,
+    pub db_file: &'static str,
+    pub supervision: Supervision,
+}
+
+impl HostOptions {
+    pub fn new(dirs: HostDirs, db_file: &'static str) -> Self {
+        Self {
+            dirs,
+            db_file,
+            supervision: Supervision::default(),
+        }
+    }
+}
 
 /// Services and workflows executing on one development host. The embedding
 /// application supplies storage location, event delivery and lifetime policy.
 pub struct Host {
+    pub dirs: HostDirs,
     // ponytail: host-wide destructive-operation gate; shard by affected roots if contention matters
     pub admission: Arc<tokio::sync::RwLock<()>>,
     pub db: Arc<DatabaseService>,
@@ -53,14 +73,20 @@ pub struct Host {
 impl Host {
     /// Creates services without opening issue-bridge sockets. Bridge startup
     /// requires the caller's Tokio runtime context.
-    pub fn new(db_path: PathBuf, events: EventSink<HostEvent>) -> Result<Self, anyhow::Error> {
-        let db = Arc::new(DatabaseService::new(db_path)?);
+    pub fn new(options: HostOptions, events: EventSink<HostEvent>) -> Result<Self, anyhow::Error> {
+        let dirs = options.dirs;
+        ExtensionService::set_installed_dir(dirs.data.join("extensions"));
+        let db = Arc::new(DatabaseService::new(dirs.data.join(options.db_file))?);
         let issues = Arc::new(IssueService::new());
         let git = Arc::new(GitService::new());
         EnvironmentService::current();
-        let axo = AxoService::new(Arc::clone(&db));
-        let session_index =
-            SessionIndexService::new(Arc::clone(&db), Arc::clone(&events), Arc::clone(&axo));
+        let axo = AxoService::new(Arc::clone(&db), dirs.clone(), options.supervision);
+        let session_index = SessionIndexService::new(
+            Arc::clone(&db),
+            Arc::clone(&events),
+            Arc::clone(&axo),
+            dirs.clone(),
+        );
         axo.bind_index(&session_index);
         Ok(Self {
             admission: Arc::new(tokio::sync::RwLock::new(())),
@@ -71,10 +97,10 @@ impl Host {
             git: Arc::clone(&git),
             issues: Arc::clone(&issues),
             issue_bridge: IssueBridgeService::new(issues, Arc::clone(&events)),
-            files: FileService::new(),
+            files: FileService::default(),
             lsp: LspService::new(),
             tasks: TaskService::new(),
-            settings_watchers: SettingsWatcherService::new(Arc::clone(&events)),
+            settings_watchers: SettingsWatcherService::new(Arc::clone(&events), dirs.clone()),
             file_watchers: FileWatcherService::new(),
             git_watchers: GitWatcherService::new(git),
             history_binder: HistoryBinder::new(),
@@ -82,6 +108,7 @@ impl Host {
             axo,
             nix_eval_locks: Mutex::new(HashSet::new()),
             events,
+            dirs,
         })
     }
 

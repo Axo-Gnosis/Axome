@@ -5,10 +5,9 @@
   import { getSettings, getSettingsHost, saveShellConfig } from '$lib/features/settings/state/settings.svelte'
   import type { ShellConfig } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { onDestroy } from 'svelte'
-  import { createAutoSaver } from './autoSaver'
-
-  let { onSaving, onSaved }: { onSaving: () => void; onSaved: () => void } = $props()
+  import { createAutoSaver } from './autoSaver.svelte'
+  import SettingsSection from '../dialog/SettingsSection.svelte'
+  import SettingRow from '../dialog/SettingRow.svelte'
 
   let settings = $derived(getSettings())
   const host = getSettingsHost()
@@ -17,21 +16,18 @@
   let draft = $state<Draft | null>(null)
   let values = $derived(
     draft ?? {
-      binaryPath: settings?.shell.binary_path_override ?? '',
-      extraArgs: settings?.shell.extra_args.join(' ') ?? ''
+      binaryPath: settings?.shell.binaryPathOverride ?? '',
+      extraArgs: settings?.shell.extraArgs.join(' ') ?? ''
     }
   )
 
-  const saver = createAutoSaver({
-    onBusyChange: (busy) => (busy ? onSaving() : onSaved())
-  })
-  onDestroy(() => saver.dispose())
+  const saver = createAutoSaver()
 
   function update(key: keyof Draft, value: string) {
     draft = { ...values, [key]: value }
     const next: ShellConfig = {
-      binary_path_override: draft.binaryPath.trim() || null,
-      extra_args: draft.extraArgs.split(/\s+/).filter(Boolean)
+      binaryPathOverride: draft.binaryPath.trim() || null,
+      extraArgs: draft.extraArgs.split(/\s+/).filter(Boolean)
     }
     saver.schedule('shell', async () => {
       try {
@@ -43,40 +39,32 @@
   }
 </script>
 
-<section class="border-b border-edge px-5 py-4">
-  <div class="flex flex-col gap-3">
-    <h4 class="text-sm font-semibold text-bright">Shell</h4>
-    <label class="flex items-center">
-      <span class="w-36 shrink-0 text-sm text-muted">Shell path</span>
-      <Input
-        class="flex-1 py-2"
-        value={values.binaryPath}
-        oninput={(e: Event) => update('binaryPath', (e.currentTarget as HTMLInputElement).value)}
-        placeholder="Detected login shell"
-        disabled={!settings}
-      />
-    </label>
-    <label class="flex items-center">
-      <span class="w-36 shrink-0 text-sm text-muted">Shell args</span>
-      <Input
-        class="flex-1 py-2"
-        value={values.extraArgs}
-        oninput={(e: Event) => update('extraArgs', (e.currentTarget as HTMLInputElement).value)}
-        placeholder="--flag value"
-        disabled={!settings}
-      />
-    </label>
-  </div>
-</section>
+<SettingsSection title="Shell">
+  <SettingRow label="Shell path" stacked>
+    <Input
+      value={values.binaryPath}
+      oninput={(e: Event) => update('binaryPath', (e.currentTarget as HTMLInputElement).value)}
+      placeholder="Detected login shell"
+      disabled={!settings}
+    />
+  </SettingRow>
+  <SettingRow label="Shell args" stacked>
+    <Input
+      value={values.extraArgs}
+      oninput={(e: Event) => update('extraArgs', (e.currentTarget as HTMLInputElement).value)}
+      placeholder="--flag value"
+      disabled={!settings}
+    />
+  </SettingRow>
+</SettingsSection>
 
-<section class="border-b border-edge px-5 py-4">
-  <div class="flex flex-col gap-3">
-    <h4 class="text-sm font-semibold text-bright">Presets</h4>
+<SettingsSection title="Presets">
+  <div class="divide-y divide-edge">
     {#each Object.entries(settings?.shell.presets ?? {}) as [name, preset] (name)}
-      <div class="flex flex-col gap-1 border-b border-edge pb-3">
+      <div class="flex flex-col gap-1 py-4 first:pt-0 last:pb-0">
         <div class="flex items-center gap-2">
           <span class="font-mono text-sm text-fg">{name}</span>
-          {#if name === settings?.shell.default_preset}
+          {#if name === settings?.shell.defaultPreset}
             <Badge>Default</Badge>
           {/if}
         </div>
@@ -88,9 +76,9 @@
         {/if}
       </div>
     {/each}
-    <p class="text-xs text-subtle">
-      Add presets under <code>shell.presets</code> and pick one with
-      <code>shell.default_preset</code> in settings.jsonc.
-    </p>
   </div>
-</section>
+  <p class="text-sm text-muted">
+    Add presets under <code class="font-mono">shell.presets</code> and pick one with
+    <code class="font-mono">shell.defaultPreset</code> in settings.jsonc.
+  </p>
+</SettingsSection>

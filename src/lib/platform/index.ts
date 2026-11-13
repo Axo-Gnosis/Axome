@@ -126,6 +126,7 @@ export interface NativePlatform {
   }
   settings: {
     openGlobalFile(): Promise<SettingsFileResult>
+    openModelsFile(): Promise<SettingsFileResult>
   }
   shortcuts: { openGlobalFile(): Promise<ShortcutsFileResult> }
   deepLinks: {

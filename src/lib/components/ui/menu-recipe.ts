@@ -1,6 +1,6 @@
 import { tv } from 'tailwind-variants'
 
-// Shared by the dropdown and context menu wrappers. State comes from data attributes
+// Shared by the dropdown, context menu and select wrappers. State comes from data attributes
 // (bits sets data-highlighted/data-disabled; Item sets data-inset/data-destructive), so
 // consumers never pass state into the recipe.
 
@@ -11,7 +11,8 @@ export const menuContentVariants = tv({
     source: {
       dropdown: 'max-h-(--bits-dropdown-menu-content-available-height)',
       context: 'max-h-(--bits-context-menu-content-available-height)',
-      sub: 'max-h-(--bits-menu-content-available-height)'
+      sub: 'max-h-(--bits-menu-content-available-height)',
+      select: 'max-h-(--bits-select-content-available-height)'
     }
   }
 })

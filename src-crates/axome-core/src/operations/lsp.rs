@@ -27,8 +27,8 @@ impl Host {
             (None, EnvironmentService::current().with_nix(None))
         };
 
-        let effective = resolve_effective_settings_for_folder_path(project_path.as_deref())
-            .map_err(ApiError::Internal)?;
+        let effective =
+            resolve_effective_settings_for_folder_path(&self.dirs, project_path.as_deref());
 
         let extensions = ExtensionService::current();
         let mut entries = Vec::new();
@@ -57,10 +57,6 @@ impl Host {
     ) -> impl FnOnce(Value) -> Result<Value, ApiError> + '_ {
         move |mut lsp| {
             let servers = SettingsService::object_property(&mut lsp, "servers")?;
-            for entry in servers.values_mut().filter_map(Value::as_object_mut) {
-                entry.remove("runtime_path_override");
-                entry.remove("runtime_args");
-            }
             servers.insert(
                 config.server_definition_id.clone(),
                 serde_json::to_value(LspServerSettings {
@@ -97,8 +93,7 @@ impl Host {
         let folder = resolve_folder(&folder_path)?;
         let folder_path = folder.to_string_lossy().into_owned();
         let root_path = normalize_root_path(&folder_path, &root_path)?;
-        let effective = resolve_effective_settings_for_folder_path(Some(&folder))
-            .map_err(ApiError::Internal)?;
+        let effective = resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder));
         let config = lsp_config_record(&effective.settings, &server_definition_id);
 
         if !config.enabled {
@@ -168,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn lsp_server_update_preserves_native_settings_and_strips_legacy_keys() {
+    fn lsp_server_update_preserves_native_settings() {
         let root = temp_root("patch");
         std::fs::create_dir_all(&root).expect("temp dir created");
         let path = root.join("settings.jsonc");
@@ -180,14 +175,8 @@ mod tests {
     "future_lsp": true,
     "servers": {
       "other": {
-        "runtime_path_override": "/bin/node",
-        "runtime_args": ["--legacy"],
         "future_server": true,
         "settings": { "native": { "runtime_args": ["keep"] } }
-      },
-      "dev.axome.vtsls::vtsls": {
-        "runtime_path_override": "/bin/node",
-        "runtime_args": ["--legacy"]
       }
     }
   }
@@ -220,10 +209,6 @@ mod tests {
             parsed["lsp"]["servers"]["other"]["settings"]["native"]["runtime_args"],
             json!(["keep"])
         );
-        for entry in parsed["lsp"]["servers"].as_object().unwrap().values() {
-            assert!(entry.get("runtime_path_override").is_none());
-            assert!(entry.get("runtime_args").is_none());
-        }
         assert_eq!(
             parsed["lsp"]["servers"]["dev.axome.vtsls::vtsls"]["settings"]["typescript"]
                 ["preferences"]["quoteStyle"],

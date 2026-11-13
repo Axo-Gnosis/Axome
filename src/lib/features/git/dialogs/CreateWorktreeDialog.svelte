@@ -3,7 +3,8 @@
   import { backend } from '$lib/api/backend'
   import { Button } from '$lib/components/ui/button'
   import * as Dialog from '$lib/components/ui/dialog'
-  import { Input, Select } from '$lib/components/ui/input'
+  import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import { localHostLabel, selectFolder } from '$lib/features/browser/state.svelte'
   import { createWorktree } from '$lib/features/git/actions.svelte'
   import * as branches from '$lib/features/git/branches.svelte'
@@ -170,11 +171,15 @@
 
           <label class="block space-y-1">
             <span class="text-xs font-medium text-muted">Checkout</span>
-            <Select bind:value={mode} class="text-sm">
-              <option value="new_branch">New Branch</option>
-              <option value="existing_branch">Existing Branch</option>
-              <option value="detached">Commit (Detached)</option>
-            </Select>
+            <Select
+              bind:value={mode}
+              disabled={blocked}
+              items={[
+                { value: 'new_branch', label: 'New Branch' },
+                { value: 'existing_branch', label: 'Existing Branch' },
+                { value: 'detached', label: 'Commit (Detached)' }
+              ]}
+            />
           </label>
 
           {#if mode === 'new_branch'}
@@ -202,12 +207,13 @@
           {:else if mode === 'existing_branch'}
             <label class="block space-y-1">
               <span class="text-xs font-medium text-muted">Branch</span>
-              <Select bind:value={existingBranch} class="font-mono text-sm">
-                <option value="" disabled>Select a local branch</option>
-                {#each existingOptions as branch (branch)}
-                  <option value={branch}>{branch}</option>
-                {/each}
-              </Select>
+              <Select
+                bind:value={existingBranch}
+                disabled={blocked}
+                class="font-mono"
+                placeholder="Select a local branch"
+                items={existingOptions}
+              />
             </label>
             {#if existingOptions.length === 0}
               <p class="text-xs text-subtle">No unoccupied local branches available.</p>

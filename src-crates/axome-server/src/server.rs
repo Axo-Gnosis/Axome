@@ -4,10 +4,7 @@ use crate::{
     web,
 };
 use anyhow::Context;
-use axome_core::{
-    services::{completed_runs::CompletedRunStore, extensions::ExtensionService},
-    Host,
-};
+use axome_core::{services::completed_runs::CompletedRunStore, Host, HostDirs, HostOptions};
 use axome_protocol::rpc::{Open, Response, WireError, MAX_FRAME_BYTES, MAX_REQUEST_FRAME_BYTES};
 use axome_remote::{
     tls::{peer_fingerprint, server_config},
@@ -34,12 +31,11 @@ const COMPLETED_RUNS_KEPT: usize = 200;
 const COMPLETED_RUN_DAYS: i64 = 7;
 
 pub struct ServeOptions {
-    pub config_dir: PathBuf,
-    pub data_dir: PathBuf,
-    /// Defaults to `<config_dir>/server.jsonc`.
+    pub dirs: HostDirs,
+    /// Defaults to `<dirs.config>/server.jsonc`.
     pub config_file: Option<PathBuf>,
     pub listen: Option<SocketAddr>,
-    /// Frontend used when the config sets no `web.assets_dir`.
+    /// Frontend used when the config sets no `web.assetsDir`.
     pub web_assets_dir: Option<PathBuf>,
 }
 
@@ -63,7 +59,7 @@ impl ServerHandle {
 pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
     let config_path = options
         .config_file
-        .unwrap_or_else(|| config::default_path(&options.config_dir));
+        .unwrap_or_else(|| config::default_path(&options.dirs.config));
     let loaded = config::load(&config_path)?;
     let web = if let Some(web_config) = &loaded.web {
         let assets = config::resolve_web_assets(
@@ -76,7 +72,7 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
             .iter()
             .map(|origin| {
                 web::parse_origin(origin).with_context(|| {
-                    format!("web.allowed_origins entry {origin:?} is not http(s)://host[:port]")
+                    format!("web.allowedOrigins entry {origin:?} is not http(s)://host[:port]")
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -88,17 +84,14 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
         None
     };
     let listen = options.listen.unwrap_or(loaded.listen);
-    let identity = config::identity(&options.config_dir, &loaded)?;
+    let identity = config::identity(&options.dirs.config, &loaded)?;
     let fingerprint = identity.fingerprint();
-    std::fs::create_dir_all(&options.data_dir)
-        .with_context(|| format!("create data directory {}", options.data_dir.display()))?;
     let (host_events, _) = broadcast::channel(HOST_EVENT_CAPACITY);
     let event_sender = host_events.clone();
-    if !ExtensionService::set_installed_dir(options.data_dir.join("extensions")) {
-        tracing::debug!("Installed extensions directory is already fixed");
-    }
+    let mut host_options = HostOptions::new(options.dirs, "server.db");
+    host_options.supervision = loaded.supervision;
     let host = Arc::new(Host::new(
-        options.data_dir.join("server.db"),
+        host_options,
         Arc::new(move |event| {
             if let Some(event) = events::to_wire(event) {
                 let _ = event_sender.send(Arc::new(event));
@@ -123,7 +116,6 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
         .with_context(|| format!("bind QUIC server to {listen}"))?;
     let local_addr = endpoint.local_addr()?;
     let context = Arc::new(dispatch::ServerContext::new(
-        options.config_dir,
         loaded.authorized_keys_file,
         host_events,
     ));
@@ -295,7 +287,7 @@ async fn run_connection(
         connection.close(1u32.into(), b"no client certificate");
         return;
     };
-    let config_dir = context.config_dir.clone();
+    let config_dir = host.dirs.config.clone();
     let static_keys = context.authorized_keys_file.clone();
     let authorized = match tokio::task::spawn_blocking(move || {
         crate::auth::is_authorized(&config_dir, fingerprint, static_keys.as_deref())

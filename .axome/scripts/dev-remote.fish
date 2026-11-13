@@ -10,10 +10,13 @@ cd $repo_root
 set -l root $repo_root/.axome/dev-remote
 set -l server_config_dir $root/config
 set -l server_data_dir $root/data
+set -l server_cache_dir $root/cache
 # The desktop reads settings and client.pem from $XDG_CONFIG_HOME/axome and
-# keeps its DB under $XDG_DATA_HOME; child processes never inherit either.
+# keeps its DB under $XDG_DATA_HOME and caches under $XDG_CACHE_HOME; child
+# processes never inherit them.
 set -l desktop_config_home $root/desktop/config
 set -l desktop_data_home $root/desktop/data
+set -l desktop_cache_home $root/desktop/cache
 set -l client_key $desktop_config_home/axome/client.pem
 set -l desktop_settings $desktop_config_home/axome/settings.jsonc
 
@@ -23,7 +26,7 @@ set -q AXOME_DEV_WEB_PORT; or set -l AXOME_DEV_WEB_PORT 7431
 mkdir -p $server_config_dir $server_data_dir $desktop_config_home/axome $desktop_data_home $root/web
 
 # Vite serves the live web UI on :1430 and its sockets reach the daemon's web port
-# directly (trusted via web.allowed_origins), so the daemon's own web page only
+# directly (trusted via web.allowedOrigins), so the daemon's own web page only
 # forwards there; no bundle to rebuild or go stale.
 echo '<!doctype html><script>location.replace("http://127.0.0.1:1430" + location.pathname + location.search)</script>' >$root/web/index.html
 
@@ -36,11 +39,11 @@ end
 $server fingerprint $client_key >$root/authorized_keys; or exit 1
 
 printf '{
-  "authorized_keys_file": "%s",
+  "authorizedKeysFile": "%s",
   "web": {
     "listen": "127.0.0.1:%s",
-    "assets_dir": "%s",
-    "allowed_origins": ["http://127.0.0.1:1430"]
+    "assetsDir": "%s",
+    "allowedOrigins": ["http://127.0.0.1:1430"]
   }
 }\n' $root/authorized_keys $AXOME_DEV_WEB_PORT $root/web >$server_config_dir/server.jsonc
 
@@ -71,6 +74,7 @@ end
 setpriv --pdeathsig TERM $server \
     --config-dir $server_config_dir \
     --data-dir $server_data_dir \
+    --cache-dir $server_cache_dir \
     serve --listen 127.0.0.1:$AXOME_DEV_PORT &
 set -l server_pid $last_pid
 
@@ -93,5 +97,5 @@ if contains -- --web-only $argv
     wait
 else
     # exec hands this PID to the app, so closing it fires --pdeathsig on the daemon and vite.
-    XDG_CONFIG_HOME=$desktop_config_home XDG_DATA_HOME=$desktop_data_home exec bun app:dev
+    XDG_CONFIG_HOME=$desktop_config_home XDG_DATA_HOME=$desktop_data_home XDG_CACHE_HOME=$desktop_cache_home exec bun app:dev
 end

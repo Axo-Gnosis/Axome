@@ -41,10 +41,11 @@ pub struct ResolvedSettings {
 }
 
 pub fn resolve_effective_settings_for_folder_path(
+    dirs: &crate::HostDirs,
     folder_path: Option<&Path>,
-) -> Result<ResolvedSettings, String> {
+) -> ResolvedSettings {
     let catalog = ExtensionService::current();
-    Ok(SettingsResolver::load(&catalog.settings_ids)?.resolve_folder_path(folder_path))
+    SettingsResolver::load(dirs, &catalog.settings_ids).resolve_folder_path(folder_path)
 }
 
 pub fn lsp_config_record(settings: &EffectiveSettings, server_id: &str) -> LspServerConfigRecord {
@@ -150,12 +151,11 @@ impl<'a> SettingsResolver<'a> {
         }
     }
 
-    pub fn load(ids: &'a SettingsCatalogIds) -> Result<Self, String> {
-        let global_path = SettingsService::global_settings_path()?;
-        Ok(Self::new(
-            load_settings_layer(SettingsLayerKind::Global, global_path),
+    pub fn load(dirs: &crate::HostDirs, ids: &'a SettingsCatalogIds) -> Self {
+        Self::new(
+            load_settings_layer(SettingsLayerKind::Global, dirs.settings_path()),
             ids,
-        ))
+        )
     }
 
     pub fn resolve(&self, folder: Option<SettingsLayerLoad>) -> ResolvedSettings {
@@ -201,10 +201,20 @@ impl<'a> SettingsResolver<'a> {
         self.resolve(folder_path.map(|folder_path| {
             load_settings_layer(
                 SettingsLayerKind::Folder,
-                SettingsService::folder_settings_path(folder_path),
+                crate::dirs::folder_settings_path(folder_path),
             )
         }))
     }
+}
+
+pub(crate) fn validated_layer(
+    kind: SettingsLayerKind,
+    load: SettingsLayerLoad,
+    ids: &SettingsCatalogIds,
+) -> Option<Value> {
+    let schema = settings_layer_schema(kind, ids);
+    let validator = jsonschema::validator_for(&schema).expect("settings model schema is valid");
+    validate_layer(&validator, kind, load, &mut Vec::new())
 }
 
 /// Validates one layer, appending a diagnostic per rejected node and removing
@@ -236,15 +246,12 @@ fn validate_layer(
             ValidationErrorKind::AdditionalProperties { unexpected } => {
                 rejected.extend(unexpected.iter().map(|key| {
                     let pointer = format!("{at}{}", json_pointer(&[key]));
-                    let message = if kind == SettingsLayerKind::Folder
-                        && is_global_only_pointer(&pointer)
-                    {
-                        format!(
-                            "Setting `{key}` is window-scoped and can only be configured in global settings"
-                        )
-                    } else {
-                        format!("Unknown setting `{key}`")
-                    };
+                    let message =
+                        if kind == SettingsLayerKind::Folder && is_global_only_pointer(&pointer) {
+                            format!("Setting `{key}` can only be configured in global settings")
+                        } else {
+                            format!("Unknown setting `{key}`")
+                        };
                     (pointer, SettingsDiagnosticCode::UnknownKey, message)
                 }));
             }
@@ -358,9 +365,18 @@ fn json_pointer(parts: &[&str]) -> String {
 
 /// JSON Pointer prefixes of settings that are strictly `GlobalOnly` and cannot be
 /// configured in project folder settings.
-pub(crate) const GLOBAL_ONLY_POINTERS: &[&str] = &["/window", "/typography", "/remotes"];
+const GLOBAL_ONLY_POINTERS: &[&str] = &[
+    "/window",
+    "/typography",
+    "/remotes",
+    "/axo/project",
+    "/axo/homeAgentsDir",
+    "/axo/modelRoles",
+    "/axo/subagents",
+    "/axo/extendedContext",
+];
 
-pub(crate) fn is_global_only_pointer(pointer: &str) -> bool {
+fn is_global_only_pointer(pointer: &str) -> bool {
     GLOBAL_ONLY_POINTERS.iter().any(|prefix| {
         pointer == *prefix
             || (pointer.starts_with(prefix) && pointer[prefix.len()..].starts_with('/'))
@@ -412,24 +428,14 @@ pub(crate) fn settings_layer_schema(layer: SettingsLayerKind, ids: &SettingsCata
 
     if layer == SettingsLayerKind::Folder {
         for pointer in GLOBAL_ONLY_POINTERS {
-            let segments: Vec<&str> = pointer.trim_start_matches('/').split('/').collect();
-            if segments.len() == 1 {
-                if let Some(props) = schema
-                    .pointer_mut("/properties")
-                    .and_then(Value::as_object_mut)
-                {
-                    props.remove(segments[0]);
-                }
-            } else {
-                let field_path = &segments[..segments.len() - 1];
-                let prop_name = segments.last().unwrap();
-                let p = resolve_schema_pointer(&schema, field_path);
-                if let Some(props) = schema
-                    .pointer_mut(&format!("{p}/properties"))
-                    .and_then(Value::as_object_mut)
-                {
-                    props.remove(*prop_name);
-                }
+            let (parent, name) = pointer.rsplit_once('/').unwrap();
+            let fields: Vec<&str> = parent.split('/').skip(1).collect();
+            let p = resolve_schema_pointer(&schema, &fields);
+            if let Some(props) = schema
+                .pointer_mut(&format!("{p}/properties"))
+                .and_then(Value::as_object_mut)
+            {
+                props.remove(name);
             }
         }
     }
@@ -440,7 +446,7 @@ pub(crate) fn settings_layer_schema(layer: SettingsLayerKind, ids: &SettingsCata
 /// Pins the accepted key set of a map-valued setting. Struct-typed fields are
 /// `$ref`s into `definitions` (wrapped in `allOf` when schemars attaches field
 /// metadata), so each step dereferences before descending.
-pub(crate) fn restrict_map_keys(schema: &mut Value, field_path: &[&str], keys: Vec<String>) {
+fn restrict_map_keys(schema: &mut Value, field_path: &[&str], keys: Vec<String>) {
     let pointer = resolve_schema_pointer(schema, field_path);
     schema
         .pointer_mut(&pointer)
@@ -449,7 +455,7 @@ pub(crate) fn restrict_map_keys(schema: &mut Value, field_path: &[&str], keys: V
         .insert("propertyNames".to_string(), json!({ "enum": keys }));
 }
 
-pub(crate) fn resolve_schema_pointer(schema: &Value, field_path: &[&str]) -> String {
+fn resolve_schema_pointer(schema: &Value, field_path: &[&str]) -> String {
     let mut pointer = String::new();
     for field in field_path {
         while let Some(reference) = schema.pointer(&pointer).and_then(field_ref) {
@@ -464,7 +470,7 @@ pub(crate) fn resolve_schema_pointer(schema: &Value, field_path: &[&str]) -> Str
     pointer
 }
 
-pub(crate) fn field_ref(node: &Value) -> Option<&str> {
+fn field_ref(node: &Value) -> Option<&str> {
     node.get("$ref")
         .or_else(|| node.pointer("/allOf/0/$ref"))?
         .as_str()
@@ -547,7 +553,7 @@ mod tests {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
-                json!({ "typography": { "code_font_size": 15 } }),
+                json!({ "typography": { "codeFontSize": 15 } }),
             ),
             None,
         );
@@ -562,12 +568,12 @@ mod tests {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
-                json!({ "nix": { "eval_timeout_secs": 900 } }),
+                json!({ "nix": { "evalTimeoutSecs": 900 } }),
             ),
             Some(loaded(
                 SettingsLayerKind::Folder,
                 "folder",
-                json!({ "nix": { "eval_timeout_secs": 1200 } }),
+                json!({ "nix": { "evalTimeoutSecs": 1200 } }),
             )),
         );
 
@@ -580,7 +586,7 @@ mod tests {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
-                json!({ "window": { "tab_beam_position": "bottom" } }),
+                json!({ "window": { "tabBeamPosition": "bottom" } }),
             ),
             None,
         );
@@ -593,14 +599,14 @@ mod tests {
     }
 
     #[test]
-    fn folder_layer_rejects_global_only_settings_with_window_scoped_diagnostics() {
+    fn folder_layer_rejects_global_only_settings() {
         let resolved = resolve(
             loaded(
                 SettingsLayerKind::Global,
                 "global",
                 json!({
-                    "window": { "tab_beam_position": "bottom" },
-                    "typography": { "code_font_size": 15 },
+                    "window": { "tabBeamPosition": "bottom" },
+                    "typography": { "codeFontSize": 15 },
                     "remotes": {
                         "home": {
                             "address": "global.example:7420",
@@ -613,8 +619,16 @@ mod tests {
                 SettingsLayerKind::Folder,
                 "folder",
                 json!({
-                    "window": { "tab_beam_position": "top" },
-                    "typography": { "code_font_size": 20 },
+                    "axo": {
+                        "project": { "access": "trust" },
+                        "homeAgentsDir": true,
+                        "modelRoles": { "work": "provider/model" },
+                        "subagents": { "maxDepth": 9 },
+                        "extendedContext": true,
+                        "bash": { "ci": false }
+                    },
+                    "window": { "tabBeamPosition": "top" },
+                    "typography": { "codeFontSize": 20 },
                     "remotes": {
                         "home": {
                             "address": "folder.example:7420",
@@ -633,12 +647,23 @@ mod tests {
         let remote = &resolved.settings.remotes["home"];
         assert_eq!(remote.address, "global.example:7420");
         assert_eq!(remote.fingerprint, "SHA256:00");
-        assert_eq!(resolved.diagnostics.len(), 3);
-        for pointer in ["/window", "/typography", "/remotes"] {
+        assert!(!resolved.settings.axo.bash.ci);
+        assert_eq!(
+            resolved.settings.axo.project,
+            axome_protocol::axo_settings::AxoProjectSettings::default()
+        );
+        assert!(!resolved.settings.axo.home_agents_dir);
+        assert!(resolved.settings.axo.model_roles.is_empty());
+        assert_eq!(resolved.settings.axo.subagents.max_depth, 1);
+        assert!(!resolved.settings.axo.extended_context);
+        assert_eq!(resolved.diagnostics.len(), GLOBAL_ONLY_POINTERS.len());
+        for pointer in GLOBAL_ONLY_POINTERS {
             assert!(resolved.diagnostics.iter().any(|diagnostic| {
                 diagnostic.code == SettingsDiagnosticCode::UnknownKey
-                    && diagnostic.pointer == pointer
-                    && diagnostic.message.contains("window-scoped")
+                    && diagnostic.pointer == *pointer
+                    && diagnostic
+                        .message
+                        .contains("can only be configured in global settings")
             }));
         }
     }
@@ -650,7 +675,7 @@ mod tests {
             Some(loaded(
                 SettingsLayerKind::Folder,
                 "folder",
-                json!({ "nix": { "eval_timeout_secs": 1200 } }),
+                json!({ "nix": { "evalTimeoutSecs": 1200 } }),
             )),
         );
 
@@ -668,7 +693,7 @@ mod tests {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
-                json!({ "typography": { "code_font_size": 16 } }),
+                json!({ "typography": { "codeFontSize": 16 } }),
             ),
             Some(invalid(SettingsLayerKind::Folder, "folder")),
         );
@@ -689,7 +714,7 @@ mod tests {
                 "global",
                 json!({
                     "harnesses": {
-                        "claude_code": { "extra_args": ["--global"] }
+                        "claude_code": { "extraArgs": ["--global"] }
                     },
                     "lsp": {
                         "servers": {
@@ -708,7 +733,7 @@ mod tests {
                 "folder",
                 json!({
                     "harnesses": {
-                        "claude_code": { "extra_args": ["--project"] }
+                        "claude_code": { "extraArgs": ["--project"] }
                     },
                     "lsp": {
                         "servers": {
@@ -754,7 +779,7 @@ mod tests {
                     "harnesses": {
                         "claude_code": {
                             "enabled": null,
-                            "binary_path_override": "/bin/claude"
+                            "binaryPathOverride": "/bin/claude"
                         }
                     }
                 }),
@@ -765,7 +790,7 @@ mod tests {
                 json!({
                     "harnesses": {
                         "claude_code": {
-                            "binary_path_override": null
+                            "binaryPathOverride": null
                         }
                     }
                 }),
@@ -821,8 +846,8 @@ mod tests {
                 "global",
                 json!({
                     "typography": {
-                        "code_font_size": "big",
-                        "code_font_family": "Iosevka"
+                        "codeFontSize": "big",
+                        "codeFontFamily": "Iosevka"
                     },
                     "formatting": {
                         "json": { "formatter": "weird" },
@@ -840,7 +865,7 @@ mod tests {
             "dev.axome.biome::biome"
         );
         assert_eq!(resolved.settings.formatting["nix"].formatter, "disabled");
-        for pointer in ["/typography/code_font_size", "/formatting/json/formatter"] {
+        for pointer in ["/typography/codeFontSize", "/formatting/json/formatter"] {
             assert!(
                 resolved.diagnostics.iter().any(|diagnostic| {
                     diagnostic.code == SettingsDiagnosticCode::InvalidValue
@@ -861,8 +886,8 @@ mod tests {
                 json!({
                     "explorer": {
                         "exclude": { "**/vendor": true, "**/.git": false },
-                        "exclude_gitignore": true,
-                        "compact_folders": false
+                        "excludeGitignore": true,
+                        "compactFolders": false
                     }
                 }),
             )),
@@ -884,14 +909,14 @@ mod tests {
                 SettingsLayerKind::Global,
                 "global",
                 json!({
-                    "git": { "worktree_copy": { ".local": true, ".local/private": true, "**/*.env": true } }
+                    "git": { "worktreeCopy": { ".local": true, ".local/private": true, "**/*.env": true } }
                 }),
             ),
             Some(loaded(
                 SettingsLayerKind::Folder,
                 "folder",
                 json!({
-                    "git": { "worktree_copy": { ".local/private": false, ".env": true } }
+                    "git": { "worktreeCopy": { ".local/private": false, ".env": true } }
                 }),
             )),
         );
@@ -913,7 +938,7 @@ mod tests {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
-                json!({ "explorer": { "excludeGitIgnore": true } }),
+                json!({ "explorer": { "exclude_gitignore": true } }),
             ),
             None,
         );
@@ -921,7 +946,7 @@ mod tests {
         assert!(!resolved.settings.explorer.exclude_gitignore);
         assert!(resolved.diagnostics.iter().any(|diagnostic| diagnostic.code
             == SettingsDiagnosticCode::UnknownKey
-            && diagnostic.pointer == "/explorer/excludeGitIgnore"));
+            && diagnostic.pointer == "/explorer/exclude_gitignore"));
     }
 
     #[test]
@@ -933,7 +958,7 @@ mod tests {
                 json!({
                     "explorer": {
                         "exclude": { "**/vendor": "yes", "**/gen": true },
-                        "compact_folders": false
+                        "compactFolders": false
                     }
                 }),
             ),

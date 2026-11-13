@@ -5,6 +5,7 @@
 // this the single source of truth — divergence between the two call sites
 // is how tabs end up closed while their run is still alive.
 
+import { backend } from '$lib/api/backend'
 import { stopTerminalProcess } from '$lib/features/terminal/lifecycle'
 import * as chats from '$lib/features/chat/registry'
 import { confirmAsync } from '$lib/features/confirm/service.svelte'
@@ -28,7 +29,7 @@ import { textModelRevision, type TextModelRevision } from '$lib/features/editor/
  *  - stop the PTY for live session/shell tabs (aborts close if stop fails —
  *    leaking a running PTY while the tab vanishes would leave the
  *    process hidden until app quit)
- *  - stop busy chat turns (aborts close if stop fails)
+ *  - close chat sessions (aborts close if shutdown fails)
  *
  * Returns true when the tab was closed, false when the user cancelled
  * or the close could not proceed.
@@ -85,15 +86,12 @@ export async function closeTabWithChecks(
     }
   }
 
-  if (tab.kind === 'chat') {
-    const controller = chats.get(tab.id)
-    if (controller?.busy) {
-      try {
-        await controller.stop()
-      } catch (err) {
-        notify.error('Stop chat failed', getErrorMessage(err))
-        return false
-      }
+  if (tab.kind === 'chat' && tab.sessionId) {
+    try {
+      await (chats.get(tab.id)?.close() ?? backend.chat.close(tab.folderPath, tab.sessionId))
+    } catch (err) {
+      notify.error('Close chat failed', getErrorMessage(err))
+      return false
     }
   }
 

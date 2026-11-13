@@ -2,7 +2,7 @@
   import { tv, type VariantProps } from 'tailwind-variants'
 
   export const buttonVariants = tv({
-    base: 'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium cursor-pointer transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
+    base: 'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium cursor-pointer transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
     variants: {
       variant: {
         default: 'bg-surface border border-edge text-fg hover:border-accent/40 hover:text-bright',
@@ -13,9 +13,9 @@
         accent: 'bg-accent-dim border border-accent-dim text-ground hover:bg-accent'
       },
       size: {
-        default: 'px-3.5 py-2 text-base',
-        sm: 'px-2.5 py-1 text-sm',
-        xs: 'px-2 py-0.5 text-xs',
+        default: 'px-4 py-2 text-base',
+        sm: 'px-3 py-1.5 text-sm',
+        xs: 'px-2.5 py-1 text-xs',
         icon: 'size-7 p-0'
       }
     },

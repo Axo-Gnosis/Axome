@@ -6,9 +6,8 @@ use crate::host_events::DesktopEvent;
 use axome_core::{
     errors::ApiError,
     events::{EventSink, HostEvent},
-    services::{
-        settings::SettingsService, settings_resolution::resolve_effective_settings_for_folder_path,
-    },
+    services::settings_resolution::resolve_effective_settings_for_folder_path,
+    HostDirs,
 };
 use axome_protocol::{
     rpc::{HostEventWire, Open, Reply, Request},
@@ -157,7 +156,8 @@ impl WorkspaceRouter {
             .parse::<axome_protocol::pairing::PairLink>()
             .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
         let _guard = self.inner.remote_management.lock().await;
-        let remotes = tokio::task::spawn_blocking(resolve_remote_configs).await??;
+        let dirs = self.inner.host.dirs.clone();
+        let remotes = tokio::task::spawn_blocking(move || resolve_remote_configs(&dirs)).await?;
         if remotes.contains_key(name) != replace {
             return Err(ApiError::InvalidArgument(if replace {
                 format!("Remote `{name}` no longer exists; use Pair instead")
@@ -284,8 +284,8 @@ impl RouterInner {
     pub(super) async fn client_identity(&self) -> Result<Arc<Identity>, ApiError> {
         self.identity
             .get_or_try_init(|| async {
-                tokio::task::spawn_blocking(|| {
-                    let dir = SettingsService::global_config_dir().map_err(ApiError::Internal)?;
+                let dir = self.host.dirs.config.clone();
+                tokio::task::spawn_blocking(move || {
                     Identity::load_or_generate(&dir, "client")
                         .map(Arc::new)
                         .map_err(|error| ApiError::Remote(format!("client identity: {error}")))
@@ -385,7 +385,8 @@ impl RouterInner {
         if settings.generation == generation {
             return Ok(());
         }
-        let remotes = tokio::task::spawn_blocking(resolve_remote_configs).await??;
+        let dirs = self.host.dirs.clone();
+        let remotes = tokio::task::spawn_blocking(move || resolve_remote_configs(&dirs)).await?;
         settings.generation = generation;
         settings.remotes = remotes.clone();
         drop(settings);
@@ -630,9 +631,9 @@ fn remote_host_event(server: &str, event: HostEventWire) -> Option<DesktopEvent>
     }))
 }
 
-fn resolve_remote_configs() -> Result<HashMap<String, RemoteSettings>, ApiError> {
-    let resolved = resolve_effective_settings_for_folder_path(None).map_err(ApiError::Internal)?;
-    Ok(resolved.settings.remotes.into_iter().collect())
+fn resolve_remote_configs(dirs: &HostDirs) -> HashMap<String, RemoteSettings> {
+    let resolved = resolve_effective_settings_for_folder_path(dirs, None);
+    resolved.settings.remotes.into_iter().collect()
 }
 
 /// Retag diagnostics resolved by `server`'s daemon: `Host` origin, and paths in

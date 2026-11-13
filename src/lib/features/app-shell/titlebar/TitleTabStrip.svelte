@@ -96,7 +96,7 @@
     return result
   })
   let activeTabId = $derived(getActiveTabId())
-  let beamPosition = $derived(getDesktopSettings()?.window.tab_beam_position ?? 'top')
+  let beamPosition = $derived(getDesktopSettings()?.window.tabBeamPosition ?? 'top')
   let stripEl = $state<HTMLElement | null>(null)
   let seamX = $state(2)
 

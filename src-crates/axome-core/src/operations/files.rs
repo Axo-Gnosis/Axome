@@ -167,8 +167,13 @@ impl Host {
         show_hidden: bool,
     ) -> Result<Vec<DirEntry>, ApiError> {
         let generation = self.settings_generation();
-        self.files
-            .read_dir(Path::new(&project_path), &dir_path, show_hidden, generation)
+        self.files.read_dir(
+            Path::new(&project_path),
+            &dir_path,
+            show_hidden,
+            &self.dirs,
+            generation,
+        )
     }
 
     /// Flat list of searchable file paths, for Quick Open and the sidebar filter.
@@ -179,8 +184,12 @@ impl Host {
         show_hidden: bool,
     ) -> Result<PathList, ApiError> {
         let generation = self.settings_generation();
-        self.files
-            .list_paths(Path::new(&project_path), show_hidden, generation)
+        self.files.list_paths(
+            Path::new(&project_path),
+            show_hidden,
+            &self.dirs,
+            generation,
+        )
     }
 
     /// Watch exactly the directories the explorer currently renders. A watcher

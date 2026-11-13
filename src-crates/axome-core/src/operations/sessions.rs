@@ -117,8 +117,13 @@ impl Host {
         token: Arc<Mutex<Option<String>>>,
         completed: Option<CompletedRunSink>,
     ) -> Result<SessionStartInfo, ApiError> {
-        let launch =
-            resolve_harness_launch(&self.db, Some(folder), &harness_id, preset.as_deref())?;
+        let launch = resolve_harness_launch(
+            &self.dirs,
+            &self.db,
+            Some(folder),
+            &harness_id,
+            preset.as_deref(),
+        )?;
         if let Some(message) = missing_requirement(
             &launch.harness().requires,
             launch.env.get("PATH").map(String::as_str).unwrap_or(""),
@@ -313,6 +318,6 @@ impl Host {
         uri: String,
         cwd: Option<String>,
     ) -> Result<axome_protocol::omp::OmpResolvedTarget, ApiError> {
-        omp::resolve_omp_target(&uri, cwd.as_deref())
+        omp::resolve_omp_target(&self.dirs, &uri, cwd.as_deref())
     }
 }

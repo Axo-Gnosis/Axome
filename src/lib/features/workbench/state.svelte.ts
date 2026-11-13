@@ -436,10 +436,10 @@ export async function openFolder(path: string, replaceTabId?: TabId): Promise<vo
   openNewTab(folderPath)
 }
 
-/** Open `window.home_folder` as a New Tab; warns and leaves Home showing when it fails. */
+/** Open `window.homeFolder` as a New Tab; warns and leaves Home showing when it fails. */
 export async function openHomeFolder(): Promise<void> {
   try {
-    const home = (await backend.settings.getEffective()).settings.window.home_folder
+    const home = (await backend.settings.getEffective()).settings.window.homeFolder
     if (!home) return
     const folder = (await backend.folders.resolve(home)).path
     await openFolder(folder)

@@ -413,38 +413,16 @@ fn info(
     }
 }
 
-/// The part of a page's workbench snapshot the registry reads; the rest of
-/// each tab and the layout tree are skipped, not parsed into values.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotHead {
-    version: u64,
-    active_tab_index: Option<i64>,
-    tabs: Vec<TabHead>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TabHead {
-    folder_path: String,
-}
-
-fn snapshot_head(snapshot: &str) -> Option<SnapshotHead> {
-    serde_json::from_str::<SnapshotHead>(snapshot)
-        .ok()
-        .filter(|head| head.version == 4)
-}
-
 /// A V4 snapshot without tabs: nothing a page could restore.
 fn tabless(snapshot: &str) -> bool {
-    snapshot_head(snapshot).is_some_and(|head| head.tabs.is_empty())
+    axome_core::workbench_snapshot::parse(snapshot).is_some_and(|head| head.tabs.is_empty())
 }
 
 /// Tab folders of a V4 snapshot: the active tab's first, then the remaining
 /// distinct non-empty ones in tab order. Anything malformed yields none.
 fn folders(snapshot: &str) -> Vec<String> {
     let parse = || -> Option<Vec<String>> {
-        let head = snapshot_head(snapshot)?;
+        let head = axome_core::workbench_snapshot::parse(snapshot)?;
         let paths: Vec<&str> = head
             .tabs
             .iter()
@@ -815,7 +793,16 @@ pub(crate) async fn close(
         stop_runs(&host, &context, record.owner).await?;
         let deleted = id.clone();
         blocking(&host, move |host| {
-            transaction(host, |conn| delete(conn, &deleted))
+            let snapshot = transaction(host, |conn| {
+                let snapshot =
+                    AppStateKvService::get(conn, &snapshot_key(&deleted)).map_err(database)?;
+                delete(conn, &deleted)?;
+                Ok(snapshot)
+            })?;
+            if let Some(snapshot) = snapshot {
+                host.chat_close_snapshot(&snapshot);
+            }
+            Ok(())
         })
         .await?;
         workbenches.remove(&id, &slot);
@@ -921,10 +908,17 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-                let db = scratch.path().join("server.db");
-                let host = Arc::new(Host::new(db.clone(), Arc::new(|_| Ok(()))).unwrap());
+                let dirs = axome_core::HostDirs::under(scratch.path());
+                let db = dirs.data.join("test.db");
+                let host = Arc::new(
+                    Host::new(
+                        axome_core::HostOptions::new(dirs, "test.db"),
+                        Arc::new(|_| Ok(())),
+                    )
+                    .unwrap(),
+                );
                 let (events, _) = tokio::sync::broadcast::channel(4);
-                let context = Arc::new(ServerContext::new(std::path::PathBuf::new(), None, events));
+                let context = Arc::new(ServerContext::new(None, events));
                 // A DB failure during deletion keeps record, snapshot and fence;
                 // a second Close completes instead of waiting on a consumed drain.
                 let a = "a".to_owned();

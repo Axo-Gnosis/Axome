@@ -21,7 +21,7 @@ pub enum HarnessConnectionStatus {
     Error,
 }
 
-/// One host's harnesses for a folder (or its global settings), plus that scope's `sessions.default_preset`.
+/// One host's harnesses for a folder (or its global settings), plus that scope's `sessions.defaultPreset`.
 /// The default travels here because `settings_get_effective` ignores the folder layer of remote folders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HarnessListing {

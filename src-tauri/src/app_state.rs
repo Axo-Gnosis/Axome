@@ -1,16 +1,8 @@
 use crate::host_events::{desktop_event_sink, DesktopEvent};
 use crate::router::WorkspaceRouter;
 use crate::windows::WindowCoordinatorService;
-use axome_core::Host;
-use std::path::PathBuf;
+use axome_core::{Host, HostDirs, HostOptions};
 use std::sync::Arc;
-use tauri::Manager;
-
-/// Resolve the default database path inside the Tauri app data directory.
-fn resolve_db_path(app_handle: &tauri::AppHandle) -> tauri::Result<PathBuf> {
-    let app_data = app_handle.path().app_data_dir()?;
-    Ok(app_data.join("axome.db"))
-}
 
 /// Desktop ownership and IPC adapters around the local host.
 pub struct AppState {
@@ -25,7 +17,7 @@ impl AppState {
         let events = desktop_event_sink(app_handle.clone(), Arc::clone(&windows));
         let desktop = Arc::clone(&events);
         let host = Arc::new(Host::new(
-            resolve_db_path(app_handle)?,
+            HostOptions::new(HostDirs::from_env()?, "axome.db"),
             Arc::new(move |event| desktop(DesktopEvent::Host(event))),
         )?);
         let router = WorkspaceRouter::with_events(Arc::clone(&host), events);

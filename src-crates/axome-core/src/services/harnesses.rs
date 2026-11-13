@@ -51,14 +51,13 @@ impl HarnessLaunch {
 }
 
 pub(crate) fn resolve_harness_launch(
+    dirs: &crate::HostDirs,
     db: &DatabaseService,
     folder: Option<&Path>,
     harness_id: &str,
     preset: Option<&str>,
 ) -> Result<HarnessLaunch, ApiError> {
-    let settings = resolve_effective_settings_for_folder_path(folder)
-        .map_err(ApiError::Internal)?
-        .settings;
+    let settings = resolve_effective_settings_for_folder_path(dirs, folder).settings;
     let catalog = ExtensionService::current();
     let index = catalog
         .harnesses

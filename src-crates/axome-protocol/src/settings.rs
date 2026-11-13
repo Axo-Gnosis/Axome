@@ -1,13 +1,9 @@
+use crate::axo_settings::AxoSettings;
 use crate::harness::HarnessStatus;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-
-pub const SETTINGS_FILE_NAME: &str = "settings.jsonc";
-pub const SHORTCUTS_FILE_NAME: &str = "shortcuts.jsonc";
-pub const FOLDER_SETTINGS_PATH: &str = ".axome/settings.jsonc";
-pub const GLOBAL_SETTINGS_DIR_NAME: &str = "axome";
 
 /// Default timeout for `nix develop --command env -0` evaluations, in seconds.
 /// 120s was too aggressive for cold stores pulling GUI deps (webkitgtk, gtk3,
@@ -15,6 +11,7 @@ pub const GLOBAL_SETTINGS_DIR_NAME: &str = "axome";
 pub const DEFAULT_NIX_EVAL_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct HarnessConfigRecord {
     pub harness_id: String,
     pub enabled: bool,
@@ -23,13 +20,14 @@ pub struct HarnessConfigRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellConfigRecord {
     pub binary_path_override: Option<String>,
     pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum LspTraceLevel {
     #[default]
     Off,
@@ -38,7 +36,7 @@ pub enum LspTraceLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct FormattingLanguageSettings {
     pub formatter: String,
 }
@@ -47,6 +45,7 @@ pub struct FormattingLanguageSettings {
 pub type FormattingSettings = BTreeMap<String, FormattingLanguageSettings>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct LspServerConfigRecord {
     pub server_definition_id: String,
     pub enabled: bool,
@@ -57,7 +56,7 @@ pub struct LspServerConfigRecord {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ExternalFolderOpenMode {
     #[default]
     NewWindow,
@@ -65,7 +64,7 @@ pub enum ExternalFolderOpenMode {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ExternalFileOpenMode {
     #[default]
     PreferFolder,
@@ -74,7 +73,7 @@ pub enum ExternalFileOpenMode {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum TabBeamPosition {
     #[default]
     Top,
@@ -83,7 +82,7 @@ pub enum TabBeamPosition {
 
 /// One paired `axome-server`, keyed by the `<server>` segment of `axome://<server>/…`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct RemoteSettings {
     /// `host:port` the daemon listens on.
     pub address: String,
@@ -92,7 +91,7 @@ pub struct RemoteSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct WindowSettings {
     /// Theme preference. Current built-in value is system.
     pub theme: String,
@@ -118,7 +117,7 @@ impl Default for WindowSettings {
 /// Fonts for this desktop. Family names are freeform and go ahead of the
 /// bundled fonts, which still cover names that are not installed.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct TypographySettings {
     /// Interface font family. Bundled default: Paper Mono UI.
     pub ui_font_family: String,
@@ -127,9 +126,9 @@ pub struct TypographySettings {
     /// Editor and diff font size in pixels.
     #[schemars(range(min = 6, max = 72))]
     pub code_font_size: u16,
-    /// Terminal font family. Unset follows `code_font_family`.
+    /// Terminal font family. Unset follows `codeFontFamily`.
     pub terminal_font_family: Option<String>,
-    /// Terminal font size in pixels. Unset follows `code_font_size`.
+    /// Terminal font size in pixels. Unset follows `codeFontSize`.
     #[schemars(range(min = 6, max = 72))]
     pub terminal_font_size: Option<u16>,
 }
@@ -147,7 +146,7 @@ impl Default for TypographySettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct NixSettings {
     #[schemars(range(min = 1))]
     pub eval_timeout_secs: u64,
@@ -175,7 +174,7 @@ pub const DEFAULT_EXPLORER_EXCLUDES: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ExplorerSettings {
     /// Globs hidden from the file explorer, matched against project-relative
     /// paths. Layers merge key by key; map a glob to false to keep it listed.
@@ -201,7 +200,7 @@ impl Default for ExplorerSettings {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct GitSettings {
     /// Untracked files copied into new worktrees. Matching false entries veto
     /// matching true entries, including overlapping directory patterns.
@@ -209,7 +208,7 @@ pub struct GitSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct HarnessSettings {
     pub enabled: bool,
     /// Optional harness executable override. Project settings can change what Axome executes.
@@ -232,14 +231,14 @@ impl Default for HarnessSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct PresetSettings {
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ShellSettings {
     pub binary_path_override: Option<String>,
     pub extra_args: Vec<String>,
@@ -250,11 +249,11 @@ pub struct ShellSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct ShellPresetSettings {
     /// Shell program; bare names resolve on the folder PATH. Defaults to the base shell.
     pub command: Option<String>,
-    /// Appended after `shell.extra_args`.
+    /// Appended after `shell.extraArgs`.
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     /// Typed into the shell after every start, followed by a newline.
@@ -262,14 +261,14 @@ pub struct ShellPresetSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct SessionsSettings {
     /// `<harness_id>` or `<harness_id>/<preset>`; launched by New Session and listed first.
     pub default_preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct LspServerSettings {
     pub enabled: bool,
     /// Optional language server executable override. Project settings can change what Axome executes.
@@ -294,7 +293,7 @@ impl Default for LspServerSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct LspSettings {
     /// Keyed by extension catalog (`ExtensionService`) server_definition_id, formatted as
     /// `${extension_id}::${server_id}`.
@@ -304,9 +303,10 @@ pub struct LspSettings {
 /// # Axome settings
 ///
 /// Project settings can override executable paths and args for harnesses and LSP servers. Only trust settings from repositories you trust.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct EffectiveSettings {
+    pub axo: AxoSettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -319,24 +319,6 @@ pub struct EffectiveSettings {
     pub harnesses: BTreeMap<String, HarnessSettings>,
     pub lsp: LspSettings,
     pub remotes: BTreeMap<String, RemoteSettings>,
-}
-
-impl Default for EffectiveSettings {
-    fn default() -> Self {
-        Self {
-            window: WindowSettings::default(),
-            typography: TypographySettings::default(),
-            nix: NixSettings::default(),
-            explorer: ExplorerSettings::default(),
-            git: GitSettings::default(),
-            formatting: FormattingSettings::default(),
-            sessions: SessionsSettings::default(),
-            shell: ShellSettings::default(),
-            harnesses: BTreeMap::new(),
-            lsp: LspSettings::default(),
-            remotes: BTreeMap::new(),
-        }
-    }
 }
 
 impl EffectiveSettings {
@@ -440,6 +422,7 @@ pub struct HarnessSettingsEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsPayload {
+    pub axo: AxoSettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -523,6 +506,7 @@ mod tests {
             .unwrap()
             .extra_args = vec!["--stdio".to_string()];
         let payload = SettingsPayload {
+            axo: settings.axo,
             window: settings.window,
             typography: settings.typography,
             nix: settings.nix,

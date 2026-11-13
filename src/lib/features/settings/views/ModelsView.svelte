@@ -1,0 +1,152 @@
+<script lang="ts">
+  import { Button } from '$lib/components/ui/button'
+  import { Input } from '$lib/components/ui/input'
+  import { Chip } from '$lib/components/ui/chip'
+  import {
+    ModelPicker,
+    EffortPicker,
+    splitSelector,
+    joinSelector,
+    levelsForSelector,
+    ROLE_NAME
+  } from '$lib/features/chat/elements/model-picker'
+  import { BUILTIN_ROLES, axoModels, settingsRoles } from '$lib/features/settings/state/axo.svelte'
+  import SettingRow from '../dialog/SettingRow.svelte'
+  import SettingsSection from '../dialog/SettingsSection.svelte'
+  import { createAxoFields } from './axoFields.svelte'
+
+  const fields = createAxoFields()
+  const fixed: readonly string[] = BUILTIN_ROLES
+  // What each built-in role is used for (design.md D11).
+  const roleDescriptions: Record<string, string> = {
+    default: 'Primary model; fallback for every role',
+    reason: 'Planning, research and reasoning',
+    work: 'Delegated task subagents',
+    dash: 'Fast exploration',
+    conduct: 'Orchestrating subagents'
+  }
+  let settings = $derived(fields.settings)
+  // Settings are host-scoped and must load models even with no folder open.
+  const available = axoModels(fields.host)
+  let models = $derived(available.models)
+  let custom = $state<string[]>([])
+  let newName = $state('')
+  let roles = $derived(settingsRoles(settings?.modelRoles, custom))
+  let names = $derived(roles.map((role) => role.name))
+  let validName = $derived(ROLE_NAME.test(newName) && !names.includes(newName))
+
+  function selection(name: string) {
+    return String(fields.value(['modelRoles', name], settings?.modelRoles[name] ?? ''))
+  }
+
+  function update(name: string, selector: string) {
+    fields.save(['modelRoles', name], selector || null, selector)
+  }
+
+  function add() {
+    if (!validName) return
+    custom = [...custom, newName]
+    newName = ''
+  }
+
+  function remove(name: string) {
+    custom = custom.filter((entry) => entry !== name)
+    update(name, '')
+  }
+</script>
+
+<SettingsSection title="Defaults">
+  <SettingRow label="Default model" description="Model and effort for new chats. Unset uses @default." stacked as="div">
+    {@const defaultModel = String(fields.value(['defaultModel'], settings?.defaultModel ?? ''))}
+    <div class="flex items-center gap-2">
+      <ModelPicker
+        label="Default model"
+        class="min-w-0 flex-1"
+        value={defaultModel}
+        {models}
+        {roles}
+        none="Not set (uses @default)"
+        custom
+        disabled={!settings}
+        onSelect={(next) => fields.save(['defaultModel'], next || null, next)}
+      />
+      <EffortPicker
+        label="Default effort"
+        value={String(fields.value(['defaultThinkingLevel'], settings?.defaultThinkingLevel ?? 'medium'))}
+        levels={levelsForSelector(defaultModel, models, roles)}
+        disabled={!settings}
+        onSelect={(level) => fields.save(['defaultThinkingLevel'], level, level)}
+      />
+    </div>
+  </SettingRow>
+</SettingsSection>
+
+<SettingsSection
+  title="Roles"
+  description="Unset roles inherit @default; an unset @default uses the last model picked in a chat."
+>
+  {#if available.loading}<p class="text-sm text-muted">Loading models…</p>{/if}
+  {#if available.error}<p class="text-sm text-danger" role="alert">{available.error}</p>{/if}
+  <div class="flex flex-col gap-2">
+    {#each names as name (name)}
+      {@const selected = selection(name)}
+      {@const parts = splitSelector(selected)}
+      {@const inherits = name === 'default' ? 'Last model picked' : 'Inherits @default'}
+      <div
+        class="grid grid-cols-[minmax(9rem,1fr)_minmax(0,2.4fr)_4.5rem] items-center gap-3 rounded-lg border bg-surface px-3 py-2.5
+               {selected ? 'border-accent/40' : 'border-edge'}"
+      >
+        <div class="flex min-w-0 flex-col gap-1">
+          <Chip tone={selected ? 'accent' : 'default'} class="self-start font-mono">@{name}</Chip>
+          <span class="text-sm text-muted">{roleDescriptions[name] ?? 'Custom role'}</span>
+        </div>
+
+        <div class="flex min-w-0 items-center gap-2">
+          <ModelPicker
+            label={`Model for @${name}`}
+            class="min-w-0 flex-1"
+            value={parts.model}
+            {models}
+            none={inherits}
+            custom
+            disabled={!settings || available.loading}
+            onSelect={(next) => {
+              const picked = splitSelector(next)
+              update(name, joinSelector(picked.model, picked.effort || parts.effort))
+            }}
+          />
+          <EffortPicker
+            label={`Effort for @${name}`}
+            value={parts.effort}
+            levels={levelsForSelector(parts.model, models)}
+            defaultLabel="Default"
+            disabled={!settings || available.loading || !parts.model}
+            onSelect={(level) => update(name, joinSelector(parts.model, level))}
+          />
+        </div>
+        <div class="flex justify-end">
+          {#if !fixed.includes(name)}
+            <Button size="sm" variant="ghost" disabled={!settings} onclick={() => remove(name)}>Remove</Button>
+          {:else if selected}
+            <Button size="sm" variant="ghost" disabled={!settings} onclick={() => update(name, '')}>Clear</Button>
+          {:else}
+            <span class="px-2.5 text-subtle" aria-label="Nothing to reset">—</span>
+          {/if}
+        </div>
+      </div>
+    {/each}
+  </div>
+  <SettingRow
+    label="Custom role"
+    description={newName && !validName
+      ? 'Use a unique name starting with a lowercase letter, followed by lowercase letters, digits or hyphens.'
+      : undefined}
+    stacked
+    as="div"
+  >
+    <div class="flex items-center gap-2">
+      <Input aria-label="Custom role name" placeholder="custom-role" bind:value={newName} />
+      <Button size="sm" disabled={!settings || !validName} onclick={add}>Add Role</Button>
+    </div>
+  </SettingRow>
+</SettingsSection>

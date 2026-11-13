@@ -571,7 +571,16 @@ mod tests {
     fn finish_waits_for_running_input_and_fences_queued_input_until_next_begin() {
         let scratch = tempfile::tempdir().unwrap();
         let events: EventSink<axome_core::events::HostEvent> = Arc::new(|_| Ok(()));
-        let host = Arc::new(Host::new(scratch.path().join("server.db"), events).unwrap());
+        let host = Arc::new(
+            Host::new(
+                axome_core::HostOptions::new(
+                    axome_core::HostDirs::under(scratch.path()),
+                    "test.db",
+                ),
+                events,
+            )
+            .unwrap(),
+        );
         let writes = Arc::new(Mutex::new(Vec::new()));
         let (entered_tx, entered) = mpsc::channel();
         let (release, release_rx) = mpsc::channel();

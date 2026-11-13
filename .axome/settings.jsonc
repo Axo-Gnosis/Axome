@@ -1,6 +1,6 @@
 {
 	"explorer": {
-		"compact_folders": true,
+		"compactFolders": true,
 		"exclude": {
 			"**/.DS_Store": true,
 			"**/.git": true,
@@ -16,6 +16,6 @@
 			"node_modules": true,
 			"target": true
 		},
-		"exclude_gitignore": false
+		"excludeGitignore": false
 	}
 }

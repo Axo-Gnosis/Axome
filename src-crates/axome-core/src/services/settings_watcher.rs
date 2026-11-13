@@ -1,9 +1,6 @@
 use crate::events::{deliver, EventSink, HostEvent};
-use crate::services::settings::SettingsService;
-use crate::services::settings_resolution::{
-    parse_error_diagnostic, resolve_effective_settings_for_folder_path,
-};
-use axome_protocol::settings::{SettingsChangedEvent, SettingsDiagnostic, SettingsLayerKind};
+use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
+use axome_protocol::settings::{SettingsChangedEvent, SettingsLayerKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -21,6 +18,7 @@ struct FolderSettingsWatcher {
 }
 
 pub struct SettingsWatcherService {
+    dirs: crate::HostDirs,
     events: EventSink<HostEvent>,
     generation: Arc<AtomicU64>,
     global_watcher: Mutex<Option<RecommendedWatcher>>,
@@ -28,9 +26,10 @@ pub struct SettingsWatcherService {
 }
 
 impl SettingsWatcherService {
-    pub fn new(events: EventSink<HostEvent>) -> Self {
+    pub fn new(events: EventSink<HostEvent>, dirs: crate::HostDirs) -> Self {
         Self {
             events,
+            dirs,
             generation: Arc::new(AtomicU64::new(0)),
             global_watcher: Mutex::new(None),
             folder_watchers: Mutex::new(HashMap::new()),
@@ -42,7 +41,7 @@ impl SettingsWatcherService {
     }
 
     pub fn notify(&self, layer: SettingsLayerKind, folder: Option<&Path>) {
-        emit_settings_changed(&self.events, &self.generation, layer, folder);
+        emit_settings_changed(&self.dirs, &self.events, &self.generation, layer, folder);
     }
 
     pub fn is_watching(&self, folder: &Path) -> bool {
@@ -69,12 +68,13 @@ impl SettingsWatcherService {
             return Ok(());
         }
 
-        let settings_file = SettingsService::global_settings_path()?;
+        let settings_file = self.dirs.settings_path();
         let watch_path = existing_watch_parent(&settings_file)
             .ok_or_else(|| format!("No existing parent for {}", settings_file.display()))?;
         let events = Arc::clone(&self.events);
         let generation = Arc::clone(&self.generation);
         let settings_file_for_events = settings_file.clone();
+        let dirs = self.dirs.clone();
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
@@ -85,7 +85,7 @@ impl SettingsWatcherService {
             {
                 return;
             }
-            emit_settings_changed(&events, &generation, SettingsLayerKind::Global, None);
+            emit_settings_changed(&dirs, &events, &generation, SettingsLayerKind::Global, None);
         })
         .map_err(|error| format!("Failed to create global settings watcher: {error}"))?;
 
@@ -110,14 +110,17 @@ impl SettingsWatcherService {
                 return Ok(());
             }
             folder_watcher.watching_axome_dir = false;
-            ensure_axome_watch(folder_watcher, &folder_path.join(".axome"))?;
+            ensure_axome_watch(
+                folder_watcher,
+                &folder_path.join(crate::dirs::FOLDER_CONFIG_DIR),
+            )?;
             folder_watcher.registered_generation = generation;
             return Ok(());
         }
         let folder_path = folder_path.to_path_buf();
-        let axome_dir = folder_path.join(".axome");
+        let axome_dir = folder_path.join(crate::dirs::FOLDER_CONFIG_DIR);
 
-        let settings_file = SettingsService::folder_settings_path(&folder_path);
+        let settings_file = crate::dirs::folder_settings_path(&folder_path);
         let events = Arc::clone(&self.events);
         let generation = Arc::clone(&self.generation);
         let settings_file_for_events = settings_file.clone();
@@ -125,6 +128,7 @@ impl SettingsWatcherService {
         let directory_generation = Arc::new(AtomicU64::new(0));
         let watch_generation = Arc::clone(&directory_generation);
         let watched_dir = axome_dir.clone();
+        let dirs = self.dirs.clone();
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
@@ -141,6 +145,7 @@ impl SettingsWatcherService {
                 return;
             }
             emit_settings_changed(
+                &dirs,
                 &events,
                 &generation,
                 SettingsLayerKind::Folder,
@@ -199,13 +204,14 @@ fn is_settings_event_path(path: &Path, settings_file: &Path) -> bool {
 }
 
 fn emit_settings_changed(
+    dirs: &crate::HostDirs,
     events: &EventSink<HostEvent>,
     generation: &AtomicU64,
     layer: SettingsLayerKind,
     folder_path: Option<&Path>,
 ) {
     let generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
-    let diagnostics = diagnostics_for(folder_path);
+    let diagnostics = resolve_effective_settings_for_folder_path(dirs, folder_path).diagnostics;
     deliver(
         events,
         HostEvent::SettingsChanged(SettingsChangedEvent {
@@ -215,16 +221,4 @@ fn emit_settings_changed(
             diagnostics,
         }),
     );
-}
-
-fn diagnostics_for(folder_path: Option<&Path>) -> Vec<SettingsDiagnostic> {
-    resolve_effective_settings_for_folder_path(folder_path)
-        .map(|resolved| resolved.diagnostics)
-        .unwrap_or_else(|message| {
-            vec![parse_error_diagnostic(
-                SettingsLayerKind::Global,
-                Path::new(""),
-                message,
-            )]
-        })
 }

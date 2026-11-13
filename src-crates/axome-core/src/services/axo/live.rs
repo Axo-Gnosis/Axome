@@ -19,6 +19,7 @@ pub(crate) struct LiveSession {
     pub id: String,
     pub folder: PathBuf,
     pub session: Arc<axo::Session>,
+    pub engine: Arc<super::engine::Engine>,
     service: Weak<AxoService>,
     state: Mutex<RelayState>,
     relay: OnceLock<tokio::task::AbortHandle>,
@@ -36,6 +37,8 @@ struct RelayState {
     subscribers: Vec<(String, EventSink<ChatEvent>)>,
     waiters: HashMap<String, oneshot::Sender<()>>,
     submitted: bool,
+    active_jobs: HashSet<String>,
+    reviews: HashSet<String>,
 }
 
 fn maintenance(kind: MaintenanceKind) -> ChatMaintenance {
@@ -46,28 +49,32 @@ fn maintenance(kind: MaintenanceKind) -> ChatMaintenance {
     }
 }
 
+fn active_job(status: axo::JobStatus) -> bool {
+    match status {
+        axo::JobStatus::Queued | axo::JobStatus::Running | axo::JobStatus::HelpersRunning => true,
+        axo::JobStatus::Finished | axo::JobStatus::Failed => false,
+    }
+}
+
 impl RelayState {
     fn new(
         entries: Vec<SeqEntry>,
         snapshot: LiveSnapshot,
         commands: Vec<ChatCommand>,
-        service: &Weak<AxoService>,
+        engine: &super::engine::Engine,
     ) -> Self {
         let path = convert::branch(&entries);
         let (model, thinking) = convert::selection(&entries, &path);
-        let context_window = service
-            .upgrade()
-            .map_or(0, |s| s.context_window(model.as_deref()));
-        let queued = convert::queue_at_attach(&entries, &snapshot.agent);
+        let context_window = engine.context_window(model.as_deref());
+        let queued = convert::queue_at_attach(&entries, &snapshot);
         let (queue_ids, queue) = queued.into_iter().unzip();
         let live = ChatLive {
             title: convert::title(&entries),
-            running: snapshot.agent.running,
+            running: snapshot.running,
             maintenance: snapshot.maintenance.map(maintenance),
             model,
             thinking: convert::thinking_to_wire(thinking),
             tools: snapshot
-                .agent
                 .pending_tool_calls
                 .iter()
                 .map(|call| ChatToolRun {
@@ -75,6 +82,7 @@ impl RelayState {
                     name: call.name.clone(),
                     arguments: serde_json::Value::Object(call.arguments.clone()),
                     output: Vec::new(),
+                    details: None,
                 })
                 .collect(),
             queue,
@@ -96,7 +104,6 @@ impl RelayState {
             entries,
             path,
             streaming: snapshot
-                .agent
                 .streaming
                 .as_ref()
                 .map(|m| m.content.iter().map(convert::block).collect()),
@@ -106,6 +113,17 @@ impl RelayState {
             subscribers: Vec::new(),
             waiters: HashMap::new(),
             submitted,
+            active_jobs: snapshot
+                .jobs
+                .into_iter()
+                .filter(|job| active_job(job.status))
+                .map(|job| job.id)
+                .collect(),
+            reviews: snapshot
+                .pending_results
+                .into_iter()
+                .map(|result| result.call_id)
+                .collect(),
         }
     }
 
@@ -253,12 +271,25 @@ impl RelayState {
                     },
                 });
             }
-            _ => {}
+            AssistantEvent::TextEnd { .. }
+            | AssistantEvent::ThinkingEnd { .. }
+            | AssistantEvent::ToolCallDelta { .. }
+            | AssistantEvent::ToolCallEnd {
+                block: AssistantBlock::Text { .. } | AssistantBlock::Thinking { .. },
+                ..
+            }
+            | AssistantEvent::Done { .. }
+            | AssistantEvent::Error { .. } => {}
         }
     }
 
     // Returns refresh/unload flags; registry work must happen after releasing this lock.
-    fn apply(&mut self, event: SessionEvent, id: &str, service: &Weak<AxoService>) -> (bool, bool) {
+    fn apply(
+        &mut self,
+        event: SessionEvent,
+        id: &str,
+        engine: &super::engine::Engine,
+    ) -> (bool, bool) {
         let mut refresh = false;
         let mut unload = false;
         let mut changed = false;
@@ -293,7 +324,9 @@ impl RelayState {
                             }
                         }
                         let kind = match kind {
-                            SubmissionKind::Prompt => None,
+                            SubmissionKind::Prompt
+                            | SubmissionKind::Quiet
+                            | SubmissionKind::Mail => None,
                             SubmissionKind::Steer => Some(ChatQueueKind::Steer),
                             SubmissionKind::FollowUp => Some(ChatQueueKind::FollowUp),
                         };
@@ -343,9 +376,7 @@ impl RelayState {
                         if self.path.contains(&at) =>
                     {
                         let (model, thinking) = convert::selection(&self.entries, &self.path);
-                        self.live.stats.context_window = service
-                            .upgrade()
-                            .map_or(0, |s| s.context_window(model.as_deref()));
+                        self.live.stats.context_window = engine.context_window(model.as_deref());
                         self.live.model = model;
                         self.live.thinking = convert::thinking_to_wire(thinking);
                     }
@@ -372,15 +403,18 @@ impl RelayState {
                     | Entry::ContextEdit { .. }
                     | Entry::Label { .. }
                     | Entry::Leaf { .. }
+                    | Entry::AgentChange { .. }
+                    | Entry::ModeChange { .. }
+                    | Entry::JobStart { .. }
+                    | Entry::ChildStart { .. }
+                    | Entry::JobEnd { .. }
                     | Entry::Unknown(_) => {}
                 }
                 if !linear {
                     let (model, thinking) = convert::selection(&self.entries, &self.path);
                     self.live.model = model;
                     self.live.thinking = convert::thinking_to_wire(thinking);
-                    let window = service
-                        .upgrade()
-                        .map_or(0, |s| s.context_window(self.live.model.as_deref()));
+                    let window = engine.context_window(self.live.model.as_deref());
                     self.live.stats = convert::stats(&self.entries, &self.path, window);
                     self.broadcast_snapshot(id);
                 } else if let Some(entry) = convert::entry(&self.entries, at) {
@@ -403,6 +437,7 @@ impl RelayState {
                         name,
                         arguments: serde_json::Value::Object(args),
                         output: Vec::new(),
+                        details: None,
                     });
                     changed = true;
                 }
@@ -416,9 +451,14 @@ impl RelayState {
                     .find(|run| run.call_id == call_id)
                 {
                     run.output = content.clone();
+                    run.details = update.details.clone();
                 }
                 self.broadcast(ChatEvent::Delta {
-                    delta: ChatDelta::ToolOutput { call_id, content },
+                    delta: ChatDelta::ToolOutput {
+                        call_id,
+                        content,
+                        details: update.details,
+                    },
                 });
             }
             SessionEvent::Agent(AgentEvent::ToolExecutionEnd { call_id, .. }) => {
@@ -458,7 +498,44 @@ impl RelayState {
                 self.live.retry = Some(ChatRetry { attempt, delay_ms });
                 changed = true;
             }
-            SessionEvent::Agent(_) => {}
+            SessionEvent::Job(info) => {
+                if active_job(info.status) {
+                    self.active_jobs.insert(info.id);
+                } else {
+                    self.active_jobs.remove(&info.id);
+                    unload = true;
+                }
+            }
+            SessionEvent::JobGone { id } => {
+                self.active_jobs.remove(&id);
+                unload = true;
+            }
+            SessionEvent::ModeResult {
+                call_id,
+                awaiting_review: true,
+                ..
+            } => {
+                self.reviews.insert(call_id);
+            }
+            SessionEvent::ModeResultResolved { call_id, .. } => {
+                self.reviews.remove(&call_id);
+                unload = true;
+            }
+            SessionEvent::Context(_)
+            | SessionEvent::AutoPaused { .. }
+            | SessionEvent::Mode { .. }
+            | SessionEvent::TreeUsage { .. }
+            | SessionEvent::ModeResult {
+                awaiting_review: false,
+                ..
+            }
+            | SessionEvent::Agent(
+                AgentEvent::AgentEnd { .. }
+                | AgentEvent::TurnStart
+                | AgentEvent::TurnEnd { .. }
+                | AgentEvent::MessageStart { .. }
+                | AgentEvent::MessageEnd { .. },
+            ) => {}
         }
         if changed {
             self.broadcast_live();
@@ -472,13 +549,14 @@ impl LiveSession {
         service: Weak<AxoService>,
         folder: PathBuf,
         session: axo::Session,
+        engine: Arc<super::engine::Engine>,
     ) -> Arc<Self> {
         let id = session.id().to_owned();
         let attach = session.attach(None).await;
         let commands = session
             .commands()
             .into_iter()
-            .map(convert::command)
+            .filter_map(convert::command)
             .collect();
         let live = Arc::new(Self {
             id,
@@ -489,8 +567,9 @@ impl LiveSession {
                 attach.missed,
                 attach.live,
                 commands,
-                &service,
+                &engine,
             )),
+            engine,
             relay: OnceLock::new(),
             tasks: tokio_util::task::TaskTracker::new(),
             maintenance_starts: watch::channel(0).0,
@@ -507,7 +586,7 @@ impl LiveSession {
                         };
                         let started = matches!(event, SessionEvent::MaintenanceStart { .. });
                         let (refresh, unload) =
-                            live.state.lock().apply(event, &live.id, &live.service);
+                            live.state.lock().apply(event, &live.id, &live.engine);
                         if started {
                             live.maintenance_starts.send_modify(|starts| *starts += 1);
                         }
@@ -534,7 +613,7 @@ impl LiveSession {
                                 entries,
                                 attach.live,
                                 std::mem::take(&mut state.commands),
-                                &live.service,
+                                &live.engine,
                             );
                             rebuilt.subscribers = std::mem::take(&mut state.subscribers);
                             rebuilt.waiters = std::mem::take(&mut state.waiters);
@@ -614,6 +693,8 @@ impl LiveSession {
             && !state.live.running
             && state.live.maintenance.is_none()
             && state.live.questions.is_empty()
+            && state.active_jobs.is_empty()
+            && state.reviews.is_empty()
     }
     pub(super) fn broadcast_closed(&self, message: String) {
         self.state.lock().broadcast(ChatEvent::Closed {

@@ -3,6 +3,7 @@
   import Icon from '$lib/icons/Icon.svelte'
   import { Button } from '$lib/components/ui/button'
   import { cn } from '$lib/utils/cn'
+  import { chipVariants } from '$lib/components/ui/chip'
   import type { ChatPart } from '$lib/types/backend'
   import { backend } from '$lib/api/backend'
   import { platform, type AssetHandle } from '$lib/platform'
@@ -32,8 +33,7 @@
     isImagePart(part) ? Image01Icon : part.type === 'file' && part.path.endsWith('/') ? Folder01Icon : File01Icon
   )
   const lines = $derived(part.type === 'paste' ? part.text.split('\n').length : 0)
-  const chipClass =
-    'inline-block whitespace-nowrap rounded-sm bg-raised px-1 align-baseline text-fg in-data-selected:bg-selection in-data-selected:text-bright'
+  const chipClass = cn(chipVariants(), 'in-data-selected:bg-selection in-data-selected:text-bright')
   const inlineThumbnail = $derived(
     part.type === 'content' && isImagePart(part) ? `data:${imageMime(part)};base64,${part.bytes}` : null
   )

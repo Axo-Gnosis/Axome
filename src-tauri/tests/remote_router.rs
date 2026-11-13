@@ -165,13 +165,13 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     fs::create_dir(&repository_settings)?;
     fs::write(
         repository_settings.join("settings.jsonc"),
-        r#"{"shell":{"binary_path_override":"sh","extra_args":[]}}"#,
+        r#"{"shell":{"binaryPathOverride":"sh","extraArgs":[]}}"#,
     )?;
 
     let (server, desktop_identity, remote_settings) = common::start_loop(temporary.path()).await?;
     let server_address = server.local_addr;
     let server_fingerprint = server.fingerprint;
-    let settings_path = temporary.path().join("config-home/axome/settings.jsonc");
+    let settings_path = axome_core::HostDirs::under(temporary.path()).settings_path();
 
     let (host_events_send, mut host_events_receive) = mpsc::unbounded_channel();
     let host_events: EventSink<DesktopEvent> = Arc::new(move |event| {
@@ -181,7 +181,7 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     });
     let desktop = Arc::clone(&host_events);
     let host = Arc::new(Host::new(
-        temporary.path().join("axome.db"),
+        axome_core::HostOptions::new(axome_core::HostDirs::under(temporary.path()), "test.db"),
         Arc::new(move |event| desktop(DesktopEvent::Host(event))),
     )?);
     let router = WorkspaceRouter::with_events(Arc::clone(&host), host_events);
@@ -189,8 +189,11 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     // Pairing has its own daemon: this desktop is already authorized on `loop`.
     let pairing_config = temporary.path().join("pairing-config");
     let pairing_server = serve(ServeOptions {
-        config_dir: pairing_config.clone(),
-        data_dir: temporary.path().join("pairing-data"),
+        dirs: axome_core::HostDirs {
+            config: pairing_config.clone(),
+            data: temporary.path().join("pairing-data"),
+            cache: temporary.path().join("pairing-cache"),
+        },
         listen: Some("127.0.0.1:0".parse()?),
         config_file: None,
         web_assets_dir: None,
@@ -619,11 +622,14 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     fs::create_dir_all(&declared_config)?;
     fs::write(
         declared_config.join("server.jsonc"),
-        json!({ "identity_file": server_key, "authorized_keys_file": declared_keys }).to_string(),
+        json!({ "identityFile": server_key, "authorizedKeysFile": declared_keys }).to_string(),
     )?;
     let declared_server = serve(ServeOptions {
-        config_dir: declared_config.clone(),
-        data_dir: temporary.path().join("declared-data"),
+        dirs: axome_core::HostDirs {
+            config: declared_config.clone(),
+            data: temporary.path().join("declared-data"),
+            cache: temporary.path().join("declared-cache"),
+        },
         listen: Some("127.0.0.1:0".parse()?),
         config_file: None,
         web_assets_dir: None,
@@ -1021,7 +1027,10 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     drop(host);
 
     let host = Arc::new(Host::new(
-        temporary.path().join("axome-restarted.db"),
+        axome_core::HostOptions::new(
+            axome_core::HostDirs::under(temporary.path()),
+            "axome-restarted.db",
+        ),
         Arc::new(|_| Ok(())),
     )?);
     let router = WorkspaceRouter::new(Arc::clone(&host));
@@ -1077,7 +1086,10 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     drop(host);
 
     let host = Arc::new(Host::new(
-        temporary.path().join("axome-replayed.db"),
+        axome_core::HostOptions::new(
+            axome_core::HostDirs::under(temporary.path()),
+            "axome-replayed.db",
+        ),
         Arc::new(|_| Ok(())),
     )?);
     let router = WorkspaceRouter::new(Arc::clone(&host));
@@ -1148,7 +1160,10 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
     drop(router);
     drop(host);
     let host = Arc::new(Host::new(
-        temporary.path().join("axome-replayed.db"),
+        axome_core::HostOptions::new(
+            axome_core::HostDirs::under(temporary.path()),
+            "axome-replayed.db",
+        ),
         Arc::new(|_| Ok(())),
     )?);
     let router = WorkspaceRouter::new(Arc::clone(&host));

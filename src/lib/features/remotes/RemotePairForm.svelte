@@ -14,6 +14,7 @@
   import { notify } from '$lib/features/notifications/state.svelte'
   import type { RemoteSettings } from '$lib/types/backend'
   import { pairCommand, pairForm, parsePairLink } from './state.svelte'
+  import SettingsSection from '../settings/dialog/SettingsSection.svelte'
 
   let { remotes }: { remotes: Record<string, RemoteSettings> } = $props()
 
@@ -96,18 +97,19 @@
   }
 </script>
 
-<section class="flex flex-col gap-3 border-b border-edge px-5 py-4">
-  <div class="flex items-start gap-3">
-    <div class="min-w-0 flex-1">
-      <h3 class="text-md font-semibold text-bright">{repairTarget ? `Re-pair ${repairTarget}` : 'Add Server'}</h3>
-      <p class="text-xs text-subtle">
-        Type the server's host to get the command that prints a pairing link, then paste the link here.
-      </p>
-    </div>
+<SettingsSection
+  title="Pairing"
+  description="Type the server's host to get the command that prints a pairing link, then paste the link here."
+>
+  {#snippet actions()}
     {#if pairForm.input || pairForm.name !== null}
       <Button size="xs" variant="ghost" disabled={busy} onclick={reset}>Clear</Button>
     {/if}
-  </div>
+  {/snippet}
+
+  {#if repairTarget}
+    <p class="text-md font-semibold text-bright">Re-pair {repairTarget}</p>
+  {/if}
 
   <form
     class="flex flex-col gap-3"
@@ -186,4 +188,4 @@
 
     {#if error}<p class="text-sm text-danger" role="alert">{error}</p>{/if}
   </form>
-</section>
+</SettingsSection>
