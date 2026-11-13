@@ -909,10 +909,7 @@ async fn links_resolve_loaded_and_unloaded_without_recovery_or_writes() {
     }
     fixture.service.detach(&id, "links");
     wait_until(|| fixture.service.loaded() == 0).await;
-    let retiring = fixture.service.retiring.lock().remove(&id);
-    if let Some(retiring) = retiring {
-        retiring.await.unwrap();
-    }
+    fixture.service.wait_retiring(&id).await;
     // A dangling run_start would trigger recovery if URL resolution opened this session.
     let rows = jsonl(&path);
     let mut run = rows
@@ -1199,4 +1196,99 @@ async fn list_history_excludes_spawned_child() {
         [id.as_str()]
     );
     session.shutdown().await;
+}
+
+#[test]
+fn chat_close_succeeds_after_folder_is_deleted() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("axome-close-missing-{}", uuid::Uuid::new_v4()));
+    let folder = dir.join("work");
+    std::fs::create_dir_all(&folder).unwrap();
+    let dirs = crate::HostDirs::under(&dir);
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    std::fs::write(
+        dirs.models_path(),
+        json!({"providers": {"test": {
+            "api": "openai-completions",
+            "baseUrl": "http://127.0.0.1:9/v1",
+            "models": [{"id": "m", "input": ["text"]}]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let host = crate::Host::new(
+        crate::HostOptions::new(dirs, "test.db"),
+        Arc::new(|_| Ok(())),
+    )
+    .unwrap();
+    {
+        let _entered = runtime.enter();
+        host.axo.bind_runtime();
+    }
+    let folder_str = folder.to_string_lossy().into_owned();
+    let session_id = host
+        .chat_create(folder_str.clone(), "test/m".into(), ChatThinking::Off)
+        .unwrap();
+    assert_eq!(host.axo.loaded(), 1);
+    std::fs::remove_dir_all(&folder).unwrap();
+    assert!(!folder.exists());
+    host.chat_close(folder_str, session_id).unwrap();
+    assert_eq!(host.axo.loaded(), 0);
+    host.axo.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_rebuilds_when_extended_context_changes() {
+    let dir = std::env::temp_dir().join(format!("axome-extended-ctx-{}", uuid::Uuid::new_v4()));
+    let dirs = crate::HostDirs::under(&dir);
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    std::fs::create_dir_all(&dirs.data).unwrap();
+    std::fs::write(
+        dirs.models_path(),
+        json!({"providers": {"test": {
+            "api": "openai-completions",
+            "baseUrl": "http://127.0.0.1:9/v1",
+            "models": [{"id": "m", "input": ["text"]}]
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dirs.settings_path(),
+        json!({"axo": {"extendedContext": true}}).to_string(),
+    )
+    .unwrap();
+    let db = Arc::new(DatabaseService::new(dirs.data.join("test.db")).unwrap());
+    let service = AxoService::new(
+        db,
+        dirs.clone(),
+        axome_protocol::server_config::Supervision::ProcessGroup,
+    );
+    service.bind_runtime();
+
+    let first = service.engine().await.unwrap();
+    assert_eq!(
+        service.engine.lock().await.stamp.map(|(_, ext)| ext),
+        Some(true)
+    );
+
+    std::fs::write(
+        dirs.settings_path(),
+        json!({"axo": {"extendedContext": false}}).to_string(),
+    )
+    .unwrap();
+
+    let second = service.engine().await.unwrap();
+    assert_eq!(
+        service.engine.lock().await.stamp.map(|(_, ext)| ext),
+        Some(false)
+    );
+    assert!(!Arc::ptr_eq(&first, &second));
+
+    service.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

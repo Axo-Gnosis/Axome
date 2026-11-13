@@ -55,17 +55,19 @@ pub(crate) struct AxoService {
     login: tokio::sync::Mutex<Option<login::Login>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     // Reopening must wait for the retiring Session to release its file lock.
-    retiring: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    retiring: Mutex<HashMap<String, RetiringSlot>>,
     // ponytail: one open/create at a time; per-id locks if opens contend.
     opening: tokio::sync::Mutex<()>,
     index: OnceLock<Weak<SessionIndexService>>,
     closed: AtomicBool,
 }
 
+type RetiringSlot = Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>;
+
 #[derive(Default)]
 struct EngineSlot {
     engine: Option<Arc<Engine>>,
-    stamp: Option<(SystemTime, u64)>,
+    stamp: Option<(Option<(SystemTime, u64)>, bool)>,
 }
 
 pub(super) fn axo_error(error: axo::Error) -> ApiError {
@@ -144,7 +146,11 @@ impl AxoService {
             HostDirs::under(Path::new(".")),
             Supervision::ProcessGroup,
         );
-        service.engine.try_lock().unwrap().engine = Some(Arc::new(engine));
+        {
+            let mut slot = service.engine.try_lock().unwrap();
+            slot.engine = Some(Arc::new(engine));
+            slot.stamp = Some((None, false));
+        }
         service.bind_runtime();
         service
     }
@@ -177,7 +183,7 @@ impl AxoService {
             return Err(ApiError::Internal("Axome is shutting down".into()));
         }
         let path = self.dirs.models_path();
-        let stamp = match tokio::fs::metadata(&path).await {
+        let models_stamp = match tokio::fs::metadata(&path).await {
             Ok(meta) => Some((
                 meta.modified().map_err(|e| ApiError::Io(e.to_string()))?,
                 meta.len(),
@@ -185,6 +191,8 @@ impl AxoService {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(ApiError::Io(format!("{}: {error}", path.display()))),
         };
+        let extended_context = engine::read_extended_context(&self.dirs)?;
+        let stamp = Some((models_stamp, extended_context));
         if slot.engine.is_none() || slot.stamp != stamp {
             let supervision = match self.supervision {
                 Supervision::ProcessGroup => axo::Supervision::ProcessGroup,
@@ -196,7 +204,14 @@ impl AxoService {
                 },
             };
             slot.engine = Some(Arc::new(
-                Engine::build(&self.dirs, &self.db, self.credentials.clone(), supervision).await?,
+                Engine::build(
+                    &self.dirs,
+                    &self.db,
+                    self.credentials.clone(),
+                    supervision,
+                    extended_context,
+                )
+                .await?,
             ));
             slot.stamp = stamp;
         }
@@ -252,12 +267,7 @@ impl AxoService {
                 Err(ApiError::NotFound(format!("axo session {id}")))
             };
         }
-        let retiring = self.retiring.lock().remove(id);
-        if let Some(retiring) = retiring {
-            if let Err(error) = retiring.await {
-                tracing::warn!(%error, session_id = id, "axo retiring session task failed");
-            }
-        }
+        self.wait_retiring(id).await;
         let engine = self.engine().await?;
         let axo = &engine.axo;
         let info = axo
@@ -346,8 +356,30 @@ impl AxoService {
             let task = runtime.spawn(async move {
                 live.shutdown().await;
             });
-            self.retiring.lock().insert(id, task);
+            self.retiring
+                .lock()
+                .insert(id, Arc::new(tokio::sync::Mutex::new(Some(task))));
         }
+    }
+
+    async fn wait_retiring(&self, id: &str) -> bool {
+        let slot = self.retiring.lock().get(id).cloned();
+        let Some(slot) = slot else {
+            return false;
+        };
+        if let Some(task) = slot.lock().await.take() {
+            if let Err(error) = task.await {
+                tracing::warn!(%error, session_id = id, "axo retiring session task failed");
+            }
+        }
+        let mut retiring = self.retiring.lock();
+        if retiring
+            .get(id)
+            .is_some_and(|current| Arc::ptr_eq(current, &slot))
+        {
+            retiring.remove(id);
+        }
+        true
     }
 
     fn crashed(&self, id: &str, message: String) {
@@ -519,16 +551,19 @@ impl AxoService {
     }
 
     pub(crate) async fn close(&self, id: &str) -> Result<(), ApiError> {
-        let _opening = self.opening.lock().await;
-        let live = self.sessions.lock().remove(id);
-        if let Some(live) = live {
-            live.broadcast_closed("Session closed".into());
-            live.shutdown().await;
-        }
-        let retiring = self.retiring.lock().remove(id);
-        if let Some(retiring) = retiring {
-            if let Err(error) = retiring.await {
-                tracing::warn!(%error, session_id = id, "axo retiring session task failed");
+        let live = {
+            let mut sessions = self.sessions.lock();
+            let live = sessions.remove(id);
+            if let Some(live) = &live {
+                live.broadcast_closed("Session closed".into());
+                self.retire(live.clone());
+            }
+            live
+        };
+        if !self.wait_retiring(id).await {
+            if let Some(live) = live {
+                // Fallback when no runtime handle was bound to spawn a retiring task.
+                live.shutdown().await;
             }
         }
         Ok(())
@@ -909,7 +944,7 @@ impl AxoService {
                 live
             })
             .collect();
-        let retiring: Vec<_> = self.retiring.lock().drain().map(|(_, task)| task).collect();
+        let retiring: Vec<_> = self.retiring.lock().drain().map(|(_, slot)| slot).collect();
         let Some(runtime) = self.runtime().cloned() else {
             return;
         };
@@ -925,10 +960,12 @@ impl AxoService {
                         live.shutdown().await;
                     });
                 }
-                for task in retiring {
+                for slot in retiring {
                     tasks.spawn(async move {
-                        if let Err(error) = task.await {
-                            tracing::warn!(%error, "axo retiring session task failed");
+                        if let Some(task) = slot.lock().await.take() {
+                            if let Err(error) = task.await {
+                                tracing::warn!(%error, "axo retiring session task failed");
+                            }
                         }
                     });
                 }

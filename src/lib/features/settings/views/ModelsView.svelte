@@ -5,8 +5,7 @@
   import {
     ModelPicker,
     EffortPicker,
-    splitSelector,
-    joinSelector,
+    SelectorPicker,
     levelsForSelector,
     ROLE_NAME
   } from '$lib/features/chat/elements/model-picker'
@@ -90,7 +89,6 @@
   <div class="flex flex-col gap-2">
     {#each names as name (name)}
       {@const selected = selection(name)}
-      {@const parts = splitSelector(selected)}
       {@const inherits = name === 'default' ? 'Last model picked' : 'Inherits @default'}
       <div
         class="grid grid-cols-[minmax(9rem,1fr)_minmax(0,2.4fr)_4.5rem] items-center gap-3 rounded-lg border bg-surface px-3 py-2.5
@@ -101,29 +99,15 @@
           <span class="text-sm text-muted">{roleDescriptions[name] ?? 'Custom role'}</span>
         </div>
 
-        <div class="flex min-w-0 items-center gap-2">
-          <ModelPicker
-            label={`Model for @${name}`}
-            class="min-w-0 flex-1"
-            value={parts.model}
-            {models}
-            none={inherits}
-            custom
-            disabled={!settings || available.loading}
-            onSelect={(next) => {
-              const picked = splitSelector(next)
-              update(name, joinSelector(picked.model, picked.effort || parts.effort))
-            }}
-          />
-          <EffortPicker
-            label={`Effort for @${name}`}
-            value={parts.effort}
-            levels={levelsForSelector(parts.model, models)}
-            defaultLabel="Default"
-            disabled={!settings || available.loading || !parts.model}
-            onSelect={(level) => update(name, joinSelector(parts.model, level))}
-          />
-        </div>
+        <SelectorPicker
+          value={selected}
+          {models}
+          none={inherits}
+          modelLabel={`Model for @${name}`}
+          effortLabel={`Effort for @${name}`}
+          disabled={!settings || available.loading}
+          onSelect={(joined) => update(name, joined)}
+        />
         <div class="flex justify-end">
           {#if !fixed.includes(name)}
             <Button size="sm" variant="ghost" disabled={!settings} onclick={() => remove(name)}>Remove</Button>

@@ -79,9 +79,12 @@ impl AxoService {
                     login.manual = None;
                     login.status = match result {
                         Ok(()) => AxoLoginStatus::Done,
-                        Err(error) => AxoLoginStatus::Failed {
-                            message: error.to_string(),
-                        },
+                        Err(error) => {
+                            tracing::warn!(%error, "Codex OAuth login failed");
+                            AxoLoginStatus::Failed {
+                                message: error.to_string(),
+                            }
+                        }
                     };
                 }
             }
@@ -96,12 +99,24 @@ impl AxoService {
         match tokio::time::timeout(Duration::from_secs(10), url_receiver.recv()).await {
             Ok(Some(url)) => Ok(AxoLoginStarted { login_id, url }),
             result => {
+                let failed_message = self
+                    .login
+                    .lock()
+                    .await
+                    .as_ref()
+                    .filter(|login| login.id == login_id)
+                    .and_then(|login| match &login.status {
+                        AxoLoginStatus::Failed { message } => Some(message.clone()),
+                        _ => None,
+                    });
                 self.login_cancel(&login_id).await?;
-                Err(ApiError::Internal(match result {
+                let message = match result {
                     Err(_) => "OAuth login did not provide a URL within 10 seconds".into(),
-                    Ok(None) => "OAuth login ended before providing a URL".into(),
+                    Ok(None) => failed_message
+                        .unwrap_or_else(|| "OAuth login ended before providing a URL".into()),
                     Ok(Some(_)) => unreachable!(),
-                }))
+                };
+                Err(ApiError::Internal(message))
             }
         }
     }

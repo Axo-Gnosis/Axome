@@ -59,8 +59,7 @@ impl Host {
         self.axo.block_on(self.axo.abort(&folder, &session_id))?
     }
 
-    pub fn chat_close(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
-        resolve_folder(&folder_path)?;
+    pub fn chat_close(&self, _folder_path: String, session_id: String) -> Result<(), ApiError> {
         self.axo.block_on(self.axo.close(&session_id))?
     }
 

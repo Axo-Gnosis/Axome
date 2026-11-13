@@ -62,11 +62,8 @@ impl Host {
                 "axo settings patch must be an object".into(),
             ));
         }
-        let mut extended_context_changed = false;
         self.settings_update_global_section("axo", |mut current| {
-            let before = current.get("extendedContext").cloned();
             merge_patch(&mut current, patch);
-            extended_context_changed = before != current.get("extendedContext").cloned();
             let settings = serde_json::from_value::<AxoSettings>(current.clone())
                 .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
             for (name, selector) in &settings.model_roles {
@@ -79,9 +76,6 @@ impl Host {
             }
             Ok(current)
         })?;
-        if extended_context_changed {
-            self.axo.block_on(self.axo.invalidate())?;
-        }
         Ok(self.settings_get_effective(None)?.settings.axo)
     }
 }

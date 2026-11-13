@@ -3,6 +3,7 @@
 // caches repopulate lazily when the folder is reopened.
 
 import { backend } from '$lib/api/backend'
+import { releaseChatModelsFolder } from '$lib/features/chat/models.svelte'
 import { releaseLspFolder } from '$lib/features/editor/lsp/registry'
 import { releaseFileTree } from '$lib/features/files/explorer.svelte'
 import { releaseProjectFiles } from '$lib/features/files/projectFiles.svelte'
@@ -27,6 +28,7 @@ export async function releaseFolder(folderPath: string, strict = false): Promise
   releaseIssueFolder(folderPath)
   releaseNixFolder(folderPath)
   releaseHarnessFolder(folderPath)
+  releaseChatModelsFolder(folderPath)
   releaseSessionsFolder(folderPath)
   releaseShellFolder(folderPath)
   releaseFileTree(folderPath)

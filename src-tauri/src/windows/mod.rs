@@ -465,9 +465,14 @@ impl WindowCoordinatorService {
         let label = entry.label.clone();
         let mut valid_bounds = None;
         let state = app.state::<AppState>();
+        let webview_dir = if crate::app_state::is_dev_app(app) {
+            "webview-dev"
+        } else {
+            "webview"
+        };
         let mut builder =
             WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-                .data_directory(state.host.dirs.data.join("webview"))
+                .data_directory(state.host.dirs.data.join(webview_dir))
                 .title(app.package_info().name.clone())
                 .decorations(false)
                 .min_inner_size(800.0, 500.0);

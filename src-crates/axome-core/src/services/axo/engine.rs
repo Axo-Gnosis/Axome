@@ -27,6 +27,7 @@ impl Engine {
         db: &Arc<DatabaseService>,
         credentials: Arc<FileCredentialStore>,
         supervision: axo::Supervision,
+        extended_context: bool,
     ) -> Result<Self, ApiError> {
         let data = dirs.data.join("axo");
         let cache = dirs.cache.join("axo");
@@ -42,15 +43,6 @@ impl Engine {
             dirs: dirs.clone(),
             db: db.clone(),
         };
-        let extended_context = super::config::read_settings(
-            &dirs.settings_path(),
-            axome_protocol::settings::SettingsLayerKind::Global,
-        )
-        .map_err(axo_error)?
-        .as_ref()
-        .and_then(|settings| settings.get("extendedContext"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
         let models_path = dirs.models_path();
         let parsed = match read_optional(&models_path).map_err(axo_error)? {
             Some(text) => ModelsConfig::parse_jsonc(&text),
@@ -99,4 +91,16 @@ impl Engine {
             models_error,
         })
     }
+}
+
+pub(super) fn read_extended_context(dirs: &HostDirs) -> Result<bool, ApiError> {
+    Ok(super::config::read_settings(
+        &dirs.settings_path(),
+        axome_protocol::settings::SettingsLayerKind::Global,
+    )
+    .map_err(axo_error)?
+    .as_ref()
+    .and_then(|settings| settings.get("extendedContext"))
+    .and_then(serde_json::Value::as_bool)
+    .unwrap_or(false))
 }
