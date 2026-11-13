@@ -41,7 +41,7 @@ Primitives that exist today under `src/lib/components/ui/`:
 | `kbd/` | `Kbd.svelte`, `KbdGroup.svelte` | Named scale and `shadow-kbd-inset`. `KbdGroup` groups caller-supplied chips and separators; it does not parse shortcuts. |
 | `magic-card/` | `MagicCard.svelte` | Keep — new-tab start options only. Cursor gradients fixed at 200px, spotlight uses `raised` at 0.8 opacity; only gradient endpoints, disabled and click action remain tunable. |
 | `menubar/` | 5 files | **Unused after AppMenuBar deletion.** Candidate for removal. |
-| `particles/` | `Particles.svelte` | Stage atmosphere only. Canvas reads `--color-accent` once on effect start; per-particle alpha uses `globalAlpha`. Defaults: quantity 75, size 0.5, staticity 40, ease 60; no color/velocity props or StageView pass-through tuning. |
+| `tidal-stipple/` | `TidalStipple.svelte`, `params.ts`, `shader.ts`, `StippleTuner.svelte` (dev, off via `STIPPLE_TUNER`) | Stage atmosphere only (WebGL2 stippled density wave). Reads `--color-ground`, `--color-warm`, and `--color-accent` from computed styles; pauses when hidden, zero-sized, or offscreen, and respects `prefers-reduced-motion`. |
 | `resizable/` | `ResizableHandle.svelte`, `ResizablePaneGroup.svelte` | Inventory check. |
 | `progress/` | `ProgressBar.svelte` | `ProgressBar`: fixed `h-1 w-12`, done/active/total segments, computed title and progressbar ARIA values; caller class may override styling. |
 | `scroll-area/` | `ScrollArea.svelte` | Vertical scrollbar only; keeps native prop forwarding. |

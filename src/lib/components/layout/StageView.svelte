@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Particles } from '$lib/components/ui/particles'
+  import { TidalStipple } from '$lib/components/ui/tidal-stipple'
   import type { Snippet } from 'svelte'
 
   let {
@@ -13,14 +13,16 @@
 </script>
 
 <!-- Content centers while it fits and scrolls once it outgrows the stage. -->
-<div class="relative flex flex-1 flex-col overflow-y-auto bg-ground">
-  <Particles class="z-0 opacity-60" />
+<div class="relative isolate flex flex-1 flex-col overflow-hidden bg-ground">
+  <TidalStipple class="-z-10" />
 
-  <div class="relative z-10 m-auto w-full max-w-2xl px-8 py-10">
-    {@render children()}
+  <div class="flex flex-1 flex-col overflow-y-auto">
+    <div class="m-auto w-full max-w-2xl px-8 py-10">
+      {@render children()}
+    </div>
+
+    {#if footer}
+      <div class="flex shrink-0 justify-center px-8 pb-6">{@render footer()}</div>
+    {/if}
   </div>
-
-  {#if footer}
-    <div class="relative z-10 flex shrink-0 justify-center px-8 pb-6">{@render footer()}</div>
-  {/if}
 </div>

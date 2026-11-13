@@ -13,6 +13,7 @@
     value = $bindable(0),
     min = 0,
     max = 100,
+    step = 1,
     ticks = false,
     onValueChange,
     class: className,
@@ -21,6 +22,7 @@
     value?: number
     min?: number
     max?: number
+    step?: number
     ticks?: boolean
     onValueChange?: (value: number) => void
     class?: string
@@ -34,6 +36,7 @@
   bind:value
   {min}
   {max}
+  {step}
   {onValueChange}
   aria-label={ariaLabel}
   class={cn(

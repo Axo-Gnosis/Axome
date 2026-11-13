@@ -390,18 +390,10 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
                     id: base.id.to_string(),
                     timestamp: base.timestamp.clone(),
                     body: ChatEntryBody::Notice {
-                        text: match (kind, sender) {
-                            (SubmissionKind::Mail, Some(sender)) => {
-                                format!("Mail from {sender}: {text}")
-                            }
-                            (
-                                SubmissionKind::Prompt
-                                | SubmissionKind::Steer
-                                | SubmissionKind::FollowUp
-                                | SubmissionKind::Quiet
-                                | SubmissionKind::Mail,
-                                _,
-                            ) => text,
+                        text: if let (SubmissionKind::Mail, Some(sender)) = (kind, sender) {
+                            format!("Mail from {sender}: {text}")
+                        } else {
+                            text
                         },
                     },
                 });

@@ -40,13 +40,13 @@ export function createAutoSaver() {
     }
   >()
   let inFlight = 0
-  let busy = false
+  let localBusy = false
 
   function settle() {
     const nextBusy = timers.size > 0 || inFlight > 0
-    if (nextBusy !== busy) {
-      busy = nextBusy
-      setBusy(busy)
+    if (nextBusy !== localBusy) {
+      localBusy = nextBusy
+      setBusy(localBusy)
     }
   }
 
@@ -84,5 +84,3 @@ export function createAutoSaver() {
     }
   }
 }
-
-export type AutoSaver = ReturnType<typeof createAutoSaver>

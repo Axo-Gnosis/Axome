@@ -28,19 +28,14 @@ export function captureScrollAnchor(viewport: HTMLElement, content: HTMLElement)
 }
 
 /** Anchor the first visible message/work section without moving its existing screen position. */
-function captureExpansionAnchor(
-  viewport: HTMLElement,
-  content: HTMLElement,
-  footer?: HTMLElement
-): ScrollAnchor | null {
+function captureExpansionAnchor(viewport: HTMLElement, content: HTMLElement): ScrollAnchor | null {
   const bounds = viewport.getBoundingClientRect()
-  const bottom = Math.min(bounds.bottom, footer?.getBoundingClientRect().top ?? bounds.bottom)
   const blocks = content.querySelectorAll<HTMLElement>(
     '[data-slot="user-block"], [data-slot="agent-block"] > [data-slot="message-response"], [data-slot="work-block"], [data-slot="summary-block"]'
   )
   for (const block of blocks) {
     const rect = block.getBoundingClientRect()
-    if (rect.bottom <= bounds.top || rect.top >= bottom) continue
+    if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
     if (block.dataset.slot === 'work-block' && rect.top < bounds.top) {
       // Keep the reading point inside expanded work if it survives. Otherwise reveal the
       // owning work header, not a neighboring message or an ancestor far above the viewport.
@@ -61,9 +56,9 @@ function captureExpansionAnchor(
 export class ExpansionAnchor {
   private anchor: ScrollAnchor | null = null
 
-  capture(viewport: HTMLElement, content: HTMLElement, footer?: HTMLElement): ScrollAnchor | null {
+  capture(viewport: HTMLElement, content: HTMLElement): ScrollAnchor | null {
     if (!this.anchor?.candidates.some(({ element }) => element.isConnected && content.contains(element))) {
-      this.anchor = captureExpansionAnchor(viewport, content, footer)
+      this.anchor = captureExpansionAnchor(viewport, content)
     }
     return this.anchor
   }

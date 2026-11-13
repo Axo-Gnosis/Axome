@@ -10,15 +10,14 @@
   import { IconButton } from '$lib/components/ui/button'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
-  import { cn } from '$lib/utils/cn'
   import { logicalKey } from '$lib/utils/keyboardEvent'
 
   let { children, footer }: { children?: Snippet; footer?: Snippet } = $props()
 
   let viewport: HTMLDivElement | undefined
   let transcript: HTMLDivElement | undefined
-  let composer: HTMLDivElement | undefined
   let atBottom = $state(true)
+  let gutterWidth = $state(0)
   let anchor: ScrollAnchor | null = null
   const expansionAnchor = new ExpansionAnchor()
   let changing = false
@@ -78,7 +77,7 @@
       anchor = captureToggleAnchor(viewport, target)
       expansionAnchor.reset()
     } else {
-      anchor = expansionAnchor.capture(viewport, transcript, composer)
+      anchor = expansionAnchor.capture(viewport, transcript)
     }
     atBottom = false
     changing = true
@@ -154,9 +153,16 @@
       },
       options
     )
+    const syncGutter = () => {
+      gutterWidth = Math.max(0, scroller.offsetWidth - scroller.clientWidth)
+    }
     scrollToBottom()
+    syncGutter()
     const observer = new ResizeObserver(() => {
-      if (active && viewport === scroller) restorePosition()
+      if (active && viewport === scroller) {
+        syncGutter()
+        restorePosition()
+      }
     })
     observer.observe(column)
     observer.observe(scroller)
@@ -170,40 +176,34 @@
       changing = false
       anchor = null
       settledTop = Number.NaN
+      gutterWidth = 0
     }
   }
 </script>
 
-<!-- One scroller; the footer sticks inside the same column, so both share its width and scrollbar. -->
-<div
-  data-slot="conversation"
-  role="region"
-  aria-label="Conversation"
-  bind:this={viewport}
-  class="min-h-0 flex-1 overflow-y-auto px-4 [overflow-anchor:none]"
-  onscroll={updateAtBottom}
->
-  <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
-    <div bind:this={transcript} class="flex flex-1 flex-col justify-end gap-4 pt-4 pb-2">
-      {#if children}{@render children()}{/if}
+<!-- Scroller sits strictly above the composer so messages clip cleanly at its top pixel with no opaque backdrop. -->
+<div data-slot="conversation" role="region" aria-label="Conversation" class="flex min-h-0 flex-1 flex-col">
+  <div
+    bind:this={viewport}
+    class="min-h-0 flex-1 overflow-y-auto px-4 [overflow-anchor:none]"
+    onscroll={updateAtBottom}
+  >
+    <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
+      <div bind:this={transcript} class="flex flex-1 flex-col justify-end gap-4 pt-4 pb-2">
+        {#if children}{@render children()}{/if}
+      </div>
     </div>
-    <!-- before: fades the transcript as it scrolls under; at the bottom there is nothing under it, so it hides and
-         the last line can sit close. The ground shadow covers the subpixel gap under the sticky edge without
-         adding scroll height the way an overflowing box would. -->
-    <div
-      bind:this={composer}
-      class={cn(
-        'before:duration-fast sticky bottom-0 bg-ground pb-4 shadow-[0_4px_0_var(--color-ground)] before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-10 before:bg-linear-to-t before:from-ground before:from-25% before:to-transparent before:transition-opacity',
-        atBottom && 'before:opacity-0'
-      )}
-    >
+  </div>
+
+  <div class="shrink-0 px-4" style:margin-right="{gutterWidth}px">
+    <div class="relative mx-auto w-full max-w-5xl pb-4">
       {#if !atBottom}
         <IconButton
           size="md"
           tooltip="Scroll to Bottom"
           tooltipSide="top"
           onclick={scrollToBottom}
-          class="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 border border-edge bg-raised shadow-popover"
+          class="absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 border border-edge bg-raised shadow-popover"
         >
           <Icon icon={ArrowDown02Icon} size={14} />
         </IconButton>

@@ -4,7 +4,7 @@
   import * as Alert from '$lib/components/ui/alert'
   import { BlurFade } from '$lib/components/ui/blur-fade'
   import { IconButton } from '$lib/components/ui/button'
-  import { Particles } from '$lib/components/ui/particles'
+  import { TidalStipple, type StippleParams } from '$lib/components/ui/tidal-stipple'
   import * as chats from '$lib/features/chat/registry'
   import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
   import { resolveChatKey } from '$lib/features/chat/chatKeymap'
@@ -61,6 +61,17 @@
   let now = $state(Date.now())
   const workingTurn = $derived(turns.find((turn) => turn.running))
   const elapsed = $derived(workingTurn ? turnDurationMs(workingTurn, now) : null)
+  // Calmer field once a conversation has turns. Module-stable: TidalStipple transitions when this identity appears or goes.
+  const ACTIVE_STIPPLE: Partial<StippleParams> = {
+    intensity: 30,
+    density: 42,
+    tide: 4,
+    topDensity: 5,
+    dotBottom: 100,
+    curveStart: 85,
+    waveLength: 300,
+    crest: 20
+  }
 
   onMount(() => {
     if (controller.connection === 'detached') void reconnect()
@@ -190,9 +201,9 @@
     onReconnect={() => void reconnect()}
     onStop={() => void stop()}
   />
-  <!-- isolate scopes the particles' negative z-index so they paint above this bg but under the transcript. -->
+  <!-- isolate scopes the background's negative z-index so it paints above this bg but under the transcript. -->
   <div class="relative isolate flex min-h-0 flex-1 flex-col">
-    {#if !turns.length}<Particles class="-z-10 opacity-60" />{/if}
+    <TidalStipple class="-z-10" params={turns.length ? ACTIVE_STIPPLE : undefined} transitionMs={900} />
     <Conversation bind:this={conversation}>
       {#if !turns.length}
         <div class="flex flex-1 flex-col items-center justify-center gap-6 py-10">
