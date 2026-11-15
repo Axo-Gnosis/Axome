@@ -9,8 +9,8 @@ use std::{
 use axome_protocol::{
     activity_map::DiscoveredProject,
     session::{
-        IndexedSession, LastMessage, MessageRole, SessionIndexSnapshot, SessionIndexSource,
-        SessionIndexStatus, SessionSource, SessionSourceKey,
+        IndexedChildSession, IndexedSession, LastMessage, MessageRole, SessionIndexSnapshot,
+        SessionIndexSource, SessionIndexStatus, SessionSource, SessionSourceKey,
     },
 };
 use chrono::{SecondsFormat, Utc};
@@ -104,6 +104,7 @@ pub(crate) struct Observation {
     pub updated_at: Option<String>,
     pub model: Option<String>,
     pub git_branch: Option<String>,
+    pub children: Vec<IndexedChildSession>,
 }
 
 fn status_literal(status: SessionIndexStatus) -> &'static str {
@@ -152,10 +153,13 @@ pub(crate) fn commit_listing(
     {
         let mut insert = tx.prepare(
             "INSERT INTO indexed_sessions
-               (scope_folder, source_id, preset, session_id, folder_path, title, updated_at, model, git_branch, last_message, message_count, last_message_role)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+               (scope_folder, source_id, preset, session_id, folder_path, title, updated_at, model, git_branch, last_message, message_count, last_message_role, children_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )?;
         for session in sessions {
+            let children_json = (!session.children.is_empty())
+                .then(|| serde_json::to_string(&session.children).ok())
+                .flatten();
             insert.execute(params![
                 key.scope,
                 key.source.db(),
@@ -178,6 +182,7 @@ pub(crate) fn commit_listing(
                         MessageRole::User => "user",
                         MessageRole::Agent => "agent",
                     }),
+                children_json,
             ])?;
         }
     }
@@ -237,7 +242,7 @@ pub(crate) fn load_observations(
     scope: Option<&str>,
 ) -> rusqlite::Result<Vec<Observation>> {
     let mut statement = conn.prepare(
-        "SELECT scope_folder, source_id, preset, session_id, folder_path, title, updated_at, model, git_branch, last_message, message_count, last_message_role
+        "SELECT scope_folder, source_id, preset, session_id, folder_path, title, updated_at, model, git_branch, last_message, message_count, last_message_role, children_json
          FROM indexed_sessions WHERE ?1 IS NULL OR scope_folder = ?1",
     )?;
     let rows = statement.query_map(params![scope], |row| {
@@ -274,6 +279,10 @@ pub(crate) fn load_observations(
                 _ => None,
             },
             message_count: row.get(10)?,
+            children: row
+                .get::<_, Option<String>>(12)?
+                .and_then(|raw| serde_json::from_str::<Vec<IndexedChildSession>>(&raw).ok())
+                .unwrap_or_default(),
         }))
     })?;
     rows.filter_map(|row| row.transpose()).collect()
@@ -401,6 +410,7 @@ pub(crate) fn build_snapshot(
                 updated_at: best.updated_at.clone(),
                 model: best.model.clone(),
                 git_branch: best.git_branch.clone(),
+                children: best.children.clone(),
             }
         })
         .collect();
@@ -962,6 +972,7 @@ mod tests {
             Arc::clone(&db),
             crate::HostDirs::under(&_dir.0),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            Arc::new(|_| Ok(())),
         );
         let service = SessionIndexService::new(
             db,
@@ -987,6 +998,7 @@ mod tests {
             Arc::clone(&db),
             crate::HostDirs::under(&_dir.0),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            Arc::new(|_| Ok(())),
         );
         let service = SessionIndexService::new(
             Arc::clone(&db),
@@ -1010,5 +1022,35 @@ mod tests {
         let sources = load_sources(db.read().conn(), Some(FOLDER)).unwrap();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].status, SessionIndexStatus::Missing);
+    }
+
+    #[test]
+    fn child_sessions_round_trip() {
+        let (_dir, db) = database();
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let child = IndexedChildSession {
+            session_id: "child-1".into(),
+            agent: Some("scout".into()),
+            team_member: Some("researcher".into()),
+            title: Some("Inspect codebase".into()),
+            model: Some("claude-sonnet-4".into()),
+            updated_at: Some(now.clone()),
+        };
+        let mut parent = listed("parent-1", Some(&now));
+        parent.children = vec![child.clone()];
+
+        let axo_key = SourceKey::new(Some(Path::new(FOLDER)), SourceId::Axo, None);
+        {
+            let conn = db.write();
+            commit_listing(conn.conn(), &axo_key, &now, &[parent], None).unwrap();
+        }
+
+        let observations = load_observations(db.read().conn(), Some(FOLDER)).unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].children, vec![child.clone()]);
+
+        let snapshot = snapshot(&db, &[axo_key]);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].children, vec![child]);
     }
 }

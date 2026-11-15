@@ -23,6 +23,7 @@ axo-agent.workspace = true
 axo-ai.workspace = true
 async-trait.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
+futures-util.workspace = true
 libc = "0.2"
 notify = "6"
 ignore = "0.4"

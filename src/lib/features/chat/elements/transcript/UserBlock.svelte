@@ -53,7 +53,7 @@
   })
 </script>
 
-<div data-slot="user-block" class="group/message flex min-w-0 flex-col items-end gap-1">
+<div data-slot="user-block" class="flex min-w-0 flex-col items-end gap-1">
   <div class={cn('rounded-lg bg-surface px-4 py-3', editing ? 'flex w-full flex-col gap-2' : 'max-w-4/5 min-w-0')}>
     {#if editing && controller.editing}
       <PromptInput
@@ -94,9 +94,7 @@
       </div>
     {/if}
   </div>
-  <div
-    class="flex min-h-5 flex-wrap items-center justify-end gap-2 text-xs text-subtle transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/message:opacity-100 [@media(hover:hover)]:group-hover/message:opacity-100"
-  >
+  <div class="flex min-h-5 flex-wrap items-center justify-end gap-2 text-xs text-subtle">
     <time datetime={entry.timestamp} class="font-mono tabular-nums">{time}</time>
     {#if entry.body.siblings.length > 1}
       <div class="flex items-center gap-1 font-mono" aria-label="Message branches">

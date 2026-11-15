@@ -19,7 +19,16 @@ function call(args: Record<string, unknown>, output: string | ChatContent[], det
     status: 'done',
     output: content,
     details,
-    result: { kind: 'toolResult', callId: 'call', toolName: 'read', content, details, isError: false, durationMs: null }
+    result: {
+      kind: 'toolResult',
+      callId: 'call',
+      toolName: 'read',
+      content,
+      details,
+      isError: false,
+      deliverables: [],
+      durationMs: null
+    }
   }
 }
 function cut(body: string, overrides: Record<string, unknown> = {}) {

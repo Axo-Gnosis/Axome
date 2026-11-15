@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from '$lib/components/ui/button'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import type { ToolStep } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
@@ -13,7 +14,6 @@
   import { openReferenceResult } from '../tool/referenceNavigation'
   import { toolHeader } from '../tool/toolHeader'
   import ToolFrame from './ToolFrame.svelte'
-
   let {
     call,
     expansion = 'collapsed',
@@ -21,9 +21,9 @@
     onView,
     folderPath,
     sessionId,
-    onOpenLocation,
     controller,
-    nested = false
+    nested = false,
+    onOpenJob
   }: {
     call: ToolStep
     expansion?: BlockView
@@ -31,11 +31,10 @@
     onView: (id: string, view: BlockView) => void
     folderPath: string
     sessionId: string | null
-    onOpenLocation: (path: string, line?: number) => void
     controller: ChatController
     nested?: boolean
+    onOpenJob?: (ref?: string) => void
   } = $props()
-
   const header = $derived(toolHeader(call, folderPath))
   const activeQuestions = $derived(
     controller.state?.live.questions.find((questions) => questions.callId === call.callId) ?? null
@@ -49,10 +48,41 @@
   const known = $derived(['read', 'edit', 'write', 'ask'].includes(call.name))
   const toggle = () => onView(call.id, view === 'collapsed' ? 'preview' : 'collapsed')
   const expand = () => onView(call.id, 'full')
+  const canBackground = $derived(call.name === 'bash' && call.status === 'running' && !controller.readOnly)
+  let backgrounding = $state(false)
+  async function sendToBackground() {
+    if (backgrounding) return
+    backgrounding = true
+    try {
+      const ok = await controller.background(call.callId)
+      if (ok) onOpenJob?.()
+    } finally {
+      backgrounding = false
+    }
+  }
 </script>
 
 <div data-slot="tool-block" data-view-id={call.id} data-collapsed={view === 'collapsed'} class="min-w-0">
-  <ToolFrame {header} {view} {nested} {folderPath} {sessionId} {onOpenLocation} onToggle={toggle}>
+  {#snippet backgroundAction()}
+    <Button
+      variant="ghost"
+      size="xs"
+      disabled={backgrounding}
+      onclick={(e) => {
+        e.stopPropagation()
+        void sendToBackground()
+      }}>Background</Button
+    >
+  {/snippet}
+  <ToolFrame
+    {header}
+    {view}
+    {nested}
+    {folderPath}
+    {sessionId}
+    onToggle={toggle}
+    actions={canBackground ? backgroundAction : undefined}
+  >
     {#if call.name === 'ask' && activeQuestions}
       <AskCard
         questions={activeQuestions}
@@ -69,8 +99,7 @@
         {call}
         {view}
         onExpand={expand}
-        onOpenResult={(path, line) =>
-          void openReferenceResult(call, { folderPath, sessionId }, path, line, onOpenLocation)}
+        onOpenResult={(path, line) => void openReferenceResult(call, { folderPath, sessionId }, path, line)}
       />
     {:else if call.name === 'read' && !failed}
       <ReadOutput {call} {folderPath} {view} onExpand={expand} />

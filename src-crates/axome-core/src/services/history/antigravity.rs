@@ -146,6 +146,7 @@ fn list_summaries(query: &HistoryQuery<'_>, root: &Path) -> Result<Vec<HistoryRo
             }),
             model: None,
             git_branch: None,
+            children: Vec::new(),
         });
     }
     Ok(result)

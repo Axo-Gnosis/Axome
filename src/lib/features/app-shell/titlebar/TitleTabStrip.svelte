@@ -58,6 +58,8 @@
   import { dropFromOtherWindow, isTabTransferring } from '$lib/features/workbench/transferService.svelte'
   import { restartTerminalProcess, stopTerminalProcess } from '$lib/features/terminal/lifecycle'
   import * as chats from '$lib/features/chat/registry'
+  import { StatusDot } from '$lib/components/ui/status-dot'
+  import { chatTabTone } from '$lib/features/chat/summaries.svelte'
   import HarnessIcon from '$lib/features/sessions/harnesses/HarnessIcon.svelte'
   import { closeTabWithChecks } from '$lib/features/workbench/tabActions.svelte'
   import {
@@ -334,7 +336,11 @@
           {:else if tab.kind === 'new-tab'}
             <Icon icon={PlusIcon} size={14} class="shrink-0 text-accent" />
           {:else if tab.kind === 'chat'}
+            {@const chatTone = chatTabTone(tab)}
             <Icon icon={MessagesSquareIcon} size={14} class="shrink-0 text-accent" />
+            {#if chatTone !== 'idle'}
+              <StatusDot tone={chatTone} size="sm" />
+            {/if}
           {:else if tab.kind === 'shell'}
             <Icon icon={TerminalIcon} size={14} class="shrink-0 text-muted" />
           {:else if tab.kind === 'task'}

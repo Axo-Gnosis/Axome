@@ -3,6 +3,7 @@ import { formatDuration } from '$lib/features/chat/format'
 import { contentLines } from '$lib/features/chat/lineDiff'
 import type { ToolStep } from '$lib/features/chat/turns'
 import { isPathWithin, splitRemotePath } from '$lib/utils/paths'
+import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
 import { editDiff, integer, record } from './payload'
 
@@ -43,9 +44,28 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
   let lines: ToolHeader['lines'] = null
   const failed = call.status === 'error'
   let line: number | undefined
+  let durationMs = call.result?.durationMs ?? null
+  let tone: StatusTone = failed ? 'danger' : call.status === 'running' ? 'working' : 'success'
+  let status: ToolHeader['status'] = failed
+    ? { label: 'Failed', tone: 'danger' }
+    : call.status === 'running'
+      ? { label: 'Running', tone: 'working' }
+      : null
   switch (call.name) {
     case 'bash': {
       command = typeof args.command === 'string' ? args.command : ''
+      const bash = parseBashDetails(call.details)
+      durationMs = bash.durationMs ?? durationMs
+      if (bash.exit !== null) {
+        const exitInfo = formatCommandExit(bash.exit)
+        if (exitInfo.failed) {
+          tone = 'danger'
+          status = { label: exitInfo.label, tone: 'danger' }
+        }
+      } else if (failed) {
+        tone = 'danger'
+        status = { label: 'Aborted', tone: 'danger' }
+      }
       break
     }
     case 'read': {
@@ -93,14 +113,8 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
     pathLabel,
     command,
     lines,
-    meta: [failed ? '' : detail, call.result?.durationMs != null ? formatDuration(call.result.durationMs) : '']
-      .filter(Boolean)
-      .join(' · '),
-    tone: failed ? 'danger' : call.status === 'running' ? 'working' : 'success',
-    status: failed
-      ? { label: 'Failed', tone: 'danger' }
-      : call.status === 'running'
-        ? { label: 'Running', tone: 'working' }
-        : null
+    meta: [failed ? '' : detail, durationMs != null ? formatDuration(durationMs) : ''].filter(Boolean).join(' · '),
+    tone,
+    status
   }
 }

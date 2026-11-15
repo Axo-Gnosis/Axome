@@ -4,7 +4,7 @@ This is the live planning document for adopting axo `843cd73` in Axome. It chang
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
-- **Pinned axo:** `97513d6` (Phase 1 Foundation: `5278fc5` plus `Models::providers()` / `Models::credential_source()`, [P3](design.md#decisions))
+- **Pinned axo:** `cd12162` (Phase 2 Live Work on `97513d6`, then the host capability handoff: activity signal, typed receipts, prompt/context inspection, labeled command output, effective mode, edited results, project skill roots; [P8](design.md#decisions), [`research/axo-cd12162/`](research/axo-cd12162/host-capability-handoff.md))
 
 ## How we work
 
@@ -19,14 +19,14 @@ This is the live planning document for adopting axo `843cd73` in Axome. It chang
 | Topic | Scope | Questions | Order | Status |
 |---|---|---|---|---|
 | [T1](#t1-foundation-config-storage-construction) | Config, storage, construction, supervision | Q1–Q4 | 1 | Decided |
-| [T2](#t2-tool-model) | `kill`, `send`, `call`, deferred tools, tool cards, approval | Q5–Q10 | 3 | Decided |
-| [T3](#t3-background-jobs) | Job surface, live output, wakes, closing with running jobs | Q11–Q16 | 4 | Decided |
-| [T4](#t4-subagents-and-teams) | Children, teams, steering, results, sidebar | Q17–Q24 | 4 | Decided |
+| [T2](#t2-tool-model) | `kill`, `send`, `call`, deferred tools, tool cards, approval | Q5–Q10 | 3 | Implemented (Phase 2) |
+| [T3](#t3-background-jobs) | Job surface, live output, wakes, closing with running jobs | Q11–Q16 | 4 | Implemented (Phase 2) |
+| [T4](#t4-subagents-and-teams) | Children, teams, steering, results, sidebar | Q17–Q24 | 4 | Implemented (Phase 2) |
 | [T5](#t5-personas) | Root agent per conversation, switching, authoring | Q25–Q28 | 2 | Decided |
 | [T6](#t6-modes) | Plan/research modes, review, mode UI, keywords | Q29–Q35 | 2 | Decided |
 | [T7](#t7-models-and-roles) | `@role` selectors, roles UI, model picker | Q36–Q37 | 2 | Decided |
-| [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Decided |
-| [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Decided |
+| [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Implemented (Phase 2) |
+| [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Implemented (Phase 2) |
 | [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Decided |
 
 ```mermaid
@@ -54,12 +54,12 @@ T5–T7 go together because they define the composer and the `/plan` story; T3 a
 
 Compile and correctness fixes with nothing to decide beyond T1. Evidence: [`research/axo-843cd73/compile-probe.md`](research/axo-843cd73/compile-probe.md) (38 errors: 28 production, 10 tests).
 
-- [ ] Construction: `Axo::builder(models, store)`, sync `build()`, `ConfigSource`; Axome keeps its own `Models` and settings (shape decided in T1).
-- [ ] Exhaustive matches: entries `job_start`, `child_start`, `job_end`, `agent_change`, `mode_change`; events `Job`, `JobGone`, `Context`, `AutoPaused`, `Mode`, `ModeResult`, `ModeResultResolved`; submission kinds `Mail`, `Quiet`; `CommandKind::Mode`; the new error variants in `axo_error`.
-- [ ] Flat `LiveSnapshot` (`snapshot.agent` is now the persona name).
-- [ ] `abort()` is sync; `NavigateOptions.focus`; `ModelsOptions.http_client` in tests.
-- [ ] Drop `lastLinePartial` from `payload.ts` and its test fixture (capped read/grep/find output currently loses structured rendering).
-- [ ] Forward `details` on partial tool updates (`live.rs:410-423`).
+- [x] Construction: `Axo::builder(models, store)`, sync `build()`, `ConfigSource`; Axome keeps its own `Models` and settings (shape decided in T1).
+- [x] Exhaustive matches: entries `job_start`, `child_start`, `job_end`, `agent_change`, `mode_change`; events `Job`, `JobGone`, `Context`, `AutoPaused`, `Mode`, `ModeResult`, `ModeResultResolved`; submission kinds `Mail`, `Quiet`; `CommandKind::Mode`; the new error variants in `axo_error`.
+- [x] Flat `LiveSnapshot` (`snapshot.agent` is now the persona name).
+- [x] `abort()` is sync; `NavigateOptions.focus`; `ModelsOptions.http_client` in tests.
+- [x] Drop `lastLinePartial` from `payload.ts` and its test fixture (capped read/grep/find output currently loses structured rendering).
+- [x] Forward `details` on partial tool updates (`live.rs:410-423`).
 
 How each new entry, event and message renders is decided in its topic; the migration only makes the matches explicit.
 
@@ -89,7 +89,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T2. Tool model
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md)
+**Status:** Implemented (Phase 2) · **Evidence:** [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md)
 
 **What axo gives**
 - **`kill`** (`{id}`, `bg_N` or `agent_N`) and **`send`** (`{to, message, steer?}`) are tools; `proc://` and `agent://` are read-only. Killing a child stops its current run, not the child. No team-wide kill.
@@ -118,7 +118,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T3. Background jobs
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/jobs.md`](research/axo-6cdaeb4/jobs.md)
+**Status:** Implemented (Phase 2) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/jobs.md`](research/axo-6cdaeb4/jobs.md)
 
 **What axo gives**
 - Per-job events (`Job(JobInfo)` upsert, `JobGone`) and `snapshot.jobs`. A row has id, status (`Queued`, `Running`, `HelpersRunning`, `Finished`, `Failed`), `call_id`, `started_at`, and messages with delivery state. Command rows add label, tool, cwd, artifact, promotion cause and time, end time, and a typed exit (`exited`, `signaled`, `timedOut`, `killed{by}`, `aborted`, `interrupted`).
@@ -142,7 +142,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T4. Subagents and teams
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md)
+**Status:** Implemented (Phase 2) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md), [`research/axo-6cdaeb4/agents.md`](research/axo-6cdaeb4/agents.md)
 
 **What axo gives**
 - Children are job rows (`JobKind::Child`): session id, path, depth, persona, model, team ref, `resident`, and progress (`turns`, `max_turns`, `wrapping_up`, `yield_failures`, `usage`), pushed after each child assistant message. `Queued` is a real status.
@@ -233,7 +233,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T8. Host messages, sections, dynamic tools
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Implemented (Phase 2) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - `Session::post(HostMessage { custom_type, text, display, delivery: Steer | FollowUp | Quiet })`: durable; `Quiet` never starts a run. Seven engine custom types are reserved.
@@ -253,7 +253,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T9. Session lifecycle and status
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Implemented (Phase 2) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - Context meter: `ContextUsage { tokens, window, trigger, reserve }` with `Context` events. Axome currently derives context from the last response's token count.
@@ -297,7 +297,9 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | **Pre-adoption blocker:** Kernel-enforced read-only `bash` | Mode tool limits are name-only; no shell filesystem sandbox | Request axo feature: native Linux read-only `bash` execution mode (e.g. Landlock: writable `/tmp` + session `local/`, read-only everywhere else) usable by modes and subagents ([D8](design.md#decisions)) |
 | **Pre-adoption blocker:** Magic keywords (`orchestrate`, …) | Not implemented in axo | Request axo feature: `KeywordSpec` (`keywords/*.md` + host specs), standalone lowercase prose matching, tool gates, optional thinking overrides, hidden per-turn notice injection, and `Catalog` metadata ([D10](design.md#decisions)) |
 | Explicit `Session::resume_wakes()` for `auto_paused` | `auto_paused` clears on next user prompt; no dedicated host method | Request small axo helper so `SessionBar`'s `Resume` button clears `auto_paused` and delivers pending job results without sending a dummy prompt ([D16](design.md#decisions)) |
-| **Found in Phase 1:** no authoritative idle signal | `RunEnd` is published (`session/mod.rs:923–932`) before `release_or_deliver()` clears the busy claim or starts the next queued/job-result run (`:958`, `session/delivery.rs:143–172`) | Axome shows idle on `RunEnd` (`services/axo/live.rs`), so an edit/navigate, maintenance command or prompt sent right after a reply can fail with "axo is busy". Tests wait on the session snapshot; the app needs an axo activity/idle event covering host and autonomous runs |
+| ~~**Found in Phase 1:** no authoritative idle signal~~ | **Shipped in `cd12162`:** `SessionEvent::Activity` / `Session::is_running()` publish idle only after queued input and wakes drain | Adopted: `ChatLive.running/maintenance` follow `Activity`; the test fixture's snapshot polling is gone |
+| **`cd12162` handoff, adopted in Phase 2** | stdout/stderr labels (`.log.streams`, `read_chunks`, `CommandOutput::open`); typed `SpawnReceipt`/`WaitReceipt`/`KillReceipt`/`SendReceipt`; `inspect_prompt`, `context_files`, `file_ledger`; `Retry` detail; `ConfigLayer.skill_roots` | Jobs view colours stderr including reopened logs; receipts parse typed details (wait reason shown); Context view adds Prompt, Context files and Files tabs; retry row on the running reply; `.axome/skills/` is a project skill root. Supersedes the "stdout/stderr separation", "typed kill/send receipts" and "prompt introspection" rows above |
+| **`cd12162` handoff, for Phases 3 and 4** | `effective_mode` + `EffectiveMode`; `AcceptResultOptions { replacement, message }` with schema validation; `Session::send` + `SubmissionProvenance`; project skills and settings load at `ProjectAccess::Read` | Addenda in the roadmap's Phase 3 and Phase 4 sections list what each phase plan must verify and plan for. Supersedes the "Mode: effective-mode signal, accept an edited result" row above |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.

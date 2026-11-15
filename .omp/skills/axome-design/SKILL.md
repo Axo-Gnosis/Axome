@@ -255,11 +255,13 @@ Elevation shadow is reserved for **floating surfaces only**. Cards, buttons, inp
 
 ### 7.3 Named animations
 
-| Class          | What it does                             | Where                                                    |
-| -------------- | ---------------------------------------- | -------------------------------------------------------- |
-| `beam-sweep`   | 3s horizontal gradient sweep             | Active project tab underline.                            |
+| Class                  | What it does                                  | Where                                                   |
+| ---------------------- | --------------------------------------------- | ------------------------------------------------------- |
+| `beam-sweep`            | 3s horizontal gradient sweep                  | Active project tab underline only.                      |
+| `animate-working-wave` | 3s muted → peach foreground color wave       | Live chat “Working for …” label only.                   |
+| `animate-working-dot`  | Staggered muted → peach color activity       | The three inline dots beside the live working label.   |
 
-The beam is not generic. If you want to animate something else, use color/opacity transitions with the duration + easing tokens above.
+The beam is not generic and must not be reused for working status. Working animations are named in `src/app.css` `@theme`, use only `muted`, `accent`, and `accent-bright`, and never bounce or scale. The label's gradient is clipped to foreground text, not a gradient surface. Disable both animations under `prefers-reduced-motion`, leaving a legible static label and dots. Stop and its Esc key cap remain unanimated. Other motion uses color/opacity transitions with the duration + easing tokens above.
 
 ### 7.4 Interaction rules
 

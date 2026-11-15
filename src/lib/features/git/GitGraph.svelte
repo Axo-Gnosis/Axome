@@ -196,7 +196,7 @@
             {/if}
           {/each}
           {#if getGraphHasMore(folderPath)}
-            <SidebarRow variant="action" disabled={loadingMore} onclick={() => void loadMore()}>
+            <SidebarRow density="compact" tone="muted" disabled={loadingMore} onclick={() => void loadMore()}>
               <Icon icon={MoreHorizontalIcon} size={13} />
               <span>{loadingMore ? 'Loading…' : 'Load More'}</span>
             </SidebarRow>

@@ -6,10 +6,10 @@ use axome_protocol::{
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
-use uuid::Uuid;
 
 pub(crate) async fn run(
     host: Arc<Host>,
+    attach_id: String,
     folder_path: String,
     session_id: String,
     mut send: StreamWriter,
@@ -23,10 +23,11 @@ pub(crate) async fn run(
             mpsc::error::TrySendError::Closed(_) => "chat stream closed".to_owned(),
         })
     });
-    let attach_id = Uuid::new_v4().to_string();
     let attach_host = Arc::clone(&host);
     let id = session_id.clone();
     let attachment = attach_id.clone();
+    // Weak, so the channel still closes when the host drops this subscriber.
+    let stream_sink = Arc::downgrade(&sink);
     let attached = tokio::task::spawn_blocking(move || {
         attach_host.chat_attach(folder_path, id, attachment, sink)
     })
@@ -59,8 +60,14 @@ pub(crate) async fn run(
         }
     }
     let _ = send.finish().await;
-    if let Err(error) =
-        tokio::task::spawn_blocking(move || host.chat_detach(&session_id, &attach_id)).await
+    // A dead sink has no registration left to remove.
+    let Some(stream_sink) = stream_sink.upgrade() else {
+        return;
+    };
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        host.chat_detach_sink(&session_id, &attach_id, &stream_sink)
+    })
+    .await
     {
         tracing::warn!(%error, "chat stream detach task failed");
     }

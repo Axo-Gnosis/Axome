@@ -622,6 +622,10 @@ fn remote_host_event(server: &str, event: HostEventWire) -> Option<DesktopEvent>
         HostEventWire::IssuesChanged(folder) => {
             HostEvent::IssuesChanged(Target::remote_uri(server, &folder))
         }
+        HostEventWire::ChatSummariesChanged(mut event) => {
+            event.folder_path = Target::remote_uri(server, &event.folder_path);
+            HostEvent::ChatSummariesChanged(event)
+        }
         HostEventWire::WorkbenchesChanged(()) => {
             return Some(DesktopEvent::WorkbenchesChanged {
                 server: server.into(),

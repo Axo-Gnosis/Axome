@@ -162,6 +162,87 @@ pub struct ChatEntry {
     pub body: ChatEntryBody,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatKiller {
+    Model,
+    Host,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatCommandExit {
+    Exited { code: i32 },
+    Signaled { signal: i32 },
+    TimedOut { after_secs: f64 },
+    Killed { by: ChatKiller },
+    Aborted,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatTeamRef {
+    pub id: String,
+    pub member: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatDeliverable {
+    Command {
+        job_id: String,
+        command: String,
+        exit: Option<ChatCommandExit>,
+        is_error: bool,
+    },
+    Child {
+        job_id: String,
+        agent: Option<String>,
+        team: Option<ChatTeamRef>,
+        note: bool,
+        partial: bool,
+        is_error: bool,
+        text: String,
+        value: Option<serde_json::Value>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatNotice {
+    JobWake {
+        jobs: Vec<String>,
+        deliverables: Vec<ChatDeliverable>,
+    },
+    Mail {
+        sender: String,
+        text: String,
+    },
+    TurnBudget {
+        text: String,
+    },
+    YieldNudge {
+        text: String,
+    },
+    Host {
+        text: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "kind",
@@ -192,10 +273,17 @@ pub enum ChatEntryBody {
         details: Option<serde_json::Value>,
         is_error: bool,
         duration_ms: Option<u64>,
+        deliverables: Vec<ChatDeliverable>,
     },
     /// A host message axo marks for display.
     Notice {
-        text: String,
+        notice: ChatNotice,
+    },
+    AgentChange {
+        agent: Option<String>,
+    },
+    ModeChange {
+        mode: Option<String>,
     },
     ModelChange {
         model: String,
@@ -291,7 +379,9 @@ pub struct ChatAnswer {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRetry {
     pub attempt: u32,
+    pub max_retries: u32,
     pub delay_ms: u64,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -301,12 +391,141 @@ pub struct ChatStats {
     pub context_tokens: u64,
     /// Current model's window; 0 when unknown.
     pub context_window: u64,
+    pub context_trigger: Option<u64>,
+    pub context_reserve: Option<u64>,
     /// Sums over every response in the session file.
-    pub input: u64,
-    pub output: u64,
-    pub cache_read: u64,
-    pub cache_write: u64,
-    pub cost: f64,
+    pub usage: ChatUsage,
+    /// Root plus subagents; present only when the session has children.
+    pub tree: Option<ChatUsage>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatJobStatus {
+    Queued,
+    Running,
+    HelpersRunning,
+    Finished,
+    Failed,
+    Interrupted,
+}
+
+impl ChatJobStatus {
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Queued | Self::Running | Self::HelpersRunning)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatPromotion {
+    Async,
+    Timer,
+    Steer,
+    Host,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatChildProgress {
+    pub turns: u32,
+    pub max_turns: u32,
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatJobKind {
+    Command {
+        command: String,
+        artifact: u64,
+        promotion: Option<ChatPromotion>,
+        ended_at: Option<i64>,
+        exit: Option<ChatCommandExit>,
+    },
+    Child {
+        session_id: String,
+        agent: Option<String>,
+        model: String,
+        team: Option<ChatTeamRef>,
+        progress: Option<ChatChildProgress>,
+        unread_mail: u32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatJob {
+    pub id: String,
+    pub status: ChatJobStatus,
+    pub call_id: Option<String>,
+    pub started_at: i64,
+    pub kind: ChatJobKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatToolExposure {
+    Direct,
+    Deferred,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSessionTool {
+    pub name: String,
+    pub summary: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub exposure: ChatToolExposure,
+    pub promoted: bool,
+    pub allowed_in_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatOutputStream {
+    Stdout,
+    Stderr,
+    Merged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatOutputChunk {
+    pub stream: ChatOutputStream,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatJobOutput {
+    pub chunks: Vec<ChatOutputChunk>,
+    pub capture_failed: bool,
+    pub truncated: bool,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatLiveSummary {
+    pub session_id: String,
+    pub running: bool,
+    pub waiting: bool,
+    pub auto_paused: bool,
+    pub active_commands: u32,
+    pub active_children: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSummariesChangedEvent {
+    pub folder_path: String,
+    pub summaries: Vec<ChatLiveSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -314,6 +533,7 @@ pub struct ChatStats {
 pub struct ChatLive {
     pub title: Option<String>,
     pub running: bool,
+    pub auto_paused: bool,
     pub maintenance: Option<ChatMaintenance>,
     pub model: Option<String>,
     pub thinking: ChatThinking,
@@ -322,6 +542,7 @@ pub struct ChatLive {
     pub questions: Vec<ChatQuestions>,
     pub retry: Option<ChatRetry>,
     pub stats: ChatStats,
+    pub jobs: Vec<ChatJob>,
 }
 
 /// When a built-in may run, mirroring `axo::CommandPolicy`.
@@ -362,6 +583,114 @@ pub struct ChatCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatSkillInfo {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub model_invocable: bool,
+    pub argument_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatAgentRunAs {
+    Root,
+    Subagent,
+    Any,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAgentInfo {
+    pub name: String,
+    pub description: String,
+    pub team: bool,
+    pub run_as: Option<ChatAgentRunAs>,
+    pub model: Option<String>,
+    pub tools: Option<Vec<String>>,
+    pub bash_read_only: bool,
+    pub max_turns: Option<u32>,
+    pub structured_output: bool,
+    pub members: Vec<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatModeInfo {
+    pub name: String,
+    pub description: String,
+    pub argument_hint: Option<String>,
+    pub model_invocable: bool,
+    pub model: Option<String>,
+    pub tools_allow: Option<Vec<String>>,
+    pub tools_deny: Vec<String>,
+    pub bash_read_only: bool,
+    pub result_reviewed: Option<bool>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatKeywordInfo {
+    pub name: String,
+    pub description: String,
+    pub requires_tools: Vec<String>,
+    pub model: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolbox {
+    pub skills: Vec<ChatSkillInfo>,
+    pub agents: Vec<ChatAgentInfo>,
+    pub modes: Vec<ChatModeInfo>,
+    pub keywords: Vec<ChatKeywordInfo>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatPromptSection {
+    pub name: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatContextFile {
+    pub path: String,
+    pub content: String,
+    pub nested: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatContextDetails {
+    pub prompt: Vec<ChatPromptSection>,
+    pub context_files: Vec<ChatContextFile>,
+}
+
+/// The session's `local://` files and the canonical directory they live in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatLocalFiles {
+    /// Canonical absolute path of the `local://` root, so callers can recognise ledger paths under it.
+    pub root: String,
+    pub files: Vec<ChatLocalFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatLocalFile {
+    /// Relative to the `local://` root, `/`-separated.
+    pub path: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatState {
     pub session_id: String,
     pub entries: Vec<ChatEntry>,
@@ -369,6 +698,10 @@ pub struct ChatState {
     pub streaming: Option<Vec<ChatBlock>>,
     pub live: ChatLive,
     pub commands: Vec<ChatCommand>,
+    pub session_tools: Vec<ChatSessionTool>,
+    pub toolbox: ChatToolbox,
+    pub read_only: bool,
+    pub is_child: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -417,10 +750,13 @@ pub enum ChatEvent {
     Live {
         live: ChatLive,
     },
+    SessionTools {
+        tools: Vec<ChatSessionTool>,
+    },
     Delta {
         delta: ChatDelta,
     },
-    Notice {
+    Error {
         message: String,
     },
     /// The stream ended for good; `missing` = the session does not exist.
@@ -430,6 +766,11 @@ pub enum ChatEvent {
     },
     /// Emitted by transports (never the Host) while a remote stream reconnects; a `Snapshot` follows.
     Reconnecting,
+    JobOutput {
+        job_id: String,
+        reset: bool,
+        output: ChatJobOutput,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

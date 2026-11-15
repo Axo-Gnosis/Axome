@@ -93,8 +93,17 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
     let host = Arc::new(Host::new(
         host_options,
         Arc::new(move |event| {
+            let summaries_changed = matches!(
+                &event,
+                axome_core::events::HostEvent::ChatSummariesChanged(_)
+            );
             if let Some(event) = events::to_wire(event) {
                 let _ = event_sender.send(Arc::new(event));
+            }
+            if summaries_changed {
+                let _ = event_sender.send(Arc::new(
+                    axome_protocol::rpc::HostEventWire::WorkbenchesChanged(()),
+                ));
             }
             Ok(())
         }),
@@ -568,6 +577,7 @@ async fn process_stream(
             return;
         }
         Open::Chat {
+            attach_id,
             folder_path,
             session_id,
         } => {
@@ -595,6 +605,7 @@ async fn process_stream(
             drop(folder);
             chat_stream::run(
                 host,
+                attach_id,
                 folder_path,
                 session_id,
                 StreamWriter::quic(send, connection),

@@ -162,6 +162,7 @@ async fn pump(
         if let Ok(client) = client {
             if let Ok((send, mut recv)) = client
                 .open_stream(Open::Chat {
+                    attach_id: attach_id.clone(),
                     folder_path: path.clone(),
                     session_id: session_id.clone(),
                 })

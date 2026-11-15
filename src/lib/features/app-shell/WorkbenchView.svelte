@@ -15,6 +15,7 @@
   import { LocalTransfer } from '$lib/features/dnd/transfer.svelte'
   import { activateGitFolder } from '$lib/features/git/state.svelte'
   import { activateSessionsFolder } from '$lib/features/sessions/state.svelte'
+  import { activateChatSummariesFolder } from '$lib/features/chat/summaries.svelte'
   import SidebarRail from '$lib/features/app-shell/sidebar/SidebarRail.svelte'
   import WorkbenchHome from '$lib/features/home/WorkbenchHome.svelte'
   import GitSidebar from '$lib/features/git/GitSidebar.svelte'
@@ -65,9 +66,11 @@
     return untrack(() => {
       const releaseGit = activateGitFolder(path)
       const releaseSessions = activateSessionsFolder(path)
+      const releaseChatSummaries = activateChatSummariesFolder(path)
       return () => {
         releaseGit()
         releaseSessions()
+        releaseChatSummaries()
       }
     })
   })

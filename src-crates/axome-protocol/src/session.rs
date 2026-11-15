@@ -54,6 +54,17 @@ pub struct LastMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct IndexedChildSession {
+    pub session_id: String,
+    pub agent: Option<String>,
+    pub team_member: Option<String>,
+    pub title: Option<String>,
+    pub model: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexedSession {
     pub source: SessionSource,
     pub session_id: String,
@@ -64,6 +75,7 @@ pub struct IndexedSession {
     /// Model used by the latest assistant turn, not the configured default.
     pub model: Option<String>,
     pub git_branch: Option<String>,
+    pub children: Vec<IndexedChildSession>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

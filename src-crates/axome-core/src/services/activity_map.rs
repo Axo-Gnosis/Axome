@@ -144,6 +144,7 @@ mod tests {
             updated_at: updated_at.map(Into::into),
             model: None,
             git_branch: None,
+            children: Vec::new(),
         }
     }
 

@@ -10,13 +10,13 @@
   import { IconButton, iconButtonVariants } from '$lib/components/ui/button'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
   import * as Resizable from '$lib/components/ui/resizable'
-  import { SidebarRow } from '$lib/components/ui/sidebar-row'
+  import { SidebarNote, SidebarRow } from '$lib/components/ui/sidebar-row'
   import { TriangleAlertIcon, MessagesSquareIcon, PlusIcon, TerminalIcon, XIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import type { ChatStatus, ChatTab, SessionStatus, SessionTab, ShellTab } from '$lib/features/workbench/model'
   import { getActiveTabId, getTabs, setActiveTab } from '$lib/features/workbench/state.svelte'
   import { closeTabWithChecks } from '$lib/features/workbench/tabActions.svelte'
-  import { countLiveAgents, historyRows, newChat, startSession } from '$lib/features/sessions/service.svelte'
+  import { countLiveAgents, newChat, startSession } from '$lib/features/sessions/service.svelte'
   import SessionHistory from './SessionHistory.svelte'
   import { sessionBrand, svgUrl } from '$lib/features/sessions/harnesses/catalog'
   import { getLaunchOptions } from '$lib/features/sessions/harnesses/state.svelte'
@@ -25,6 +25,7 @@
   import HarnessIcon from '$lib/features/sessions/harnesses/HarnessIcon.svelte'
   import * as Alert from '$lib/components/ui/alert'
   import { StatusDot, type StatusTone } from '$lib/components/ui/status-dot'
+  import { chatTabTone, getChatLiveSummary } from '$lib/features/chat/summaries.svelte'
 
   let { folderPath }: { folderPath: string } = $props()
 
@@ -44,7 +45,6 @@
         (t.kind === 'chat' || t.kind === 'session' || t.kind === 'shell') && t.folderPath === folderPath
     )
   )
-  let history = $derived(historyRows(folderPath))
   let activeTabId = $derived(getActiveTabId())
   let liveAgents = $derived(countLiveAgents(folderPath))
   let launchers = $derived(
@@ -107,7 +107,7 @@
         <Resizable.Handle />
         <Resizable.Pane defaultSize={50} minSize={15}>
           {#key folderPath}
-            <SessionHistory {folderPath} rows={history} />
+            <SessionHistory {folderPath} />
           {/key}
         </Resizable.Pane>
       </Resizable.PaneGroup>
@@ -117,9 +117,24 @@
 
 {#snippet openList()}
   {#each open as session (session.id)}
+    {@const chatSummary =
+      session.kind === 'chat' ? getChatLiveSummary(session.folderPath, session.sessionId) : undefined}
+    {@const badge = chatSummary
+      ? chatSummary.autoPaused
+        ? 'Paused'
+        : [
+            chatSummary.activeCommands > 0 ? `${chatSummary.activeCommands} bg` : '',
+            chatSummary.activeChildren > 0
+              ? `${chatSummary.activeChildren} ${chatSummary.activeChildren === 1 ? 'agent' : 'agents'}`
+              : ''
+          ]
+            .filter(Boolean)
+            .join(' · ')
+      : ''}
+    {@const tone = session.kind === 'chat' ? chatTabTone(session) : SESSION_TONE[session.status]}
     <div class="group/row relative">
       <SidebarRow
-        variant="leaf"
+        density="compact"
         divider={false}
         pressed={session.id === activeTabId}
         class="pr-7"
@@ -137,32 +152,33 @@
         <span class="min-w-0 flex-1 truncate {session.id === activeTabId ? 'text-bright' : 'text-fg'}">
           {session.title}
         </span>
-        <StatusDot tone={SESSION_TONE[session.status]} size="sm" />
+        {#if badge}
+          <span class="shrink-0 font-mono text-2xs text-muted">{badge}</span>
+        {/if}
+        <StatusDot {tone} size="sm" />
       </SidebarRow>
       <div
         class="absolute inset-y-0 right-1 flex items-center opacity-0 group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100"
       >
         <IconButton
           tooltip={session.kind === 'shell' ? 'Close Shell' : 'Close Session'}
-          onclick={(e: MouseEvent) => {
-            e.stopPropagation()
-            void closeTabWithChecks(session.id)
-          }}
+          onclick={() => void closeTabWithChecks(session.id)}
         >
           <Icon icon={XIcon} size={11} />
         </IconButton>
       </div>
     </div>
   {:else}
-    <SidebarRow variant="info" divider={false}>No open sessions</SidebarRow>
-    <SidebarRow variant="action" divider={false} onclick={() => newChat(folderPath)}>
+    <SidebarNote>No open sessions</SidebarNote>
+    <SidebarRow density="compact" tone="muted" divider={false} onclick={() => newChat(folderPath)}>
       <Icon icon={MessagesSquareIcon} size={12} />
       <span class="min-w-0 flex-1 truncate">Start Chat</span>
       <Icon icon={PlusIcon} size={12} class="shrink-0" />
     </SidebarRow>
     {#each launchers as launcher (launcher.id)}
       <SidebarRow
-        variant="action"
+        density="compact"
+        tone="muted"
         divider={false}
         onclick={() => startSession(folderPath, launcher.harnessId, launcher.preset)}
       >
@@ -172,7 +188,12 @@
       </SidebarRow>
     {/each}
     {#each shellLaunchers as launcher (launcher.preset)}
-      <SidebarRow variant="action" divider={false} onclick={() => startShell(folderPath, launcher.preset)}>
+      <SidebarRow
+        density="compact"
+        tone="muted"
+        divider={false}
+        onclick={() => startShell(folderPath, launcher.preset)}
+      >
         <Icon icon={TerminalIcon} size={12} />
         <span class="min-w-0 flex-1 truncate">Start {launcher.label}</span>
         <Icon icon={PlusIcon} size={12} class="shrink-0" />

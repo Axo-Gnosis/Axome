@@ -217,6 +217,7 @@ fn read_rows(stdout: impl Read) -> Result<Listing, String> {
                 updated_at: field("updated_at"),
                 model: field("model"),
                 git_branch: field("git_branch"),
+                children: Vec::new(),
             });
         } else if let Some(path) = field("watch")
             .map(std::path::PathBuf::from)

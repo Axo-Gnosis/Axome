@@ -1,9 +1,11 @@
+import { isReceiptTool } from '../tool/receipt'
 import type { Step, ToolStep } from '../../turns'
 
 /** One or more adjacent thinking steps, already redacted, as the transcript renders them. */
 export type ThoughtStep = { kind: 'thinking'; id: string; text: string; streaming: boolean }
 export type ToolGroupStep = { kind: 'toolGroup'; id: string; calls: ToolStep[] }
-export type TranscriptStep = Exclude<Step, { kind: 'thinking' }> | ThoughtStep | ToolGroupStep
+export type ReceiptStep = { kind: 'receipt'; id: string; call: ToolStep }
+export type TranscriptStep = Exclude<Step, { kind: 'thinking' }> | ThoughtStep | ToolGroupStep | ReceiptStep
 
 export const REDACTED_THINKING = 'Thinking is redacted.'
 
@@ -12,10 +14,14 @@ export function groupSteps(steps: Step[]): TranscriptStep[] {
   for (let index = 0; index < steps.length; index++) {
     const first = steps[index]
     if (first.kind === 'tool') {
+      if (isReceiptTool(first)) {
+        grouped.push({ kind: 'receipt', id: first.id, call: first })
+        continue
+      }
       const calls = [first]
       while (true) {
         const call = steps[index + 1]
-        if (call?.kind !== 'tool' || call.name !== first.name) break
+        if (call?.kind !== 'tool' || call.name !== first.name || isReceiptTool(call)) break
         calls.push(call)
         index++
       }

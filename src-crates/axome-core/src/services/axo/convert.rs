@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::{errors::ApiError, services::history::normalize_title};
 use axo::store::{Entry, RunOutcome, SeqEntry, SubmissionKind};
@@ -181,6 +182,156 @@ pub(super) fn block(value: &AssistantBlock) -> ChatBlock {
     }
 }
 
+pub(super) fn command_exit(exit: &axo::CommandExit) -> ChatCommandExit {
+    match exit {
+        axo::CommandExit::Exited { code } => ChatCommandExit::Exited { code: *code },
+        axo::CommandExit::Signaled { signal } => ChatCommandExit::Signaled { signal: *signal },
+        axo::CommandExit::TimedOut { after_secs } => ChatCommandExit::TimedOut {
+            after_secs: *after_secs,
+        },
+        axo::CommandExit::Killed { by } => ChatCommandExit::Killed {
+            by: match by {
+                axo::Killer::Model => ChatKiller::Model,
+                axo::Killer::Host => ChatKiller::Host,
+            },
+        },
+        axo::CommandExit::Aborted => ChatCommandExit::Aborted,
+        axo::CommandExit::Interrupted => ChatCommandExit::Interrupted,
+    }
+}
+
+pub(super) fn team_ref(team: &axo::TeamRef) -> ChatTeamRef {
+    ChatTeamRef {
+        id: team.id.clone(),
+        member: team.member.clone(),
+        name: team.name.clone(),
+    }
+}
+
+/// Job start/end positions, indexed on first use so converting a whole
+/// transcript scans it once instead of once per job reference.
+struct JobLookup<'a> {
+    entries: &'a [SeqEntry],
+    index: std::cell::OnceCell<JobIndex<'a>>,
+}
+
+struct JobIndex<'a> {
+    ends: HashMap<&'a str, usize>,
+    starts: HashMap<&'a str, usize>,
+}
+
+impl<'a> JobLookup<'a> {
+    fn new(entries: &'a [SeqEntry]) -> Self {
+        Self {
+            entries,
+            index: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn index(&self) -> &JobIndex<'a> {
+        self.index.get_or_init(|| {
+            let mut index = JobIndex {
+                ends: HashMap::new(),
+                starts: HashMap::new(),
+            };
+            for (at, seq) in self.entries.iter().enumerate() {
+                match &seq.entry {
+                    Entry::JobEnd { job_id, .. } => {
+                        index.ends.insert(job_id.as_str(), at);
+                    }
+                    Entry::JobStart { job_id, .. } | Entry::ChildStart { job_id, .. } => {
+                        index.starts.insert(job_id.as_str(), at);
+                    }
+                    _ => {}
+                }
+            }
+            index
+        })
+    }
+
+    fn deliverable(&self, msg_ref: &str) -> Option<ChatDeliverable> {
+        let job_id = msg_ref.split('/').next().unwrap_or(msg_ref);
+        let index = self.index();
+        let Entry::JobEnd {
+            text,
+            is_error,
+            partial,
+            note,
+            exit,
+            value,
+            ..
+        } = &self.entries[*index.ends.get(msg_ref)?].entry
+        else {
+            unreachable!()
+        };
+        match &self.entries[*index.starts.get(job_id)?].entry {
+            Entry::JobStart { command, .. } => Some(ChatDeliverable::Command {
+                job_id: job_id.to_owned(),
+                command: command.clone(),
+                exit: exit.as_ref().map(command_exit),
+                is_error: *is_error,
+            }),
+            Entry::ChildStart { agent, team, .. } => Some(ChatDeliverable::Child {
+                job_id: job_id.to_owned(),
+                agent: agent.clone(),
+                team: team.as_ref().map(team_ref),
+                note: *note,
+                partial: *partial,
+                is_error: *is_error,
+                text: text.clone(),
+                value: value.clone(),
+            }),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn deliverables(jobs: &JobLookup<'_>, refs: &[String]) -> Vec<ChatDeliverable> {
+    refs.iter()
+        .filter_map(|job_ref| jobs.deliverable(job_ref))
+        .collect()
+}
+
+fn job_refs(details: Option<&serde_json::Value>, delivered_jobs: &[String]) -> Vec<String> {
+    let from_details: Vec<String> = details
+        .and_then(|d| d.get("jobs"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if from_details.is_empty() {
+        delivered_jobs.to_vec()
+    } else {
+        from_details
+    }
+}
+
+fn notice_from_custom(
+    jobs: &JobLookup<'_>,
+    custom_type: &str,
+    text: String,
+    details: Option<&serde_json::Value>,
+    delivered_jobs: &[String],
+) -> ChatNotice {
+    match custom_type {
+        "job_result" => {
+            let refs = job_refs(details, delivered_jobs);
+            let deliverables = deliverables(jobs, &refs);
+            ChatNotice::JobWake {
+                jobs: refs,
+                deliverables,
+            }
+        }
+        "turn_budget" => ChatNotice::TurnBudget { text },
+        "yield_nudge" => ChatNotice::YieldNudge { text },
+        _ => ChatNotice::Host { text },
+    }
+}
+
 fn submission<'a>(value: &Entry, entries: &'a [SeqEntry]) -> Option<&'a Entry> {
     let Entry::Message {
         submission_id: Some(id),
@@ -196,22 +347,6 @@ fn submission<'a>(value: &Entry, entries: &'a [SeqEntry]) -> Option<&'a Entry> {
             None
         }
     })
-}
-
-pub(super) fn is_user(value: &Entry, entries: &[SeqEntry]) -> bool {
-    matches!(
-        value,
-        Entry::Message {
-            message: AgentMessage::Llm(Message::User(_)),
-            ..
-        }
-    ) && !matches!(
-        submission(value, entries),
-        Some(Entry::Submission {
-            kind: SubmissionKind::Quiet | SubmissionKind::Mail,
-            ..
-        })
-    )
 }
 
 fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&'a str> {
@@ -371,72 +506,94 @@ fn context_moved(entries: &[SeqEntry], at: usize) -> Option<ChatEntryBody> {
 }
 
 pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
+    entry_with(entries, at, &JobLookup::new(entries))
+}
+
+pub(super) fn path_entries(entries: &[SeqEntry], path: &[usize]) -> Vec<ChatEntry> {
+    let jobs = JobLookup::new(entries);
+    path.iter()
+        .filter_map(|at| entry_with(entries, *at, &jobs))
+        .collect()
+}
+
+fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<ChatEntry> {
     let value = &entries.get(at)?.entry;
     let base = value.base()?;
     let body = match value {
         Entry::Message {
             message: AgentMessage::Llm(Message::User(user)),
-            submission_id,
             ..
         } => {
+            let submitted = submission(value, entries);
             if let Some(Entry::Submission {
                 kind: kind @ (SubmissionKind::Quiet | SubmissionKind::Mail),
                 sender,
                 ..
-            }) = submission(value, entries)
+            }) = submitted
             {
-                let text = text(&user.content);
-                return Some(ChatEntry {
-                    id: base.id.to_string(),
-                    timestamp: base.timestamp.clone(),
-                    body: ChatEntryBody::Notice {
-                        text: if let (SubmissionKind::Mail, Some(sender)) = (kind, sender) {
-                            format!("Mail from {sender}: {text}")
+                let raw = text(&user.content);
+                let notice = match kind {
+                    SubmissionKind::Mail => {
+                        let sender = sender.clone().unwrap_or_else(|| "teammate".into());
+                        let prefix =
+                            format!("Message from {sender} (reply with send to \"{sender}\"):\n\n");
+                        let text = raw.strip_prefix(&prefix).unwrap_or(&raw).to_owned();
+                        ChatNotice::Mail { sender, text }
+                    }
+                    SubmissionKind::Quiet => ChatNotice::Host { text: raw },
+                    SubmissionKind::Prompt | SubmissionKind::Steer | SubmissionKind::FollowUp => {
+                        unreachable!()
+                    }
+                };
+                ChatEntryBody::Notice { notice }
+            } else {
+                let by_id: HashMap<_, _> = entries
+                    .iter()
+                    .filter_map(|seq| Some((seq.entry.id()?, &seq.entry)))
+                    .collect();
+                let notices: HashSet<&str> = entries
+                    .iter()
+                    .filter_map(|seq| {
+                        if let Entry::Submission {
+                            submission_id,
+                            kind: SubmissionKind::Quiet | SubmissionKind::Mail,
+                            ..
+                        } = &seq.entry
+                        {
+                            Some(submission_id.as_str())
                         } else {
-                            text
-                        },
-                    },
-                });
-            }
-            let by_id: HashMap<_, _> = entries
-                .iter()
-                .filter_map(|seq| Some((seq.entry.id()?, &seq.entry)))
-                .collect();
-            let user_anchor = anchor(value, &by_id);
-            let mut siblings: Vec<_> = entries
-                .iter()
-                .filter(|seq| {
-                    is_user(&seq.entry, entries) && anchor(&seq.entry, &by_id) == user_anchor
-                })
-                .collect();
-            siblings.sort_by_key(|seq| seq.seq);
-            ChatEntryBody::User {
-                parts: submission_id
-                    .as_ref()
-                    .and_then(|id| {
-                        entries.iter().find_map(|seq| {
-                            if let Entry::Submission {
-                                submission_id,
-                                parts,
-                                ..
-                            } = &seq.entry
-                            {
-                                (submission_id == id).then(|| parts_to_wire(parts))
-                            } else {
-                                None
-                            }
-                        })
+                            None
+                        }
                     })
-                    .unwrap_or_else(|| {
-                        vec![ChatPart::Text {
+                    .collect();
+                let user_anchor = anchor(value, &by_id);
+                let mut siblings: Vec<_> = entries
+                    .iter()
+                    .filter(|seq| {
+                        matches!(
+                            &seq.entry,
+                            Entry::Message {
+                                message: AgentMessage::Llm(Message::User(_)),
+                                submission_id,
+                                ..
+                            } if !submission_id.as_deref().is_some_and(|id| notices.contains(id))
+                        ) && anchor(&seq.entry, &by_id) == user_anchor
+                    })
+                    .collect();
+                siblings.sort_by_key(|seq| seq.seq);
+                ChatEntryBody::User {
+                    parts: match submitted {
+                        Some(Entry::Submission { parts, .. }) => parts_to_wire(parts),
+                        _ => vec![ChatPart::Text {
                             text: text(&user.content),
-                        }]
-                    }),
-                anchor: user_anchor.map(str::to_owned),
-                siblings: siblings
-                    .into_iter()
-                    .filter_map(|seq| seq.entry.id().map(str::to_owned))
-                    .collect(),
+                        }],
+                    },
+                    anchor: user_anchor.map(str::to_owned),
+                    siblings: siblings
+                        .into_iter()
+                        .filter_map(|seq| seq.entry.id().map(str::to_owned))
+                        .collect(),
+                }
             }
         }
         Entry::Message {
@@ -458,28 +615,50 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
         },
         Entry::Message {
             message: AgentMessage::Llm(Message::ToolResult(result)),
+            delivered_jobs,
             ..
-        } => ChatEntryBody::ToolResult {
-            call_id: result.tool_call_id.clone(),
-            tool_name: result.tool_name.clone(),
-            content: content(&result.content),
-            details: result.details.clone(),
-            is_error: result.is_error,
-            duration_ms: result.duration_ms,
-        },
+        } => {
+            let deliverables = if result.tool_name == "wait" {
+                deliverables(jobs, &job_refs(result.details.as_ref(), delivered_jobs))
+            } else {
+                Vec::new()
+            };
+            ChatEntryBody::ToolResult {
+                call_id: result.tool_call_id.clone(),
+                tool_name: result.tool_name.clone(),
+                content: content(&result.content),
+                details: result.details.clone(),
+                is_error: result.is_error,
+                duration_ms: result.duration_ms,
+                deliverables,
+            }
+        }
         Entry::Message {
             message: AgentMessage::Custom(custom),
+            delivered_jobs,
             ..
         } if custom.display => ChatEntryBody::Notice {
-            text: text(&custom.content),
+            notice: notice_from_custom(
+                jobs,
+                &custom.custom_type,
+                text(&custom.content),
+                custom.details.as_ref(),
+                delivered_jobs,
+            ),
         },
         Entry::CustomMessage {
+            custom_type,
             content,
+            details,
             display: true,
             ..
         } => ChatEntryBody::Notice {
-            text: text(content),
+            notice: notice_from_custom(jobs, custom_type, text(content), details.as_ref(), &[]),
         },
+        Entry::AgentChange { agent, .. } => ChatEntryBody::AgentChange {
+            agent: agent.clone(),
+        },
+        Entry::ModeChange { mode, .. } => ChatEntryBody::ModeChange { mode: mode.clone() },
         Entry::ModelChange {
             provider, model_id, ..
         } => ChatEntryBody::ModelChange {
@@ -529,8 +708,6 @@ pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
         | Entry::RunStart { .. }
         | Entry::RunResumed { .. }
         | Entry::Submission { .. }
-        | Entry::AgentChange { .. }
-        | Entry::ModeChange { .. }
         | Entry::JobStart { .. }
         | Entry::ChildStart { .. }
         | Entry::JobEnd { .. }
@@ -555,39 +732,20 @@ pub(super) fn title_of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Opti
     let mut name = None;
     let mut prompt = None;
     for entry in entries {
-        match entry {
-            Entry::SessionInfo {
-                name: Some(value), ..
-            } => name = Some(value.as_str()),
-            Entry::Submission {
-                kind: SubmissionKind::Prompt,
-                parts,
-                ..
-            } if prompt.is_none() => {
+        if let Entry::SessionInfo {
+            name: Some(value), ..
+        } = entry
+        {
+            name = Some(value.as_str());
+        } else if let Entry::Submission {
+            kind: SubmissionKind::Prompt,
+            parts,
+            ..
+        } = entry
+        {
+            if prompt.is_none() {
                 prompt = Some(parts_text(parts));
             }
-            Entry::Message { .. }
-            | Entry::ThinkingLevelChange { .. }
-            | Entry::ModelChange { .. }
-            | Entry::Usage { .. }
-            | Entry::Compaction { .. }
-            | Entry::BranchSummary { .. }
-            | Entry::Custom { .. }
-            | Entry::CustomMessage { .. }
-            | Entry::ContextEdit { .. }
-            | Entry::Label { .. }
-            | Entry::SessionInfo { .. }
-            | Entry::Leaf { .. }
-            | Entry::RunStart { .. }
-            | Entry::RunEnd { .. }
-            | Entry::RunResumed { .. }
-            | Entry::Submission { .. }
-            | Entry::AgentChange { .. }
-            | Entry::ModeChange { .. }
-            | Entry::JobStart { .. }
-            | Entry::ChildStart { .. }
-            | Entry::JobEnd { .. }
-            | Entry::Unknown(_) => {}
         }
     }
     name.or(prompt.as_deref()).and_then(normalize_title)
@@ -597,120 +755,65 @@ pub(super) fn selection(entries: &[SeqEntry], path: &[usize]) -> (Option<String>
     let mut model = None;
     let mut thinking = ThinkingLevel::Off;
     for &at in path {
-        match &entries[at].entry {
-            Entry::ModelChange {
-                provider, model_id, ..
-            } => model = Some(format!("{provider}/{model_id}")),
-            Entry::ThinkingLevelChange { thinking_level, .. } => thinking = *thinking_level,
-            Entry::Message { .. }
-            | Entry::Usage { .. }
-            | Entry::Compaction { .. }
-            | Entry::BranchSummary { .. }
-            | Entry::Custom { .. }
-            | Entry::CustomMessage { .. }
-            | Entry::ContextEdit { .. }
-            | Entry::Label { .. }
-            | Entry::SessionInfo { .. }
-            | Entry::Leaf { .. }
-            | Entry::RunStart { .. }
-            | Entry::RunEnd { .. }
-            | Entry::RunResumed { .. }
-            | Entry::Submission { .. }
-            | Entry::AgentChange { .. }
-            | Entry::ModeChange { .. }
-            | Entry::JobStart { .. }
-            | Entry::ChildStart { .. }
-            | Entry::JobEnd { .. }
-            | Entry::Unknown(_) => {}
+        if let Entry::ModelChange {
+            provider, model_id, ..
+        } = &entries[at].entry
+        {
+            model = Some(format!("{provider}/{model_id}"));
+        } else if let Entry::ThinkingLevelChange { thinking_level, .. } = &entries[at].entry {
+            thinking = *thinking_level;
         }
     }
     (model, thinking)
 }
 
-pub(super) fn stats(entries: &[SeqEntry], path: &[usize], context_window: u64) -> ChatStats {
+pub(super) fn entries_usage(entries: &[SeqEntry]) -> Usage {
+    let mut usage = Usage::default();
+    for seq in entries {
+        if let Some(entry_usage) = seq.entry.usage() {
+            usage += entry_usage;
+        }
+    }
+    usage
+}
+
+pub(super) fn stats(
+    entries: &[SeqEntry],
+    path: &[usize],
+    fallback_window: u64,
+    context: Option<axo::ContextUsage>,
+    tree: Option<&Usage>,
+) -> ChatStats {
     let context_tokens = path
         .iter()
         .rev()
-        .find_map(|&at| match &entries[at].entry {
-            Entry::Message {
+        .find_map(|&at| {
+            if let Entry::Message {
                 message: AgentMessage::Llm(Message::Assistant(value)),
                 ..
-            } => Some(value.usage.total_tokens),
-            Entry::Message { .. }
-            | Entry::ThinkingLevelChange { .. }
-            | Entry::ModelChange { .. }
-            | Entry::Usage { .. }
-            | Entry::Compaction { .. }
-            | Entry::BranchSummary { .. }
-            | Entry::Custom { .. }
-            | Entry::CustomMessage { .. }
-            | Entry::ContextEdit { .. }
-            | Entry::Label { .. }
-            | Entry::SessionInfo { .. }
-            | Entry::Leaf { .. }
-            | Entry::RunStart { .. }
-            | Entry::RunEnd { .. }
-            | Entry::RunResumed { .. }
-            | Entry::Submission { .. }
-            | Entry::AgentChange { .. }
-            | Entry::ModeChange { .. }
-            | Entry::JobStart { .. }
-            | Entry::ChildStart { .. }
-            | Entry::JobEnd { .. }
-            | Entry::Unknown(_) => None,
+            } = &entries[at].entry
+            {
+                Some(value.usage.total_tokens)
+            } else {
+                None
+            }
         })
         .unwrap_or(0);
-    let mut result = ChatStats {
+    let mut stats = ChatStats {
         context_tokens,
-        context_window,
-        input: 0,
-        output: 0,
-        cache_read: 0,
-        cache_write: 0,
-        cost: 0.0,
+        context_window: fallback_window,
+        context_trigger: None,
+        context_reserve: None,
+        usage: usage(&entries_usage(entries)),
+        tree: tree.map(usage),
     };
-    for seq in entries {
-        let usage = match &seq.entry {
-            Entry::Message {
-                message: AgentMessage::Llm(Message::Assistant(value)),
-                ..
-            } => &value.usage,
-            Entry::Usage { usage, .. } => usage,
-            Entry::Compaction {
-                usage: Some(usage), ..
-            }
-            | Entry::BranchSummary {
-                usage: Some(usage), ..
-            } => usage,
-            Entry::Message { .. }
-            | Entry::ThinkingLevelChange { .. }
-            | Entry::ModelChange { .. }
-            | Entry::Compaction { .. }
-            | Entry::BranchSummary { .. }
-            | Entry::Custom { .. }
-            | Entry::CustomMessage { .. }
-            | Entry::ContextEdit { .. }
-            | Entry::Label { .. }
-            | Entry::SessionInfo { .. }
-            | Entry::Leaf { .. }
-            | Entry::RunStart { .. }
-            | Entry::RunEnd { .. }
-            | Entry::RunResumed { .. }
-            | Entry::Submission { .. }
-            | Entry::AgentChange { .. }
-            | Entry::ModeChange { .. }
-            | Entry::JobStart { .. }
-            | Entry::ChildStart { .. }
-            | Entry::JobEnd { .. }
-            | Entry::Unknown(_) => continue,
-        };
-        result.input += usage.input;
-        result.output += usage.output;
-        result.cache_read += usage.cache_read;
-        result.cache_write += usage.cache_write;
-        result.cost += usage.cost.total;
+    if let Some(ctx) = context {
+        stats.context_tokens = ctx.tokens;
+        stats.context_window = ctx.window;
+        stats.context_trigger = Some(ctx.trigger);
+        stats.context_reserve = Some(ctx.reserve);
     }
-    result
+    stats
 }
 
 pub(super) fn queue_at_attach(
@@ -719,33 +822,16 @@ pub(super) fn queue_at_attach(
 ) -> Vec<(String, ChatQueued)> {
     let matched: HashSet<_> = entries
         .iter()
-        .filter_map(|seq| match &seq.entry {
-            Entry::Message {
+        .filter_map(|seq| {
+            if let Entry::Message {
                 submission_id: Some(id),
                 ..
-            } => Some(id.as_str()),
-            Entry::Message { .. }
-            | Entry::ThinkingLevelChange { .. }
-            | Entry::ModelChange { .. }
-            | Entry::Usage { .. }
-            | Entry::Compaction { .. }
-            | Entry::BranchSummary { .. }
-            | Entry::Custom { .. }
-            | Entry::CustomMessage { .. }
-            | Entry::ContextEdit { .. }
-            | Entry::Label { .. }
-            | Entry::SessionInfo { .. }
-            | Entry::Leaf { .. }
-            | Entry::RunStart { .. }
-            | Entry::RunEnd { .. }
-            | Entry::RunResumed { .. }
-            | Entry::Submission { .. }
-            | Entry::AgentChange { .. }
-            | Entry::ModeChange { .. }
-            | Entry::JobStart { .. }
-            | Entry::ChildStart { .. }
-            | Entry::JobEnd { .. }
-            | Entry::Unknown(_) => None,
+            } = &seq.entry
+            {
+                Some(id.as_str())
+            } else {
+                None
+            }
         })
         .collect();
     let mut steering = Vec::new();
@@ -824,6 +910,197 @@ pub(super) fn answer(value: ChatAnswer) -> axo::Answer {
     }
 }
 
+pub(super) fn job(info: &axo::JobInfo, closed_session: bool) -> ChatJob {
+    let status = if (closed_session
+        && matches!(
+            info.status,
+            axo::JobStatus::Queued | axo::JobStatus::Running | axo::JobStatus::HelpersRunning
+        ))
+        || (matches!(info.status, axo::JobStatus::Failed)
+            && matches!(
+                &info.kind,
+                axo::JobKind::Command {
+                    exit: Some(axo::CommandExit::Interrupted),
+                    ..
+                }
+            )) {
+        ChatJobStatus::Interrupted
+    } else {
+        match info.status {
+            axo::JobStatus::Queued => ChatJobStatus::Queued,
+            axo::JobStatus::Running => ChatJobStatus::Running,
+            axo::JobStatus::HelpersRunning => ChatJobStatus::HelpersRunning,
+            axo::JobStatus::Finished => ChatJobStatus::Finished,
+            axo::JobStatus::Failed => ChatJobStatus::Failed,
+        }
+    };
+    let kind = match &info.kind {
+        axo::JobKind::Command {
+            command,
+            artifact,
+            promotion,
+            ended_at,
+            exit,
+            ..
+        } => ChatJobKind::Command {
+            command: command.clone(),
+            artifact: *artifact,
+            promotion: promotion.map(|p| match p {
+                axo::Promotion::Async => ChatPromotion::Async,
+                axo::Promotion::Timer => ChatPromotion::Timer,
+                axo::Promotion::Steer => ChatPromotion::Steer,
+                axo::Promotion::Host => ChatPromotion::Host,
+            }),
+            ended_at: *ended_at,
+            exit: exit.as_ref().map(command_exit),
+        },
+        axo::JobKind::Child {
+            session_id,
+            agent,
+            model,
+            team,
+            progress,
+            unread_mail,
+            ..
+        } => ChatJobKind::Child {
+            session_id: session_id.clone(),
+            agent: agent.clone(),
+            model: model.clone(),
+            team: team.as_ref().map(team_ref),
+            progress: progress.as_deref().map(|p| ChatChildProgress {
+                turns: p.turns,
+                max_turns: p.max_turns,
+                tools: p.tools.clone(),
+            }),
+            unread_mail: *unread_mail,
+        },
+    };
+    ChatJob {
+        id: info.id.clone(),
+        status,
+        call_id: info.call_id.clone(),
+        started_at: info.started_at,
+        kind,
+    }
+}
+
+pub(super) fn session_tools(session: &axo::Session) -> Vec<ChatSessionTool> {
+    session
+        .tools()
+        .into_iter()
+        .map(|info| ChatSessionTool {
+            name: info.name,
+            summary: info.summary,
+            description: info.description,
+            parameters: info.parameters,
+            exposure: match info.exposure {
+                axo::Exposure::Direct => ChatToolExposure::Direct,
+                axo::Exposure::Deferred => ChatToolExposure::Deferred,
+            },
+            promoted: info.promoted,
+            allowed_in_mode: info.allowed_in_mode,
+        })
+        .collect()
+}
+
+pub(super) fn display_path(path: &Path, folder: &Path) -> String {
+    path.strip_prefix(folder)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub(super) fn toolbox(session: &axo::Session, folder: &Path) -> ChatToolbox {
+    use axo::context::agents::{AgentDef, RunAs};
+    use axo::context::modes::BashAccess;
+
+    ChatToolbox {
+        skills: session
+            .skills()
+            .iter()
+            .map(|s| ChatSkillInfo {
+                name: s.name.clone(),
+                description: s.description.clone(),
+                path: display_path(&s.path, folder),
+                model_invocable: !s.disable_model_invocation,
+                argument_hint: s.argument_hint.clone(),
+            })
+            .collect(),
+        agents: session
+            .agents()
+            .iter()
+            .map(|def| match def {
+                AgentDef::Agent(spec) => ChatAgentInfo {
+                    name: spec.name.clone(),
+                    description: spec.description.clone(),
+                    team: false,
+                    run_as: Some(match spec.run_as {
+                        RunAs::Root => ChatAgentRunAs::Root,
+                        RunAs::Subagent => ChatAgentRunAs::Subagent,
+                        RunAs::Any => ChatAgentRunAs::Any,
+                    }),
+                    model: spec.model.clone(),
+                    tools: spec.tools.clone(),
+                    bash_read_only: spec.bash == BashAccess::ReadOnly,
+                    max_turns: spec.max_turns,
+                    structured_output: spec.output.is_some(),
+                    members: Vec::new(),
+                    path: spec.path.as_deref().map(|path| display_path(path, folder)),
+                },
+                AgentDef::Team(spec) => ChatAgentInfo {
+                    name: spec.name.clone(),
+                    description: spec.description.clone(),
+                    team: true,
+                    run_as: None,
+                    model: None,
+                    tools: None,
+                    bash_read_only: false,
+                    max_turns: None,
+                    structured_output: false,
+                    members: spec
+                        .members
+                        .iter()
+                        .map(|m| m.roster_name().to_owned())
+                        .collect(),
+                    path: spec.path.as_deref().map(|path| display_path(path, folder)),
+                },
+            })
+            .collect(),
+        modes: session
+            .modes()
+            .iter()
+            .map(|m| ChatModeInfo {
+                name: m.name.clone(),
+                description: m.description.clone(),
+                argument_hint: m.argument_hint.clone(),
+                model_invocable: !m.disable_model_invocation,
+                model: m.model.clone(),
+                tools_allow: m.tools.allow.clone(),
+                tools_deny: m.tools.deny.clone(),
+                bash_read_only: m.bash == BashAccess::ReadOnly,
+                result_reviewed: m.result.as_ref().map(|result| result.review),
+                path: m.path.as_deref().map(|path| display_path(path, folder)),
+            })
+            .collect(),
+        keywords: session
+            .keywords()
+            .iter()
+            .map(|k| ChatKeywordInfo {
+                name: k.name.clone(),
+                description: k.description.clone(),
+                requires_tools: k.requires_tools.clone(),
+                model: k.model.clone(),
+                path: k.path.as_deref().map(|path| display_path(path, folder)),
+            })
+            .collect(),
+        diagnostics: session
+            .diagnostics()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +1134,7 @@ mod tests {
             parts: vec![axo::PromptPart::Text { text: id.into() }],
             request_id: None,
             sender: None,
+            provenance: None,
             custom: None,
         }
     }
@@ -1020,29 +1298,416 @@ mod tests {
 
     #[test]
     fn quiet_and_mail_inputs_are_not_editable_user_messages() {
-        for (kind, sender, expected) in [
-            (SubmissionKind::Quiet, None, "message"),
+        let cases = [
+            (
+                SubmissionKind::Quiet,
+                None,
+                "quiet note",
+                ChatNotice::Host {
+                    text: "quiet note".into(),
+                },
+            ),
             (
                 SubmissionKind::Mail,
                 Some("worker"),
-                "Mail from worker: message",
+                "Message from worker (reply with send to \"worker\"):\n\nhello",
+                ChatNotice::Mail {
+                    sender: "worker".into(),
+                    text: "hello".into(),
+                },
             ),
-            (SubmissionKind::Mail, None, "message"),
-        ] {
+            (
+                SubmissionKind::Mail,
+                None,
+                "plain message",
+                ChatNotice::Mail {
+                    sender: "teammate".into(),
+                    text: "plain message".into(),
+                },
+            ),
+        ];
+        for (kind, sender, body_text, expected) in cases {
             let mut submitted = submission("submission", None, kind);
             if let Entry::Submission { sender: value, .. } = &mut submitted {
                 *value = sender.map(str::to_owned);
             }
             let entries = log(vec![
                 submitted,
-                user("message", Some("submission"), "submission"),
+                Entry::Message {
+                    base: base("message", Some("submission")),
+                    submission_id: Some("submission".into()),
+                    admitted_jobs: vec![],
+                    delivered_jobs: vec![],
+                    message: AgentMessage::Llm(Message::User(UserMessage {
+                        content: vec![UserBlock::Text {
+                            text: body_text.into(),
+                        }],
+                        timestamp: 0,
+                    })),
+                },
             ]);
-            assert!(!is_user(&entries[1].entry, &entries));
-            assert!(matches!(
+            assert_eq!(
                 entry(&entries, 1).unwrap().body,
-                ChatEntryBody::Notice { text } if text == expected
-            ));
+                ChatEntryBody::Notice { notice: expected }
+            );
         }
+    }
+
+    #[test]
+    fn job_result_hydrates_command_and_child_deliverables() {
+        let entries = log(vec![
+            Entry::JobStart {
+                base: base("js1", None),
+                session_id: "root".into(),
+                job_id: "bg_1".into(),
+                call_id: "c1".into(),
+                command: "cargo test".into(),
+                artifact: 42,
+                started_at: 1,
+                tool: Some("bash".into()),
+                cwd: None,
+                promotion: None,
+            },
+            Entry::ChildStart {
+                base: base("cs1", Some("js1")),
+                session_id: "root".into(),
+                job_id: "agent_1".into(),
+                call_id: Some("c2".into()),
+                child_session_id: "child-1".into(),
+                child_path: "child-1.jsonl".into(),
+                agent: Some("scout".into()),
+                model: "test/m".into(),
+                team: Some(axo::TeamRef {
+                    id: "team_1".into(),
+                    member: "finder".into(),
+                    name: Some("review".into()),
+                }),
+            },
+            Entry::JobEnd {
+                base: base("je0", Some("cs1")),
+                job_id: "bg_1".into(),
+                text: "timed out".into(),
+                is_error: true,
+                partial: false,
+                run_id: None,
+                note: false,
+                exit: Some(axo::CommandExit::TimedOut { after_secs: 30.0 }),
+                usage: None,
+                value: None,
+            },
+            Entry::JobEnd {
+                base: base("je1", Some("je0")),
+                job_id: "agent_1/2".into(),
+                text: "mid-run progress".into(),
+                is_error: false,
+                partial: false,
+                run_id: Some("run-1".into()),
+                note: true,
+                exit: None,
+                usage: None,
+                value: None,
+            },
+            Entry::JobEnd {
+                base: base("je2", Some("je1")),
+                job_id: "agent_1".into(),
+                text: "finished".into(),
+                is_error: false,
+                partial: false,
+                run_id: Some("run-1".into()),
+                note: false,
+                exit: None,
+                usage: None,
+                value: Some(serde_json::json!({ "ok": true })),
+            },
+            Entry::CustomMessage {
+                base: base("wake", Some("je2")),
+                custom_type: "job_result".into(),
+                content: vec![UserBlock::Text {
+                    text: "jobs finished".into(),
+                }],
+                details: Some(serde_json::json!({
+                    "jobs": ["bg_1", "agent_1/2", "agent_1"]
+                })),
+                display: true,
+            },
+        ]);
+        assert_eq!(
+            entry(&entries, 5).unwrap().body,
+            ChatEntryBody::Notice {
+                notice: ChatNotice::JobWake {
+                    jobs: vec!["bg_1".into(), "agent_1/2".into(), "agent_1".into()],
+                    deliverables: vec![
+                        ChatDeliverable::Command {
+                            job_id: "bg_1".into(),
+                            command: "cargo test".into(),
+                            exit: Some(ChatCommandExit::TimedOut { after_secs: 30.0 }),
+                            is_error: true,
+                        },
+                        ChatDeliverable::Child {
+                            job_id: "agent_1".into(),
+                            agent: Some("scout".into()),
+                            team: Some(ChatTeamRef {
+                                id: "team_1".into(),
+                                member: "finder".into(),
+                                name: Some("review".into()),
+                            }),
+                            note: true,
+                            partial: false,
+                            is_error: false,
+                            text: "mid-run progress".into(),
+                            value: None,
+                        },
+                        ChatDeliverable::Child {
+                            job_id: "agent_1".into(),
+                            agent: Some("scout".into()),
+                            team: Some(ChatTeamRef {
+                                id: "team_1".into(),
+                                member: "finder".into(),
+                                name: Some("review".into()),
+                            }),
+                            note: false,
+                            partial: false,
+                            is_error: false,
+                            text: "finished".into(),
+                            value: Some(serde_json::json!({ "ok": true })),
+                        },
+                    ],
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn wait_tool_result_populates_deliverables_while_other_tools_leave_empty() {
+        let entries = log(vec![
+            Entry::JobStart {
+                base: base("js1", None),
+                session_id: "root".into(),
+                job_id: "bg_1".into(),
+                call_id: "c1".into(),
+                command: "echo hi".into(),
+                artifact: 7,
+                started_at: 1,
+                tool: None,
+                cwd: None,
+                promotion: None,
+            },
+            Entry::JobEnd {
+                base: base("je1", Some("js1")),
+                job_id: "bg_1".into(),
+                text: "hi".into(),
+                is_error: false,
+                partial: false,
+                run_id: None,
+                note: false,
+                exit: Some(axo::CommandExit::Exited { code: 0 }),
+                usage: None,
+                value: None,
+            },
+            Entry::Message {
+                base: base("tr_wait", Some("je1")),
+                submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec!["bg_1".into()],
+                message: AgentMessage::Llm(Message::ToolResult(axo_ai::ToolResultMessage {
+                    tool_call_id: "call-wait".into(),
+                    tool_name: "wait".into(),
+                    content: vec![UserBlock::Text {
+                        text: "done".into(),
+                    }],
+                    details: None,
+                    is_error: false,
+                    timestamp: 0,
+                    duration_ms: Some(12),
+                })),
+            },
+            Entry::Message {
+                base: base("tr_bash", Some("tr_wait")),
+                submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec!["bg_1".into()],
+                message: AgentMessage::Llm(Message::ToolResult(axo_ai::ToolResultMessage {
+                    tool_call_id: "call-bash".into(),
+                    tool_name: "bash".into(),
+                    content: vec![UserBlock::Text { text: "ok".into() }],
+                    details: Some(serde_json::json!({ "jobs": ["bg_1"] })),
+                    is_error: false,
+                    timestamp: 0,
+                    duration_ms: Some(5),
+                })),
+            },
+        ]);
+        let ChatEntryBody::ToolResult { deliverables, .. } = entry(&entries, 2).unwrap().body
+        else {
+            panic!("expected tool result");
+        };
+        assert_eq!(
+            deliverables,
+            vec![ChatDeliverable::Command {
+                job_id: "bg_1".into(),
+                command: "echo hi".into(),
+                exit: Some(ChatCommandExit::Exited { code: 0 }),
+                is_error: false,
+            }]
+        );
+        let ChatEntryBody::ToolResult { deliverables, .. } = entry(&entries, 3).unwrap().body
+        else {
+            panic!("expected tool result");
+        };
+        assert!(deliverables.is_empty());
+    }
+
+    #[test]
+    fn agent_and_mode_changes_project_and_are_transparent_to_anchor() {
+        let entries = log(vec![
+            Entry::RunEnd {
+                base: base("a", None),
+                run_id: "old".into(),
+                outcome: RunOutcome::Done,
+                reason: None,
+                usage: None,
+                queued: vec![],
+            },
+            submission("s1", Some("a"), SubmissionKind::Prompt),
+            user("u1", Some("s1"), "s1"),
+            Entry::AgentChange {
+                base: base("ac1", Some("a")),
+                agent: Some("planner".into()),
+            },
+            Entry::ModeChange {
+                base: base("mc1", Some("ac1")),
+                mode: Some("plan".into()),
+                restore: None,
+            },
+            submission("s2", Some("mc1"), SubmissionKind::Prompt),
+            user("u2", Some("s2"), "s2"),
+            Entry::ModeChange {
+                base: base("mc2", Some("u2")),
+                mode: None,
+                restore: None,
+            },
+            Entry::AgentChange {
+                base: base("ac2", Some("mc2")),
+                agent: None,
+            },
+        ]);
+        assert_eq!(
+            entry(&entries, 3).unwrap().body,
+            ChatEntryBody::AgentChange {
+                agent: Some("planner".into())
+            }
+        );
+        assert_eq!(
+            entry(&entries, 4).unwrap().body,
+            ChatEntryBody::ModeChange {
+                mode: Some("plan".into())
+            }
+        );
+        assert_eq!(
+            entry(&entries, 7).unwrap().body,
+            ChatEntryBody::ModeChange { mode: None }
+        );
+        assert_eq!(
+            entry(&entries, 8).unwrap().body,
+            ChatEntryBody::AgentChange { agent: None }
+        );
+        let ChatEntryBody::User {
+            anchor, siblings, ..
+        } = entry(&entries, 6).unwrap().body
+        else {
+            panic!("expected user");
+        };
+        assert_eq!(anchor.as_deref(), Some("a"));
+        assert_eq!(siblings, ["u1", "u2"]);
+    }
+
+    #[test]
+    fn custom_notices_project_by_type_and_respect_display_flag() {
+        let entries = log(vec![
+            Entry::CustomMessage {
+                base: base("tb", None),
+                custom_type: "turn_budget".into(),
+                content: vec![UserBlock::Text {
+                    text: "2 turns left".into(),
+                }],
+                details: None,
+                display: true,
+            },
+            Entry::Message {
+                base: base("yn", Some("tb")),
+                submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec![],
+                message: AgentMessage::Custom(axo_agent::CustomMessage {
+                    custom_type: "yield_nudge".into(),
+                    content: vec![UserBlock::Text {
+                        text: "call yield".into(),
+                    }],
+                    display: true,
+                    details: None,
+                    timestamp: 0,
+                }),
+            },
+            Entry::CustomMessage {
+                base: base("host", Some("yn")),
+                custom_type: "custom_banner".into(),
+                content: vec![UserBlock::Text {
+                    text: "hello".into(),
+                }],
+                details: None,
+                display: true,
+            },
+            Entry::CustomMessage {
+                base: base("hidden1", Some("host")),
+                custom_type: "mode_notice".into(),
+                content: vec![UserBlock::Text {
+                    text: "secret".into(),
+                }],
+                details: None,
+                display: false,
+            },
+            Entry::Message {
+                base: base("hidden2", Some("hidden1")),
+                submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec![],
+                message: AgentMessage::Custom(axo_agent::CustomMessage {
+                    custom_type: "tool_catalog".into(),
+                    content: vec![UserBlock::Text {
+                        text: "catalog".into(),
+                    }],
+                    display: false,
+                    details: None,
+                    timestamp: 0,
+                }),
+            },
+        ]);
+        assert_eq!(
+            entry(&entries, 0).unwrap().body,
+            ChatEntryBody::Notice {
+                notice: ChatNotice::TurnBudget {
+                    text: "2 turns left".into()
+                }
+            }
+        );
+        assert_eq!(
+            entry(&entries, 1).unwrap().body,
+            ChatEntryBody::Notice {
+                notice: ChatNotice::YieldNudge {
+                    text: "call yield".into()
+                }
+            }
+        );
+        assert_eq!(
+            entry(&entries, 2).unwrap().body,
+            ChatEntryBody::Notice {
+                notice: ChatNotice::Host {
+                    text: "hello".into(),
+                }
+            }
+        );
+        assert!(entry(&entries, 3).is_none());
+        assert!(entry(&entries, 4).is_none());
     }
 
     #[test]
@@ -1091,6 +1756,7 @@ mod tests {
             thinking: ThinkingLevel::Off,
             agent: None,
             mode: None,
+            effective_mode: None,
             context: None,
             auto_paused: false,
         };
@@ -1120,5 +1786,68 @@ mod tests {
         snapshot.queued_steering.clear();
         snapshot.queued_follow_up.clear();
         assert!(queue_at_attach(&entries, &snapshot).is_empty());
+    }
+
+    #[test]
+    fn job_conversion_maps_closed_and_interrupted_statuses() {
+        let cmd_kind = |exit: Option<axo::CommandExit>| axo::JobKind::Command {
+            command: "echo hi".into(),
+            tool: "bash".into(),
+            cwd: std::path::PathBuf::from("/tmp"),
+            artifact: 7,
+            promotion: Some(axo::Promotion::Async),
+            promoted_at: Some(10),
+            ended_at: None,
+            exit,
+        };
+        let msg = |delivery| axo::JobMessageInfo {
+            id: "bg_1".into(),
+            note: false,
+            is_error: false,
+            partial: false,
+            run_id: None,
+            delivery,
+        };
+        for active in [
+            axo::JobStatus::Queued,
+            axo::JobStatus::Running,
+            axo::JobStatus::HelpersRunning,
+        ] {
+            let info = axo::JobInfo {
+                id: "bg_1".into(),
+                status: active,
+                call_id: Some("call_1".into()),
+                started_at: 5,
+                kind: cmd_kind(None),
+                messages: vec![msg(axo::MessageDelivery::Pending)],
+            };
+            let closed = job(&info, true);
+            assert_eq!(closed.status, ChatJobStatus::Interrupted);
+            let live = job(&info, false);
+            assert_ne!(live.status, ChatJobStatus::Interrupted);
+        }
+        let finished = axo::JobInfo {
+            id: "bg_2".into(),
+            status: axo::JobStatus::Finished,
+            call_id: None,
+            started_at: 5,
+            kind: cmd_kind(Some(axo::CommandExit::Exited { code: 0 })),
+            messages: vec![msg(axo::MessageDelivery::Delivered)],
+        };
+        let finished_closed = job(&finished, true);
+        assert_eq!(finished_closed.status, ChatJobStatus::Finished);
+
+        let interrupted_failed = axo::JobInfo {
+            id: "bg_3".into(),
+            status: axo::JobStatus::Failed,
+            call_id: None,
+            started_at: 5,
+            kind: cmd_kind(Some(axo::CommandExit::Interrupted)),
+            messages: vec![],
+        };
+        assert_eq!(
+            job(&interrupted_failed, false).status,
+            ChatJobStatus::Interrupted
+        );
     }
 }

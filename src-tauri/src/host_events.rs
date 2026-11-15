@@ -57,6 +57,9 @@ pub fn desktop_event_sink(
             DesktopEvent::Host(HostEvent::IssuesChanged(folder)) => {
                 app.emit("issues-changed", json!({ "folderPath": folder }))
             }
+            DesktopEvent::Host(HostEvent::ChatSummariesChanged(payload)) => {
+                app.emit("chat-summaries-changed", payload)
+            }
             DesktopEvent::Host(HostEvent::FileMoved {
                 folder_path,
                 old_path,

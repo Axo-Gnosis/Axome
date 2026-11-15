@@ -82,7 +82,7 @@
 </script>
 
 <SidebarPanel title="Git">
-  {#snippet headerExtra()}
+  {#snippet headerActions()}
     <InfoTooltip ariaLabel="Explain git status badges" contentClass="w-72">
       <div class="space-y-2">
         <p class="font-medium text-bright">Git badges in this panel</p>

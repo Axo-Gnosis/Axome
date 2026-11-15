@@ -8,8 +8,9 @@
 // Same-kind tokens combine with OR; cross-kind tokens AND together, as in
 // the issues search. Menus toggle tokens via $lib/utils/queryTokens.
 
+import { modelName } from '$lib/features/chat/format'
 import { sessionBrand } from '$lib/features/sessions/harnesses/catalog'
-import type { IndexedSession } from '$lib/types/backend'
+import type { IndexedChildSession, IndexedSession } from '$lib/types/backend'
 import { splitTokens } from '$lib/utils/queryTokens'
 
 /** A parsed search: same-kind values OR together, kinds AND. */
@@ -36,14 +37,17 @@ export function sessionAgent(session: IndexedSession): string {
   return session.source.kind === 'harness' ? session.source.harnessId.toLowerCase() : 'axo'
 }
 
-// "anthropic/claude-opus-5-5" → "claude-opus-5-5"; a trailing build date goes too.
-export function modelName(model: string): string {
-  return model.slice(model.lastIndexOf('/') + 1).replace(/-\d{8}$/, '')
-}
-
 /** The `model:` value for a model: its display name, lowercased, without whitespace so it stays one token. */
 export function modelKey(model: string): string {
   return modelName(model).toLowerCase().replace(/\s+/g, '')
+}
+
+function childFields(child: IndexedChildSession): (string | null)[] {
+  return [child.title, child.agent, child.teamMember, child.sessionId, child.model]
+}
+
+function hasModel(model: string | null, models: string[]): boolean {
+  return model !== null && models.includes(modelKey(model))
 }
 
 function searchText(folderPath: string, session: IndexedSession): string {
@@ -58,16 +62,30 @@ function searchText(folderPath: string, session: IndexedSession): string {
         ]
       : ['axo']),
     session.model ?? '',
-    session.gitBranch ?? ''
+    session.gitBranch ?? '',
+    ...session.children.flatMap(childFields)
   ]
     .join('\n')
     .toLowerCase()
 }
 
+export function childMatchesQuery(child: IndexedChildSession, query: SessionQuery): boolean {
+  if (query.models.length > 0 && !hasModel(child.model, query.models)) return false
+  if (query.texts.length === 0) return query.models.length > 0
+  const text = childFields(child).join('\n').toLowerCase()
+  return query.texts.every((v) => text.includes(v))
+}
+
 export function matchesSession(folderPath: string, session: IndexedSession, query: SessionQuery): boolean {
   const { agents, models, texts } = query
   if (agents.length > 0 && !agents.includes(sessionAgent(session))) return false
-  if (models.length > 0 && (session.model === null || !models.includes(modelKey(session.model)))) return false
+  if (
+    models.length > 0 &&
+    !hasModel(session.model, models) &&
+    !session.children.some((c) => hasModel(c.model, models))
+  ) {
+    return false
+  }
   if (texts.length === 0) return true
   const text = searchText(folderPath, session)
   return texts.every((value) => text.includes(value))

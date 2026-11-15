@@ -455,7 +455,21 @@ pub(crate) async fn list(
             .map(|record| {
                 let snapshot = AppStateKvService::get(db.conn(), &snapshot_key(&record.id))
                     .map_err(database)?;
-                Ok((record, snapshot.as_deref().map(folders).unwrap_or_default()))
+                let chat_runs: Vec<WorkbenchRun> = snapshot
+                    .as_deref()
+                    .map(axome_core::workbench_snapshot::chat_session_ids)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|sid| {
+                        host.active_chat_folder(&sid)
+                            .map(|folder| WorkbenchRun::Chat { folder })
+                    })
+                    .collect();
+                Ok((
+                    record,
+                    snapshot.as_deref().map(folders).unwrap_or_default(),
+                    chat_runs,
+                ))
             })
             .collect::<Result<Vec<_>, WireError>>()?;
         Ok((records, host.live_runs_by_owner()))
@@ -463,9 +477,10 @@ pub(crate) async fn list(
     .await?;
     let mut infos: Vec<_> = records
         .into_iter()
-        .map(|(record, folders)| {
+        .map(|(record, folders, chat_runs)| {
             let connected = context.workbenches.connected(&record.id);
-            let running = running.remove(&record.owner).unwrap_or_default();
+            let mut running = running.remove(&record.owner).unwrap_or_default();
+            running.extend(chat_runs);
             let yours = yours.contains(&record.id);
             info(record, connected, yours, folders, running)
         })

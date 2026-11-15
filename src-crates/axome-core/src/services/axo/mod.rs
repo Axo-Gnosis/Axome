@@ -1,3 +1,4 @@
+mod bundled;
 mod config;
 mod convert;
 mod engine;
@@ -11,7 +12,7 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
-    ops::ControlFlow,
+    ops::{ControlFlow, Deref},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,7 +28,7 @@ use axo_ai::{FileCredentialStore, ThinkingLevel};
 use axome_protocol::axo::AxoKeywordInfo;
 use axome_protocol::chat::*;
 use axome_protocol::server_config::Supervision;
-use axome_protocol::session::MessageRole;
+use axome_protocol::session::{IndexedChildSession, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
 use engine::Engine;
 use parking_lot::Mutex;
@@ -35,7 +36,7 @@ use tokio::runtime::Handle;
 
 use crate::{
     errors::ApiError,
-    events::EventSink,
+    events::{deliver, EventSink, HostEvent},
     services::{
         db::DatabaseService,
         history::{self, HistoryRow, Listing},
@@ -44,16 +45,34 @@ use crate::{
 };
 use live::LiveSession;
 
+/// A session's scheme table, borrowed from the live session or built for a closed one.
+enum SessionSchemes {
+    Live(Arc<LiveSession>),
+    Closed(axo::Schemes),
+}
+
+impl SessionSchemes {
+    fn get(&self) -> &axo::Schemes {
+        match self {
+            Self::Live(live) => live.session.schemes(),
+            Self::Closed(schemes) => schemes,
+        }
+    }
+}
+
 pub(crate) struct AxoService {
     this: Weak<Self>,
     db: Arc<DatabaseService>,
     runtime: OnceLock<Handle>,
     dirs: HostDirs,
     supervision: Supervision,
+    events: EventSink<HostEvent>,
     engine: tokio::sync::Mutex<EngineSlot>,
     credentials: Arc<FileCredentialStore>,
     login: tokio::sync::Mutex<Option<login::Login>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
+    // Attachments to closed child sessions, by session id: (attach id, sink).
+    readonly_subscribers: Mutex<HashMap<String, Vec<Subscriber>>>,
     // Reopening must wait for the retiring Session to release its file lock.
     retiring: Mutex<HashMap<String, RetiringSlot>>,
     // ponytail: one open/create at a time; per-id locks if opens contend.
@@ -63,6 +82,26 @@ pub(crate) struct AxoService {
 }
 
 type RetiringSlot = Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>;
+type Subscriber = (String, EventSink<ChatEvent>);
+
+enum Loaded<'a> {
+    Live(Held<'a>),
+    /// A child whose root is not loaded; nothing was opened.
+    RootClosed {
+        engine: Arc<Engine>,
+        infos: Vec<axo::SessionInfo>,
+    },
+}
+
+fn children_of<'a>(
+    sessions: &'a HashMap<String, Arc<LiveSession>>,
+    id: &'a str,
+) -> impl Iterator<Item = &'a String> + 'a {
+    sessions
+        .iter()
+        .filter(move |(_, live)| live.root_id.as_deref() == Some(id))
+        .map(|(id, _)| id)
+}
 
 #[derive(Default)]
 struct EngineSlot {
@@ -119,6 +158,7 @@ impl AxoService {
         db: Arc<DatabaseService>,
         dirs: HostDirs,
         supervision: Supervision,
+        events: EventSink<HostEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -129,9 +169,11 @@ impl AxoService {
             )),
             dirs,
             supervision,
+            events,
             engine: tokio::sync::Mutex::new(EngineSlot::default()),
             login: tokio::sync::Mutex::new(None),
             sessions: Mutex::new(HashMap::new()),
+            readonly_subscribers: Mutex::new(HashMap::new()),
             retiring: Mutex::new(HashMap::new()),
             opening: tokio::sync::Mutex::new(()),
             index: OnceLock::new(),
@@ -140,12 +182,13 @@ impl AxoService {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_engine(db: Arc<DatabaseService>, engine: Engine) -> Arc<Self> {
-        let service = Self::new(
-            db,
-            HostDirs::under(Path::new(".")),
-            Supervision::ProcessGroup,
-        );
+    pub(crate) fn with_engine_and_events(
+        db: Arc<DatabaseService>,
+        dirs: HostDirs,
+        engine: Engine,
+        events: EventSink<HostEvent>,
+    ) -> Arc<Self> {
+        let service = Self::new(db, dirs, Supervision::ProcessGroup, events);
         {
             let mut slot = service.engine.try_lock().unwrap();
             slot.engine = Some(Arc::new(engine));
@@ -235,6 +278,7 @@ impl AxoService {
         SessionOptions {
             cwd: folder.to_owned(),
             model,
+            agents: bundled::agents().to_vec(),
             thinking,
             ask_enabled: true,
             project_access: Some(ProjectAccess::Trust),
@@ -248,59 +292,167 @@ impl AxoService {
         }
     }
 
-    async fn live(&self, folder: &Path, id: &str) -> Result<Arc<LiveSession>, ApiError> {
+    fn ensure_open(&self) -> Result<(), ApiError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(ApiError::Internal("Axome is shutting down".into()));
         }
-        if let Some(live) = self.sessions.lock().get(id).cloned() {
-            return if live.folder == folder {
-                Ok(live)
-            } else {
-                Err(ApiError::NotFound(format!("axo session {id}")))
+        Ok(())
+    }
+
+    fn held(&self, folder: &Path, id: &str) -> Result<Option<Held<'_>>, ApiError> {
+        let live = {
+            let sessions = self.sessions.lock();
+            let Some(live) = sessions.get(id) else {
+                return Ok(None);
             };
+            if live.folder != folder {
+                return Err(ApiError::NotFound(format!("axo session {id}")));
+            }
+            live.pin();
+            live.clone()
+        };
+        Ok(Some(Held {
+            service: self,
+            live,
+        }))
+    }
+
+    async fn live(&self, folder: &Path, id: &str) -> Result<Held<'_>, ApiError> {
+        match self.load(folder, id, false).await? {
+            Loaded::Live(held) => Ok(held),
+            Loaded::RootClosed { .. } => Err(ApiError::InvalidArgument(
+                "Session is read-only until resumed".into(),
+            )),
+        }
+    }
+
+    async fn load(&self, folder: &Path, id: &str, open_root: bool) -> Result<Loaded<'_>, ApiError> {
+        self.ensure_open()?;
+        if let Some(held) = self.held(folder, id)? {
+            return Ok(Loaded::Live(held));
         }
         let _opening = self.opening.lock().await;
-        if let Some(live) = self.sessions.lock().get(id).cloned() {
-            return if live.folder == folder {
-                Ok(live)
-            } else {
-                Err(ApiError::NotFound(format!("axo session {id}")))
-            };
+        self.ensure_open()?;
+        if let Some(held) = self.held(folder, id)? {
+            return Ok(Loaded::Live(held));
         }
         self.wait_retiring(id).await;
         let engine = self.engine().await?;
-        let axo = &engine.axo;
-        let info = axo
-            .list_sessions(folder)
+        let infos = engine.axo.list_sessions(folder).await.map_err(axo_error)?;
+        let (info, root_info) = find_session_and_root(&infos, id)?;
+        if info.spawn.is_none() {
+            let session = engine
+                .axo
+                .open_session(&info.path, self.options(folder, None, None))
+                .await
+                .map_err(axo_error)?;
+            return self
+                .register(folder.to_owned(), Arc::new(session), None, engine)
+                .await
+                .map(Loaded::Live);
+        }
+        let root_held = match root_info {
+            Some(root) => self.held(folder, &root.id)?,
+            None => None,
+        };
+        let root_held = if let Some(held) = root_held {
+            held
+        } else {
+            if !open_root {
+                return Ok(Loaded::RootClosed { engine, infos });
+            }
+            let root = root_info
+                .ok_or_else(|| ApiError::NotFound("Parent root session no longer exists".into()))?;
+            self.wait_retiring(&root.id).await;
+            let session = engine
+                .axo
+                .open_session(&root.path, self.options(folder, None, None))
+                .await
+                .map_err(axo_error)?;
+            self.register(folder.to_owned(), Arc::new(session), None, engine.clone())
+                .await?
+        };
+        let child = engine.axo.session(id).await.map_err(axo_error)?;
+        self.register(folder.to_owned(), child, Some(root_held.id.clone()), engine)
             .await
-            .map_err(axo_error)?
-            .into_iter()
-            .find(|info| info.id == id)
-            .ok_or_else(|| ApiError::NotFound(format!("axo session {id}")))?;
-        let session = axo
-            .open_session(&info.path, self.options(folder, None, None))
-            .await
-            .map_err(axo_error)?;
-        self.insert(folder.to_owned(), session, engine.clone())
-            .await
+            .map(Loaded::Live)
     }
 
-    async fn insert(
+    async fn register(
         &self,
         folder: PathBuf,
-        session: axo::Session,
+        session: Arc<axo::Session>,
+        root_id: Option<String>,
         engine: Arc<Engine>,
-    ) -> Result<Arc<LiveSession>, ApiError> {
-        let live = LiveSession::start(self.this.clone(), folder, session, engine).await;
-        {
+    ) -> Result<Held<'_>, ApiError> {
+        let is_root = root_id.is_none();
+        let live = LiveSession::start(
+            self.this.clone(),
+            folder.clone(),
+            session,
+            root_id.clone(),
+            engine,
+        )
+        .await;
+        live.pin();
+        let failure = {
             let mut sessions = self.sessions.lock();
-            if !self.closed.load(Ordering::Acquire) {
+            if let Err(error) = self.ensure_open() {
+                Some(error)
+            } else if root_id
+                .as_deref()
+                .is_some_and(|rid| !sessions.contains_key(rid))
+            {
+                Some(ApiError::NotFound(
+                    "Parent root session no longer exists".into(),
+                ))
+            } else {
                 sessions.insert(live.id.clone(), live.clone());
-                return Ok(live);
+                None
             }
+        };
+        if let Some(error) = failure {
+            live.unpin();
+            live.release().await;
+            return Err(error);
         }
-        live.shutdown().await;
-        Err(ApiError::Internal("Axome is shutting down".into()))
+        if is_root {
+            self.emit_summaries(&folder);
+        }
+        Ok(Held {
+            service: self,
+            live,
+        })
+    }
+
+    pub(crate) fn live_summaries(&self, folder: &Path) -> Vec<ChatLiveSummary> {
+        let lives: Vec<_> = self
+            .sessions
+            .lock()
+            .values()
+            .filter(|live| live.folder == folder && live.root_id.is_none())
+            .cloned()
+            .collect();
+        let mut summaries: Vec<_> = lives.into_iter().map(|live| live.summary()).collect();
+        summaries.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        summaries
+    }
+
+    pub(crate) fn emit_summaries(&self, folder: &Path) {
+        let summaries = self.live_summaries(folder);
+        deliver(
+            &self.events,
+            HostEvent::ChatSummariesChanged(ChatSummariesChangedEvent {
+                folder_path: folder.to_string_lossy().into_owned(),
+                summaries,
+            }),
+        );
+    }
+
+    pub(crate) fn active_folder(&self, session_id: &str) -> Option<String> {
+        let live = self.sessions.lock().get(session_id).cloned()?;
+        (live.root_id.is_none() && live.is_active())
+            .then(|| live.folder.to_string_lossy().into_owned())
     }
 
     fn schedule_refresh(&self, folder: &Path) {
@@ -310,20 +462,45 @@ impl AxoService {
     }
 
     fn maybe_unload(&self, id: &str) {
-        let mut sessions = self.sessions.lock();
-        let Some(live) = sessions.get(id) else { return };
-        if !live.idle_and_unattached() {
-            return;
-        }
-        if live.session.path().exists() {
-            if let Some(live) = sessions.remove(id) {
+        let mut parent_to_check = None;
+        let retired_folder = {
+            let mut sessions = self.sessions.lock();
+            let Some(live) = sessions.get(id) else { return };
+            if let Some(root_id) = live.root_id.clone() {
+                if !live.idle_and_unattached() {
+                    return;
+                }
+                let Some(live) = sessions.remove(id) else {
+                    return;
+                };
                 self.retire(live);
+                parent_to_check = Some(root_id);
+                None
+            } else {
+                if !live.idle_and_unattached() || children_of(&sessions, id).next().is_some() {
+                    return;
+                }
+                if live.session.path().exists() {
+                    let Some(live) = sessions.remove(id) else {
+                        return;
+                    };
+                    let folder = live.folder.clone();
+                    self.retire(live);
+                    Some(folder)
+                } else {
+                    drop(sessions);
+                    // axo creates the session file on the first submission; a session without one cannot be reopened once retired, so its owner gets UNWRITTEN_GRACE to reattach.
+                    self.retire_unwritten_later(id);
+                    return;
+                }
             }
-            return;
+        };
+        if let Some(root_id) = parent_to_check {
+            self.maybe_unload(&root_id);
         }
-        drop(sessions);
-        // axo creates the session file on the first submission; a session without one cannot be reopened once retired, so its owner gets UNWRITTEN_GRACE to reattach.
-        self.retire_unwritten_later(id);
+        if let Some(folder) = retired_folder {
+            self.emit_summaries(&folder);
+        }
     }
 
     fn retire_unwritten_later(&self, id: &str) {
@@ -337,14 +514,24 @@ impl AxoService {
             let Some(service) = this.upgrade() else {
                 return;
             };
-            let mut sessions = service.sessions.lock();
-            if sessions
-                .get(&id)
-                .is_some_and(|live| live.idle_and_unattached())
-            {
-                if let Some(live) = sessions.remove(&id) {
-                    service.retire(live);
+            let retired_folder = {
+                let mut sessions = service.sessions.lock();
+                if sessions
+                    .get(&id)
+                    .is_some_and(|live| live.idle_and_unattached())
+                    && children_of(&sessions, &id).next().is_none()
+                {
+                    sessions.remove(&id).map(|live| {
+                        let folder = live.folder.clone();
+                        service.retire(live);
+                        folder
+                    })
+                } else {
+                    None
                 }
+            };
+            if let Some(folder) = retired_folder {
+                service.emit_summaries(&folder);
             }
         });
     }
@@ -354,7 +541,7 @@ impl AxoService {
         if let Some(runtime) = self.runtime() {
             let id = live.id.clone();
             let task = runtime.spawn(async move {
-                live.shutdown().await;
+                live.release().await;
             });
             self.retiring
                 .lock()
@@ -382,10 +569,31 @@ impl AxoService {
         true
     }
 
+    /// Removes `id` (and, for a root, its children) from the registry, tells their
+    /// subscribers, and retires them under the registry lock. Returns them, target last.
+    fn evict(&self, id: &str, message: &str) -> Vec<Arc<LiveSession>> {
+        let mut sessions = self.sessions.lock();
+        let Some(target) = sessions.remove(id) else {
+            return Vec::new();
+        };
+        let mut evicted = Vec::new();
+        if target.root_id.is_none() {
+            let children: Vec<_> = children_of(&sessions, id).cloned().collect();
+            evicted.extend(children.into_iter().filter_map(|id| sessions.remove(&id)));
+        }
+        evicted.push(target);
+        for live in &evicted {
+            live.broadcast_closed(message.to_owned());
+            self.retire(live.clone());
+        }
+        evicted
+    }
+
     fn crashed(&self, id: &str, message: String) {
-        if let Some(live) = self.sessions.lock().remove(id) {
-            live.broadcast_closed(format!("axo session stopped unexpectedly: {message}"));
-            self.retire(live);
+        let notice = format!("axo session stopped unexpectedly: {message}");
+        let evicted = self.evict(id, &notice);
+        if let Some(target) = evicted.last().filter(|live| live.root_id.is_none()) {
+            self.emit_summaries(&target.folder);
         }
     }
 
@@ -433,7 +641,7 @@ impl AxoService {
             .catalog(
                 &self.dirs.config,
                 Some(ProjectAccess::Ignore),
-                &[],
+                bundled::agents(),
                 &[],
                 &[],
             )
@@ -452,7 +660,13 @@ impl AxoService {
         let models = Self::available_models(&engine).await;
         let catalog = engine
             .axo
-            .catalog(folder, Some(ProjectAccess::Trust), &[], &[], &[])
+            .catalog(
+                folder,
+                Some(ProjectAccess::Trust),
+                bundled::agents(),
+                &[],
+                &[],
+            )
             .map_err(axo_error)?;
         let settings = &catalog.config.settings;
         let choice = settings
@@ -516,11 +730,10 @@ impl AxoService {
             .await
             .map_err(axo_error)?;
         let id = self
-            .insert(folder.to_owned(), session, engine.clone())
+            .register(folder.to_owned(), Arc::new(session), None, engine)
             .await?
             .id
             .clone();
-        self.maybe_unload(&id);
         Ok(id)
     }
 
@@ -532,39 +745,131 @@ impl AxoService {
         sink: EventSink<ChatEvent>,
     ) -> Result<(), ApiError> {
         loop {
-            let live = self.live(folder, id).await?;
-            let sessions = self.sessions.lock();
-            if sessions
-                .get(id)
-                .is_some_and(|current| Arc::ptr_eq(current, &live))
-            {
-                return live.subscribe(attach_id, sink);
+            match self.load(folder, id, false).await? {
+                Loaded::Live(held) => {
+                    let subscribed = {
+                        let sessions = self.sessions.lock();
+                        sessions
+                            .get(id)
+                            .filter(|current| Arc::ptr_eq(current, &held.live))
+                            .map(|_| held.subscribe(attach_id.clone(), sink.clone()))
+                    };
+                    if let Some(result) = subscribed {
+                        return result;
+                    }
+                }
+                Loaded::RootClosed { engine, infos } => {
+                    let (info, _) = find_session_and_root(&infos, id)?;
+                    let by_id: HashMap<&str, &axo::SessionInfo> =
+                        infos.iter().map(|item| (item.id.as_str(), item)).collect();
+                    {
+                        let mut readonly = self.readonly_subscribers.lock();
+                        self.ensure_open()?;
+                        // A resume that finished since `load` has already drained this list.
+                        if self.sessions.lock().contains_key(id) {
+                            continue;
+                        }
+                        let subs = readonly.entry(id.to_owned()).or_default();
+                        subs.retain(|(existing, _)| existing != &attach_id);
+                        subs.push((attach_id.clone(), sink.clone()));
+                    }
+                    let state = build_readonly_state(&engine, info, &by_id).await;
+                    let mut readonly = self.readonly_subscribers.lock();
+                    let registered = readonly.get(id).is_some_and(|subs| {
+                        subs.iter().any(|(existing, held)| {
+                            existing == &attach_id && live::same_sink(held, &sink)
+                        })
+                    });
+                    // Resume upgraded this sink to the live session, or close/detach removed it.
+                    if !registered {
+                        return Ok(());
+                    }
+                    let sent = state.and_then(|state| {
+                        sink(ChatEvent::Snapshot { state }).map_err(ApiError::Internal)
+                    });
+                    if sent.is_err() {
+                        if let Some(subs) = readonly.get_mut(id) {
+                            subs.retain(|(existing, held)| {
+                                existing != &attach_id || !live::same_sink(held, &sink)
+                            });
+                            if subs.is_empty() {
+                                readonly.remove(id);
+                            }
+                        }
+                    }
+                    return sent;
+                }
             }
         }
     }
 
+    pub(crate) async fn resume(&self, folder: &Path, id: &str) -> Result<(), ApiError> {
+        self.ensure_open()?;
+        let Loaded::Live(held) = self.load(folder, id, true).await? else {
+            return Err(ApiError::NotFound(
+                "Parent root session no longer exists".into(),
+            ));
+        };
+        let subs = self
+            .readonly_subscribers
+            .lock()
+            .remove(id)
+            .unwrap_or_default();
+        for (attach_id, sink) in subs {
+            let _ = held.subscribe(attach_id, sink);
+        }
+        Ok(())
+    }
+
     pub(crate) fn detach(&self, id: &str, attach_id: &str) {
+        self.remove_subscriber(id, attach_id, None);
+    }
+
+    /// Detaches only while `sink` is still the registered one, so a stale
+    /// stream cannot remove the subscriber that replaced it under the same id.
+    pub(crate) fn detach_sink(&self, id: &str, attach_id: &str, sink: &EventSink<ChatEvent>) {
+        self.remove_subscriber(id, attach_id, Some(sink));
+    }
+
+    fn remove_subscriber(&self, id: &str, attach_id: &str, only: Option<&EventSink<ChatEvent>>) {
         if let Some(live) = self.sessions.lock().get(id) {
-            live.unsubscribe(attach_id);
+            live.unsubscribe(attach_id, only);
+        }
+        {
+            let mut readonly = self.readonly_subscribers.lock();
+            if let Some(subs) = readonly.get_mut(id) {
+                subs.retain(|(existing, sink)| {
+                    existing != attach_id || only.is_some_and(|only| !live::same_sink(sink, only))
+                });
+                if subs.is_empty() {
+                    readonly.remove(id);
+                }
+            }
         }
         self.maybe_unload(id);
     }
 
     pub(crate) async fn close(&self, id: &str) -> Result<(), ApiError> {
-        let live = {
-            let mut sessions = self.sessions.lock();
-            let live = sessions.remove(id);
-            if let Some(live) = &live {
-                live.broadcast_closed("Session closed".into());
-                self.retire(live.clone());
-            }
-            live
-        };
-        if !self.wait_retiring(id).await {
-            if let Some(live) = live {
-                // Fallback when no runtime handle was bound to spawn a retiring task.
-                live.shutdown().await;
-            }
+        let readonly_subs = self
+            .readonly_subscribers
+            .lock()
+            .remove(id)
+            .unwrap_or_default();
+        for (_, sink) in readonly_subs {
+            let _ = sink(ChatEvent::Closed {
+                message: "Session closed".into(),
+                missing: false,
+            });
+        }
+        let evicted = self.evict(id, "Session closed");
+        if let Some(target) = evicted.last().filter(|live| live.root_id.is_none()) {
+            self.emit_summaries(&target.folder);
+        }
+        for live in &evicted {
+            self.wait_retiring(&live.id).await;
+        }
+        if let Some(root_id) = evicted.last().and_then(|live| live.root_id.as_deref()) {
+            self.maybe_unload(root_id);
         }
         Ok(())
     }
@@ -576,7 +881,8 @@ impl AxoService {
         request_id: String,
         parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
-        self.live(folder, id).await?.prompt(request_id, parts).await
+        let held = self.live(folder, id).await?;
+        held.live.prompt(request_id, parts).await
     }
     pub(crate) async fn steer(
         &self,
@@ -633,6 +939,276 @@ impl AxoService {
             .dismiss(&call_id)
             .map_err(axo_error)
     }
+    pub(crate) async fn background(
+        &self,
+        folder: &Path,
+        id: &str,
+        call_id: String,
+    ) -> Result<bool, ApiError> {
+        Ok(self.live(folder, id).await?.session.background(&call_id))
+    }
+    pub(crate) async fn kill_job(
+        &self,
+        folder: &Path,
+        id: &str,
+        job_id: String,
+    ) -> Result<bool, ApiError> {
+        Ok(self
+            .live(folder, id)
+            .await?
+            .session
+            .kill_job(&job_id)
+            .stopping)
+    }
+    pub(crate) async fn resume_wakes(&self, folder: &Path, id: &str) -> Result<(), ApiError> {
+        self.live(folder, id).await?.session.resume_wakes();
+        Ok(())
+    }
+    pub(crate) async fn context_details(
+        &self,
+        folder: &Path,
+        id: &str,
+    ) -> Result<ChatContextDetails, ApiError> {
+        let live = self.live(folder, id).await?;
+        let inspection = live.session.inspect_prompt();
+        let prompt = inspection
+            .recorded
+            .or(inspection.latest_built)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, body)| ChatPromptSection { name, body })
+            .collect();
+        let inventory = live.session.context_files();
+        let context_files = inventory
+            .startup
+            .into_iter()
+            .map(|file| (file, false))
+            .chain(
+                inventory
+                    .projected_nested
+                    .into_iter()
+                    .map(|file| (file, true)),
+            )
+            .map(|(file, nested)| ChatContextFile {
+                path: convert::display_path(&file.path, folder),
+                content: file.content,
+                nested,
+            })
+            .collect();
+        Ok(ChatContextDetails {
+            prompt,
+            context_files,
+        })
+    }
+
+    /// Lists the session's `local://` files, live or closed.
+    pub(crate) async fn local_files(
+        &self,
+        folder: &Path,
+        id: &str,
+    ) -> Result<ChatLocalFiles, ApiError> {
+        let schemes = self.schemes(folder, id).await?;
+        let schemes = schemes.get();
+        let Some(url) = schemes.exact("local://") else {
+            return Ok(ChatLocalFiles::default());
+        };
+        let root = match schemes
+            .resolve(&url)
+            .await
+            .map_err(|error| ApiError::InvalidArgument(error.to_string()))?
+        {
+            axo::schemes::Target::File { path, .. } => path,
+            axo::schemes::Target::Virtual => return Ok(ChatLocalFiles::default()),
+        };
+        tokio::task::spawn_blocking(move || {
+            fn walk(root: &Path, dir: &Path, out: &mut Vec<ChatLocalFile>) -> Result<(), ApiError> {
+                let io = |path: &Path, err: std::io::Error| {
+                    ApiError::Io(format!("{}: {err}", path.display()))
+                };
+                // `local://` exists only after the first write, and a running agent may
+                // delete a directory mid-walk.
+                let entries = match std::fs::read_dir(dir) {
+                    Ok(entries) => entries,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    Err(err) => return Err(io(dir, err)),
+                };
+                for entry in entries {
+                    let entry = entry.map_err(|err| io(dir, err))?;
+                    let path = entry.path();
+                    let meta = match entry.metadata() {
+                        Ok(meta) => meta,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(err) => return Err(io(&path, err)),
+                    };
+                    if meta.is_dir() {
+                        walk(root, &path, out)?;
+                    } else if let Ok(rel) = path.strip_prefix(root) {
+                        out.push(ChatLocalFile {
+                            path: rel.to_string_lossy().replace('\\', "/"),
+                            size: meta.len(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            // Canonical so ledger paths (always canonical) can be matched against it.
+            let root = std::fs::canonicalize(&root).unwrap_or(root);
+            let mut files = Vec::new();
+            walk(&root, &root, &mut files)?;
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            Ok(ChatLocalFiles {
+                root: root.to_string_lossy().into_owned(),
+                files,
+            })
+        })
+        .await
+        .map_err(|error| ApiError::Internal(format!("listing local files failed: {error}")))?
+    }
+
+    async fn closed_info(
+        &self,
+        axo: &Axo,
+        folder: &Path,
+        id: &str,
+    ) -> Result<axo::SessionInfo, ApiError> {
+        axo.list_sessions(folder)
+            .await
+            .map_err(axo_error)?
+            .into_iter()
+            .find(|info| info.id == id)
+            .ok_or_else(|| ApiError::NotFound(format!("axo session {id}")))
+    }
+
+    /// The session's scheme table: the live session's, or a read-only one for a closed session.
+    async fn schemes(&self, folder: &Path, id: &str) -> Result<SessionSchemes, ApiError> {
+        if let Some(live) = self.sessions.lock().get(id).cloned() {
+            if live.folder != folder {
+                return Err(ApiError::NotFound(format!("axo session {id}")));
+            }
+            return Ok(SessionSchemes::Live(live));
+        }
+        let axo = self.axo().await?;
+        let info = self.closed_info(&axo, folder, id).await?;
+        Ok(SessionSchemes::Closed(
+            axo.schemes(&info.path, Some(ProjectAccess::Trust), &[])
+                .await
+                .map_err(axo_error)?,
+        ))
+    }
+
+    pub(crate) async fn watch_job(
+        &self,
+        folder: &Path,
+        id: &str,
+        attach_id: String,
+        job_id: Option<String>,
+    ) -> Result<Option<ChatJobOutput>, ApiError> {
+        let live_opt = self.sessions.lock().get(id).cloned();
+        let Some(job_id) = job_id else {
+            if let Some(live) = live_opt {
+                live.unwatch_job(&attach_id);
+            }
+            return Ok(None);
+        };
+        if let Some(live) = &live_opt {
+            if live.folder != folder {
+                return Err(ApiError::NotFound(format!("axo session {id}")));
+            }
+            let (call_id, artifact) = live
+                .command_job(&job_id)
+                .ok_or_else(|| ApiError::NotFound(format!("command job {job_id}")))?;
+            if let Some(out) = live
+                .watch_command(attach_id, job_id.clone(), call_id)
+                .await?
+            {
+                return Ok(Some(out));
+            }
+            return Self::read_artifact_tail(live.session.schemes(), job_id, artifact).await;
+        }
+        let axo = self.axo().await?;
+        let info = self.closed_info(&axo, folder, id).await?;
+        let (header, entries) = axo.open_session_read(&info.path).await.map_err(axo_error)?;
+        let artifact = axo::jobs_from_entries(&header, &entries)
+            .into_iter()
+            .find_map(|job| match job.kind {
+                axo::JobKind::Command { artifact, .. } if job.id == job_id => Some(artifact),
+                _ => None,
+            })
+            .ok_or_else(|| ApiError::NotFound(format!("command job {job_id}")))?;
+        let schemes = axo
+            .schemes(&info.path, Some(ProjectAccess::Trust), &[])
+            .await
+            .map_err(axo_error)?;
+        Self::read_artifact_tail(&schemes, job_id, artifact).await
+    }
+
+    async fn read_artifact_tail(
+        schemes: &axo::Schemes,
+        job_id: String,
+        artifact: u64,
+    ) -> Result<Option<ChatJobOutput>, ApiError> {
+        // axo creates the artifact when the command starts, so a missing one means
+        // its retained output was lost.
+        fn unavailable() -> ChatJobOutput {
+            ChatJobOutput {
+                chunks: Vec::new(),
+                capture_failed: true,
+                truncated: false,
+                done: true,
+            }
+        }
+
+        let artifact_ref = format!("artifact://{artifact}");
+        let Some(url) = schemes.exact(&artifact_ref) else {
+            return Err(ApiError::NotFound(artifact_ref));
+        };
+        let target = match schemes.resolve(&url).await {
+            Ok(target) => target,
+            Err(error) if error.0.contains("not found") => {
+                return Ok(Some(unavailable()));
+            }
+            Err(error) => return Err(ApiError::InvalidArgument(error.to_string())),
+        };
+        match target {
+            axo::schemes::Target::File { path, .. } => {
+                let output = match axo::CommandOutput::open(job_id.clone(), artifact, &path) {
+                    Ok(output) => output,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        return Ok(Some(unavailable()));
+                    }
+                    Err(err) => return Err(ApiError::Io(format!("{}: {err}", path.display()))),
+                };
+                let (progress, truncated, chunks, _) = live::read_tail(&output).await?;
+                Ok(Some(ChatJobOutput {
+                    chunks,
+                    capture_failed: progress.capture_failed,
+                    truncated,
+                    done: true,
+                }))
+            }
+            axo::schemes::Target::Virtual => {
+                let text = schemes
+                    .read(&url)
+                    .await
+                    .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
+                let bytes = text.as_bytes();
+                let truncated = bytes.len() as u64 > live::MAX_JOB_SCROLLBACK_BYTES;
+                let start = bytes
+                    .len()
+                    .saturating_sub(live::MAX_JOB_SCROLLBACK_BYTES as usize);
+                let text = live::utf8_tail(&bytes[start..], truncated);
+                Ok(Some(ChatJobOutput {
+                    chunks: vec![ChatOutputChunk {
+                        stream: ChatOutputStream::Merged,
+                        text,
+                    }],
+                    capture_failed: false,
+                    truncated,
+                    done: true,
+                }))
+            }
+        }
+    }
     pub(crate) async fn run_command(
         &self,
         folder: &Path,
@@ -673,28 +1249,8 @@ impl AxoService {
         id: &str,
         url: String,
     ) -> Result<ChatLinkTarget, ApiError> {
-        let live = self.sessions.lock().get(id).cloned();
-        let unloaded;
-        let schemes = if let Some(live) = &live {
-            if live.folder != folder {
-                return Err(ApiError::NotFound(format!("axo session {id}")));
-            }
-            live.session.schemes()
-        } else {
-            let axo = self.axo().await?;
-            let info = axo
-                .list_sessions(folder)
-                .await
-                .map_err(axo_error)?
-                .into_iter()
-                .find(|info| info.id == id)
-                .ok_or_else(|| ApiError::NotFound(format!("axo session {id}")))?;
-            unloaded = axo
-                .schemes(&info.path, Some(ProjectAccess::Trust), &[])
-                .await
-                .map_err(axo_error)?;
-            &unloaded
-        };
+        let schemes = self.schemes(folder, id).await?;
+        let schemes = schemes.get();
         let Some(url) = schemes.exact(&url) else {
             return Ok(ChatLinkTarget::Unhandled);
         };
@@ -773,7 +1329,12 @@ impl AxoService {
             .map_err(axo_error)?;
         let _opening = self.opening.lock().await;
         let session = self
-            .insert(folder.to_owned(), fork.session, live.engine.clone())
+            .register(
+                folder.to_owned(),
+                Arc::new(fork.session),
+                None,
+                live.engine.clone(),
+            )
             .await?;
         self.schedule_refresh(folder);
         Ok(ChatForkInfo {
@@ -817,124 +1378,52 @@ impl AxoService {
             .block_on(listing)
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
+        let by_id: HashMap<&str, &axo::SessionInfo> =
+            infos.iter().map(|info| (info.id.as_str(), info)).collect();
         let mut listing = Listing::default();
-        for info in infos.into_iter().filter(|info| info.spawn.is_none()) {
-            let read = || -> std::io::Result<Option<HistoryRow>> {
-                let mut entries = Vec::new();
-                let mut notices = HashSet::new();
-                let mut row = HistoryRow {
-                    message_count: Some(0),
-                    ..HistoryRow::default()
-                };
-                let mut header = true;
-                history::each_line(std::fs::File::open(&info.path)?, |line| {
-                    if std::mem::take(&mut header)
-                        || ![
-                            "\"type\":\"submission\"",
-                            "\"type\":\"message\"",
-                            "\"type\":\"session_info\"",
-                        ]
-                        .iter()
-                        .any(|kind| line.contains(kind))
-                    {
-                        return ControlFlow::Continue(());
-                    }
-                    let Ok(entry) = serde_json::from_str::<Entry>(line) else {
-                        return ControlFlow::Continue(());
-                    };
-                    // Count stored user/assistant messages with text, not submissions,
-                    // tool-only replies, system messages, or branch/navigation records.
-                    match entry {
-                        Entry::Submission {
-                            submission_id,
-                            kind: axo::SubmissionKind::Quiet | axo::SubmissionKind::Mail,
-                            ..
-                        } => {
-                            notices.insert(submission_id);
-                        }
-                        Entry::Message {
-                            message: axo_agent::AgentMessage::Llm(axo_ai::Message::User(user)),
-                            submission_id,
-                            ..
-                        } if !submission_id
-                            .as_ref()
-                            .is_some_and(|id| notices.contains(id)) =>
-                        {
-                            row.push_message(
-                                MessageRole::User,
-                                user.content.iter().filter_map(|block| match block {
-                                    axo_ai::UserBlock::Text { text } => Some(text.as_str()),
-                                    axo_ai::UserBlock::Image { .. } => None,
-                                }),
-                            )
-                        }
-                        Entry::Message {
-                            message:
-                                axo_agent::AgentMessage::Llm(axo_ai::Message::Assistant(assistant)),
-                            ..
-                        } => {
-                            row.model = Some(format!("{}/{}", assistant.provider, assistant.model));
-                            row.push_message(
-                                MessageRole::Agent,
-                                assistant.content.iter().filter_map(|block| match block {
-                                    axo_ai::AssistantBlock::Text { text, .. } => {
-                                        Some(text.as_str())
-                                    }
-                                    axo_ai::AssistantBlock::Thinking { .. }
-                                    | axo_ai::AssistantBlock::ToolCall(_) => None,
-                                }),
-                            );
-                        }
-                        entry @ (Entry::Submission { .. } | Entry::SessionInfo { .. }) => {
-                            entries.push(entry)
-                        }
-                        Entry::Message { .. }
-                        | Entry::ThinkingLevelChange { .. }
-                        | Entry::ModelChange { .. }
-                        | Entry::AgentChange { .. }
-                        | Entry::ModeChange { .. }
-                        | Entry::JobStart { .. }
-                        | Entry::ChildStart { .. }
-                        | Entry::JobEnd { .. }
-                        | Entry::Usage { .. }
-                        | Entry::Compaction { .. }
-                        | Entry::BranchSummary { .. }
-                        | Entry::Custom { .. }
-                        | Entry::CustomMessage { .. }
-                        | Entry::ContextEdit { .. }
-                        | Entry::Label { .. }
-                        | Entry::Leaf { .. }
-                        | Entry::RunStart { .. }
-                        | Entry::RunEnd { .. }
-                        | Entry::RunResumed { .. }
-                        | Entry::Unknown(_) => {}
-                    }
-                    ControlFlow::Continue(())
-                })?;
-                row.title = convert::title_of(entries.iter());
-                Ok(Some(row))
-            };
-            let Some(Some(mut row)) = history::readable(
-                std::fs::metadata(&info.path)
-                    .and_then(|metadata| history::parsed("axo", &info.path, &metadata, read)),
-                &mut listing.skipped,
-            ) else {
+        let mut roots: HashMap<String, HistoryRow> = HashMap::new();
+        for info in infos.iter().filter(|info| info.spawn.is_none()) {
+            if let Some(row) = parse_axo_row(info, &mut listing.skipped) {
+                roots.insert(row.id.clone(), row);
+            }
+        }
+        for info in &infos {
+            let Some(spawn) = &info.spawn else {
                 continue;
             };
-            row.id = info.id;
-            row.cwd = Some(info.cwd.to_string_lossy().into_owned());
-            row.created_at = Some(info.timestamp);
-            row.updated_at = Some(
-                DateTime::<Utc>::from(info.modified).to_rfc3339_opts(SecondsFormat::Millis, true),
-            );
-            listing.rows.push(row);
+            let Some(root_row) = root_of(&by_id, info).and_then(|root| roots.get_mut(&root.id))
+            else {
+                continue;
+            };
+            let Some(child_row) = parse_axo_row(info, &mut listing.skipped) else {
+                continue;
+            };
+            root_row.children.push(IndexedChildSession {
+                session_id: info.id.clone(),
+                agent: spawn.agent.clone(),
+                team_member: spawn.team.as_ref().map(|t| t.member.clone()),
+                title: child_row
+                    .title
+                    .as_deref()
+                    .and_then(history::normalize_title),
+                model: child_row.model,
+                updated_at: child_row.updated_at,
+            });
         }
-        listing.rows = history::normalize(std::mem::take(&mut listing.rows), Some(folder), None);
+        for root_row in roots.values_mut() {
+            root_row.children.sort_by(|a, b| {
+                b.updated_at
+                    .cmp(&a.updated_at)
+                    .then_with(|| a.session_id.cmp(&b.session_id))
+            });
+        }
+        listing.rows = history::normalize(roots.into_values().collect(), Some(folder), None);
         Ok(listing)
     }
 
     pub(crate) fn shutdown(&self) {
         self.closed.store(true, Ordering::Release);
+        self.readonly_subscribers.lock().clear();
         let sessions: Vec<_> = self
             .sessions
             .lock()
@@ -957,7 +1446,7 @@ impl AxoService {
                 let mut tasks = tokio::task::JoinSet::new();
                 for live in sessions {
                     tasks.spawn(async move {
-                        live.shutdown().await;
+                        live.release().await;
                     });
                 }
                 for slot in retiring {
@@ -990,5 +1479,277 @@ impl AxoService {
     #[cfg(test)]
     pub(crate) fn loaded(&self) -> usize {
         self.sessions.lock().len()
+    }
+}
+
+fn root_of<'a>(
+    by_id: &HashMap<&str, &'a axo::SessionInfo>,
+    info: &'a axo::SessionInfo,
+) -> Option<&'a axo::SessionInfo> {
+    let mut parent = info.spawn.as_ref()?.parent_session_id.as_str();
+    for _ in 0..by_id.len() {
+        let &ancestor = by_id.get(parent)?;
+        match &ancestor.spawn {
+            Some(spawn) => parent = &spawn.parent_session_id,
+            None => return Some(ancestor),
+        }
+    }
+    None
+}
+
+fn find_session_and_root<'a>(
+    infos: &'a [axo::SessionInfo],
+    id: &str,
+) -> Result<(&'a axo::SessionInfo, Option<&'a axo::SessionInfo>), ApiError> {
+    let by_id: HashMap<&str, &axo::SessionInfo> =
+        infos.iter().map(|info| (info.id.as_str(), info)).collect();
+    let info = *by_id
+        .get(id)
+        .ok_or_else(|| ApiError::NotFound(format!("axo session {id}")))?;
+    Ok((info, root_of(&by_id, info)))
+}
+
+fn subtree_usage<'a>(
+    axo: &'a Axo,
+    path: &'a Path,
+    infos_by_id: &'a HashMap<&'a str, &'a axo::SessionInfo>,
+    depth: usize,
+    permits: &'a tokio::sync::Semaphore,
+) -> std::pin::Pin<Box<dyn Future<Output = axo_ai::Usage> + Send + 'a>> {
+    Box::pin(async move {
+        // The permit covers only this read, so nested levels cannot starve each other.
+        let read = {
+            let _permit = permits.acquire().await.ok();
+            axo.open_session_read(path).await.map_err(axo_error)
+        };
+        let (header, entries) = match read {
+            Ok(read) => read,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "child transcript unreadable; tree usage is partial");
+                return axo_ai::Usage::default();
+            }
+        };
+        let mut usage = convert::entries_usage(&entries);
+        if depth < 8 {
+            usage += &children_usage(axo, &header.id, &entries, infos_by_id, depth, permits).await;
+        }
+        usage
+    })
+}
+
+fn children_usage<'a>(
+    axo: &'a Axo,
+    session_id: &'a str,
+    entries: &'a [axo::store::SeqEntry],
+    infos_by_id: &'a HashMap<&'a str, &'a axo::SessionInfo>,
+    depth: usize,
+    permits: &'a tokio::sync::Semaphore,
+) -> std::pin::Pin<Box<dyn Future<Output = axo_ai::Usage> + Send + 'a>> {
+    Box::pin(async move {
+        let children = entries.iter().filter_map(|seq| match &seq.entry {
+            Entry::ChildStart {
+                session_id: owner_id,
+                child_session_id,
+                child_path,
+                ..
+            } if owner_id == session_id => Some(
+                infos_by_id
+                    .get(child_session_id.as_str())
+                    .map(|info| info.path.as_path())
+                    .unwrap_or(child_path.as_path()),
+            ),
+            _ => None,
+        });
+        let reads = children.map(|path| subtree_usage(axo, path, infos_by_id, depth + 1, permits));
+        let mut usage = axo_ai::Usage::default();
+        for child in futures_util::future::join_all(reads).await {
+            usage += &child;
+        }
+        usage
+    })
+}
+
+async fn build_readonly_state(
+    engine: &Engine,
+    info: &axo::SessionInfo,
+    infos_by_id: &HashMap<&str, &axo::SessionInfo>,
+) -> Result<ChatState, ApiError> {
+    let (header, entries) = engine
+        .axo
+        .open_session_read(&info.path)
+        .await
+        .map_err(axo_error)?;
+    let path = convert::branch(&entries);
+    let (model, thinking) = convert::selection(&entries, &path);
+    let window = engine.context_window(model.as_deref());
+    let mut tree_usage = convert::entries_usage(&entries);
+    let permits = tokio::sync::Semaphore::new(8);
+    tree_usage +=
+        &children_usage(&engine.axo, &header.id, &entries, infos_by_id, 0, &permits).await;
+    let has_children = entries
+        .iter()
+        .any(|s| matches!(s.entry, Entry::ChildStart { .. }));
+    let stats = convert::stats(
+        &entries,
+        &path,
+        window,
+        None,
+        has_children.then_some(&tree_usage),
+    );
+    let jobs: Vec<ChatJob> = axo::jobs_from_entries(&header, &entries)
+        .iter()
+        .map(|j| convert::job(j, true))
+        .collect();
+    Ok(ChatState {
+        session_id: info.id.clone(),
+        entries: convert::path_entries(&entries, &path),
+        streaming: None,
+        live: ChatLive {
+            title: convert::title(&entries),
+            running: false,
+            maintenance: None,
+            model,
+            thinking: convert::thinking_to_wire(thinking),
+            tools: Vec::new(),
+            queue: Vec::new(),
+            questions: Vec::new(),
+            retry: None,
+            stats,
+            auto_paused: false,
+            jobs,
+        },
+        toolbox: ChatToolbox::default(),
+        commands: Vec::new(),
+        session_tools: Vec::new(),
+        read_only: true,
+        is_child: header.spawn.is_some(),
+    })
+}
+
+fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<HistoryRow> {
+    let read = || -> std::io::Result<Option<HistoryRow>> {
+        let mut entries = Vec::new();
+        let mut notices = HashSet::new();
+        let mut row = HistoryRow {
+            message_count: Some(0),
+            ..HistoryRow::default()
+        };
+        let mut header = true;
+        history::each_line(std::fs::File::open(&info.path)?, |line| {
+            if std::mem::take(&mut header)
+                || ![
+                    "\"type\":\"submission\"",
+                    "\"type\":\"message\"",
+                    "\"type\":\"session_info\"",
+                ]
+                .iter()
+                .any(|kind| line.contains(kind))
+            {
+                return ControlFlow::Continue(());
+            }
+            let Ok(entry) = serde_json::from_str::<Entry>(line) else {
+                return ControlFlow::Continue(());
+            };
+            // Count stored user/assistant messages with text, not submissions,
+            // tool-only replies, system messages, or branch/navigation records.
+            match entry {
+                Entry::Submission {
+                    submission_id,
+                    kind: axo::SubmissionKind::Quiet | axo::SubmissionKind::Mail,
+                    ..
+                } => {
+                    notices.insert(submission_id);
+                }
+                Entry::Message {
+                    message: axo_agent::AgentMessage::Llm(axo_ai::Message::User(user)),
+                    submission_id,
+                    ..
+                } if !submission_id
+                    .as_ref()
+                    .is_some_and(|id| notices.contains(id)) =>
+                {
+                    row.push_message(
+                        MessageRole::User,
+                        user.content.iter().filter_map(|block| match block {
+                            axo_ai::UserBlock::Text { text } => Some(text.as_str()),
+                            axo_ai::UserBlock::Image { .. } => None,
+                        }),
+                    )
+                }
+                Entry::Message {
+                    message: axo_agent::AgentMessage::Llm(axo_ai::Message::Assistant(assistant)),
+                    ..
+                } => {
+                    row.model = Some(format!("{}/{}", assistant.provider, assistant.model));
+                    row.push_message(
+                        MessageRole::Agent,
+                        assistant.content.iter().filter_map(|block| match block {
+                            axo_ai::AssistantBlock::Text { text, .. } => Some(text.as_str()),
+                            axo_ai::AssistantBlock::Thinking { .. }
+                            | axo_ai::AssistantBlock::ToolCall(_) => None,
+                        }),
+                    );
+                }
+                entry @ (Entry::Submission { .. } | Entry::SessionInfo { .. }) => {
+                    entries.push(entry)
+                }
+                Entry::Message { .. }
+                | Entry::ThinkingLevelChange { .. }
+                | Entry::ModelChange { .. }
+                | Entry::AgentChange { .. }
+                | Entry::ModeChange { .. }
+                | Entry::JobStart { .. }
+                | Entry::ChildStart { .. }
+                | Entry::JobEnd { .. }
+                | Entry::Usage { .. }
+                | Entry::Compaction { .. }
+                | Entry::BranchSummary { .. }
+                | Entry::Custom { .. }
+                | Entry::CustomMessage { .. }
+                | Entry::ContextEdit { .. }
+                | Entry::Label { .. }
+                | Entry::Leaf { .. }
+                | Entry::RunStart { .. }
+                | Entry::RunEnd { .. }
+                | Entry::RunResumed { .. }
+                | Entry::Unknown(_) => {}
+            }
+            ControlFlow::Continue(())
+        })?;
+        row.title = convert::title_of(entries.iter());
+        Ok(Some(row))
+    };
+    let Some(Some(mut row)) = history::readable(
+        std::fs::metadata(&info.path)
+            .and_then(|metadata| history::parsed("axo", &info.path, &metadata, read)),
+        skipped,
+    ) else {
+        return None;
+    };
+    row.id = info.id.clone();
+    row.cwd = Some(info.cwd.to_string_lossy().into_owned());
+    row.created_at = Some(info.timestamp.clone());
+    row.updated_at =
+        Some(DateTime::<Utc>::from(info.modified).to_rfc3339_opts(SecondsFormat::Millis, true));
+    Some(row)
+}
+
+struct Held<'a> {
+    service: &'a AxoService,
+    live: Arc<LiveSession>,
+}
+
+impl Deref for Held<'_> {
+    type Target = LiveSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.live
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.live.unpin();
+        self.service.maybe_unload(&self.live.id);
     }
 }

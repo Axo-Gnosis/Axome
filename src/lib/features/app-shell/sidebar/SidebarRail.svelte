@@ -18,7 +18,7 @@
     GitBranchIcon,
     FolderOpenIcon,
     ClipboardListIcon,
-    MessageSquareIcon,
+    AiChat02Icon,
     Settings01Icon
   } from '@hugeicons/core-free-icons'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
@@ -61,7 +61,7 @@
   }
 
   const views: { id: SidebarView; icon: IconData; label: string }[] = [
-    { id: 'sessions', icon: MessageSquareIcon, label: 'Sessions' },
+    { id: 'sessions', icon: AiChat02Icon, label: 'Sessions' },
     { id: 'files', icon: FolderOpenIcon, label: 'Files' },
     { id: 'git', icon: GitBranchIcon, label: 'Git' },
     { id: 'issues', icon: ClipboardListIcon, label: 'Issues' }

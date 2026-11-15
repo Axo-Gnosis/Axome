@@ -6,7 +6,7 @@ import { revealPath } from '$lib/features/files/explorer.svelte'
 import { openFolder } from '$lib/features/workbench/state.svelte'
 import { openTextFile, type TextRevealTarget } from '$lib/features/workbench/surfaces/text/service.svelte'
 import { platform } from '$lib/platform'
-import { parseFilePathAndLocation, parseLinkTarget, type ParsedLinkTarget } from './parseLink'
+import { isSchemeUrl, parseFilePathAndLocation, parseLinkTarget, type ParsedLinkTarget } from './parseLink'
 const GITHUB_REMOTE_REGEX = /(?:github\.com[:/])([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\s|$)/
 const MAX_GIT_CACHE_ENTRIES = 16
 const gitRepoCache = new Map<string, { owner: string; repo: string } | null>()
@@ -94,6 +94,20 @@ export async function openLink(rawTarget: string, owner?: LinkOwner | null): Pro
   }
 
   return false
+}
+
+/** Opens a tool- or panel-supplied path for a session: scheme URLs through openLink, anything else as a file. */
+export async function openOwnedPath(path: string, line: number | undefined, owner: LinkOwner): Promise<void> {
+  if (isSchemeUrl(path)) {
+    const hasLocation = parseFilePathAndLocation(path).reveal !== null
+    await openLink(line === undefined || hasLocation ? path : `${path}:${line}`, owner)
+  } else {
+    await openFileLocation(
+      path,
+      line === undefined ? undefined : { kind: 'position', lineNumber: line, column: 1 },
+      owner.folderPath
+    )
+  }
 }
 
 async function handleUriLink(target: ParsedLinkTarget, folderPath?: string | null, allowOmp = true): Promise<boolean> {

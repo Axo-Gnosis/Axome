@@ -25,6 +25,7 @@ impl AxomeConfig {
         let mut layer = ConfigLayer {
             origin: path.display().to_string(),
             settings,
+            skill_roots: vec![root.join("skills")],
             agent_roots: vec![root.join("agents")],
             mode_roots: vec![root.join("modes")],
             keyword_roots: vec![root.join("keywords")],
@@ -57,7 +58,6 @@ impl ConfigSource for AxomeConfig {
         fill_roles(&mut layer.settings, last_model.as_deref());
         Ok(UserConfig {
             layer,
-            skill_roots: vec![self.dirs.config.join("skills")],
             context_files: vec![self.dirs.config.join("AGENTS.md")],
         })
     }

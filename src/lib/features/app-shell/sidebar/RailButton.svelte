@@ -15,12 +15,14 @@
     label,
     status = null,
     active = false,
+    tooltipSide = 'right',
     children,
     ...rest
   }: {
     label: string
     status?: ToneStatus | null
     active?: boolean
+    tooltipSide?: 'left' | 'right'
     children: Snippet
     [key: string]: unknown
   } = $props()
@@ -29,7 +31,7 @@
 <IconButton
   size="md"
   tooltip={status ? `${label} · ${status.text}` : label}
-  tooltipSide="right"
+  {tooltipSide}
   {active}
   class="relative"
   {...rest}

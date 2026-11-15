@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ToolStep } from '../../turns'
 import type { ChatContent } from '$lib/types/backend'
-import { bashOutput } from './bashOutput'
+import { bashOutput, formatCommandExit, parseBashDetails } from './bashOutput'
+import { toolHeader } from './toolHeader'
 
 function call(content: ChatContent[], isError = false, details: unknown = null): ToolStep {
   return {
@@ -22,6 +23,7 @@ function call(content: ChatContent[], isError = false, details: unknown = null):
       content,
       details,
       isError,
+      deliverables: [],
       durationMs: null
     }
   }
@@ -45,60 +47,32 @@ test('bash preserves real blank lines rather than spending preview on a phantom 
   assert.deepEqual(output.parts, [text('\n\tlast\n\n')])
 })
 
-test('only an exact final failure paragraph on an error result becomes a semantic status', () => {
-  for (const status of [
-    'Command exited with code 7',
-    'Command timed out after 0.25 seconds',
-    'Command aborted',
-    'Command terminated without an exit code'
-  ]) {
-    const source = `  logged text\t\n\n${status}`
-    const output = bashOutput(call([text(source)], true))
-    assert.equal(output.status, status)
-    assert.deepEqual(output.parts, [text('  logged text\t')])
-    assert.equal(bashOutput(call([text(source)])).status, null)
-  }
-  for (const source of [
-    'log\nCommand aborted',
-    'Command exited with code 0',
-    'Command exited with code 7\n',
-    'Command aborted\n\nmore log',
-    'Command timed out after later seconds'
-  ]) {
-    const output = bashOutput(call([text(source)], true))
-    assert.equal(output.status, null)
-    assert.deepEqual(output.parts, [text(source)])
-  }
-})
-
-test('truncation notice and status are independent of the local tail without losing source text', () => {
-  const path = 'artifact://output-with-spaces.log'
-  const body = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join('\n')
-  for (const notice of [
-    `[Showing lines 1-800 and 801-2001 of 2001. Full output: ${path}]`,
-    `[Showing lines 1-8 and 16-20 of 20 (50.0KB limit). Full output: ${path}]`,
-    `[Lines longer than 768 bytes were cut. Full output: ${path}]`
-  ]) {
-    const source = `${body}\n\n${notice}\n\nCommand exited with code 1`
-    const output = bashOutput(call([text(source)], true, { fullOutput: path }), 12)
-    assert.equal(output.notice, notice.slice(1, -`. Full output: ${path}]`.length))
-    assert.equal(output.status, 'Command exited with code 1')
-    assert.equal(output.hidden, 8)
-    assert.deepEqual(output.parts, [text(body.split('\n').slice(8).join('\n'))])
-    assert.equal(output.fullOutput, path)
-  }
-})
-
-test('lookalike truncation logs stay in the source unless metadata URL and paragraph match', () => {
-  const notice = '[Lines longer than 768 bytes were cut. Full output: artifact://actual.log]'
-  for (const details of [null, {}, { fullOutput: 'artifact://other.log' }, { fullOutput: 12 }]) {
-    const source = `log\n\n${notice}`
-    const output = bashOutput(call([text(source)], false, details))
-    assert.equal(output.notice, null)
-    assert.deepEqual(output.parts, [text(source)])
-  }
-  const source = `log\n${notice}`
-  assert.equal(bashOutput(call([text(source)], false, { fullOutput: 'artifact://actual.log' })).notice, null)
+test('parseBashDetails extracts typed exit, durationMs, fullOutput, and job without regexes', () => {
+  assert.deepEqual(
+    parseBashDetails({
+      exit: { type: 'exited', code: 3 },
+      durationMs: 1250,
+      fullOutput: 'artifact://full.log',
+      job: 'bg-1'
+    }),
+    {
+      exit: { type: 'exited', code: 3 },
+      durationMs: 1250,
+      fullOutput: 'artifact://full.log',
+      job: 'bg-1'
+    }
+  )
+  assert.deepEqual(parseBashDetails({ exit: { type: 'signaled', signal: 9 } }).exit, { type: 'signaled', signal: 9 })
+  assert.deepEqual(parseBashDetails({ exit: { type: 'timedOut', afterSecs: 5 } }).exit, {
+    type: 'timedOut',
+    afterSecs: 5
+  })
+  assert.deepEqual(parseBashDetails({ exit: { type: 'killed', by: 'host' } }).exit, { type: 'killed', by: 'host' })
+  assert.deepEqual(parseBashDetails({ exit: { type: 'aborted' } }).exit, { type: 'aborted' })
+  assert.deepEqual(parseBashDetails({ exit: { type: 'interrupted' } }).exit, { type: 'interrupted' })
+  assert.equal(parseBashDetails({ exit: { type: 'killed', by: 'unknown' } }).exit, null)
+  assert.equal(parseBashDetails({ durationMs: -1 }).durationMs, null)
+  assert.equal(parseBashDetails({ job: '' }).job, null)
   for (const path of [
     '',
     'artifact://',
@@ -106,17 +80,74 @@ test('lookalike truncation logs stay in the source unless metadata URL and parag
     'artifact://invalid\npath',
     'artifact://invalid\u0000path'
   ]) {
-    assert.equal(bashOutput(call([], false, { fullOutput: path })).fullOutput, null)
+    assert.equal(parseBashDetails({ fullOutput: path }).fullOutput, null)
   }
 })
 
-test('image parts survive tail preview, including images after status-like text', () => {
+test('formatCommandExit formats all exit variants and failure flags', () => {
+  assert.deepEqual(formatCommandExit({ type: 'exited', code: 0 }), { label: 'Exited (0)', failed: false })
+  assert.deepEqual(formatCommandExit({ type: 'exited', code: 3 }), { label: 'Exit 3', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'signaled', signal: 15 }), { label: 'Signal 15', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'timedOut', afterSecs: 1 }), { label: 'Timed out (1s)', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'killed', by: 'host' }), { label: 'Stopped', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'killed', by: 'model' }), { label: 'Killed', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'aborted' }), { label: 'Aborted', failed: true })
+  assert.deepEqual(formatCommandExit({ type: 'interrupted' }), { label: 'Interrupted', failed: true })
+})
+
+test('bashOutput preserves literal exit-like lines and reads fullOutput from details', () => {
+  const path = 'artifact://output-with-spaces.log'
+  const body = Array.from({ length: 19 }, (_, index) => `line ${index + 1}`).join('\n')
+  const source = `${body}\nCommand exited with code 7`
+  const output = bashOutput(call([text(source)], true, { fullOutput: path, exit: { type: 'exited', code: 7 } }), 12)
+  assert.equal(output.hidden, 8)
+  assert.equal(output.fullOutput, path)
+  assert.deepEqual(output.parts, [text([...body.split('\n').slice(8), 'Command exited with code 7'].join('\n'))])
+})
+
+test('image parts survive tail preview', () => {
   const image: ChatContent = { type: 'image', mimeType: 'image/png', data: 'image' }
   const source = Array.from({ length: 15 }, (_, index) => `line ${index}`).join('\n')
   const output = bashOutput(call([image, text(source), image]), 12)
   assert.equal(output.hidden, 3)
   assert.deepEqual(output.parts, [image, text(source.split('\n').slice(3).join('\n')), image])
-  const afterImage = bashOutput(call([text('Command aborted'), image], true))
-  assert.equal(afterImage.status, null)
-  assert.deepEqual(afterImage.parts, [text('Command aborted'), image])
+})
+
+test('toolHeader formats typed bash exit statuses and details durationMs', () => {
+  const cases: Array<{ details: unknown; isError: boolean; expectedLabel: string | null; expectedTone: string }> = [
+    {
+      details: { exit: { type: 'exited', code: 0 }, durationMs: 200 },
+      isError: false,
+      expectedLabel: null,
+      expectedTone: 'success'
+    },
+    { details: { exit: { type: 'exited', code: 3 } }, isError: true, expectedLabel: 'Exit 3', expectedTone: 'danger' },
+    {
+      details: { exit: { type: 'timedOut', afterSecs: 1 } },
+      isError: true,
+      expectedLabel: 'Timed out (1s)',
+      expectedTone: 'danger'
+    },
+    {
+      details: { exit: { type: 'killed', by: 'host' } },
+      isError: true,
+      expectedLabel: 'Stopped',
+      expectedTone: 'danger'
+    },
+    {
+      details: { exit: { type: 'killed', by: 'model' } },
+      isError: true,
+      expectedLabel: 'Killed',
+      expectedTone: 'danger'
+    },
+    { details: { exit: { type: 'aborted' } }, isError: true, expectedLabel: 'Aborted', expectedTone: 'danger' },
+    { details: null, isError: true, expectedLabel: 'Aborted', expectedTone: 'danger' }
+  ]
+  for (const item of cases) {
+    const header = toolHeader(call([], item.isError, item.details), '/repo')
+    assert.equal(header.tone, item.expectedTone)
+    assert.deepEqual(header.status, item.expectedLabel ? { label: item.expectedLabel, tone: 'danger' } : null)
+  }
+  const timed = toolHeader(call([], false, { exit: { type: 'exited', code: 0 }, durationMs: 1500 }), '/repo')
+  assert.equal(timed.meta, '1.5s')
 })

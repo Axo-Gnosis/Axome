@@ -742,6 +742,7 @@ async fn stream_socket(mut socket: WebSocket, state: WebState, control: Arc<Cont
             .await;
         }
         Open::Chat {
+            attach_id,
             folder_path,
             session_id,
         } => {
@@ -763,7 +764,16 @@ async fn stream_socket(mut socket: WebSocket, state: WebState, control: Arc<Cont
                 }
             };
             drop(folder);
-            chat_stream::run(state.host, folder_path, session_id, writer, reader, stop).await;
+            chat_stream::run(
+                state.host,
+                attach_id,
+                folder_path,
+                session_id,
+                writer,
+                reader,
+                stop,
+            )
+            .await;
         }
         Open::Lsp { session_id } => {
             let owner = control.session.lock().await.subscriber_id.clone();

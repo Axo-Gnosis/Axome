@@ -6,14 +6,16 @@
 -->
 
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { iconButtonVariants } from '$lib/components/ui/button'
+  import { Chip } from '$lib/components/ui/chip'
   import * as ContextMenu from '$lib/components/ui/context-menu'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
   import { SearchInput } from '$lib/components/ui/input'
-  import { SidebarRow } from '$lib/components/ui/sidebar-row'
+  import { SidebarNote, SidebarRow, sidebarRowVariants } from '$lib/components/ui/sidebar-row'
   import { StatusDot, type StatusTone } from '$lib/components/ui/status-dot'
   import { Spinner } from '$lib/components/ui/progress'
-  import { FilterIcon, MessagesSquareIcon } from '@hugeicons/core-free-icons'
+  import { ChevronRightIcon, FilterIcon, MessagesSquareIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import type { IndexedSession } from '$lib/types/backend'
   import { cn } from '$lib/utils/cn'
@@ -23,18 +25,22 @@
   import HarnessIcon from '$lib/features/sessions/harnesses/HarnessIcon.svelte'
   import { launchLabel, sessionBrand } from '$lib/features/sessions/harnesses/catalog'
   import {
+    childMatchesQuery,
     matchesSession,
     modelKey,
-    modelName,
     parseSessionQuery,
     sessionAgent,
     sortSessions,
     type SessionSort
   } from './query'
-  import { openIndexedSession, sessionLaunchPreset } from './service.svelte'
+  import { historyRows, openChatSession, openIndexedSession, sessionLaunchPreset } from './service.svelte'
   import { getSessionIndex } from './state.svelte'
+  import { chatSummaryTone, getChatLiveSummary } from '$lib/features/chat/summaries.svelte'
+  import { modelName } from '$lib/features/chat/format'
 
-  let { folderPath, rows }: { folderPath: string; rows: IndexedSession[] } = $props()
+  let { folderPath }: { folderPath: string } = $props()
+
+  const rows = $derived(historyRows(folderPath))
 
   const PAGE = 100
   const SORT_LABEL: Record<SessionSort, string> = {
@@ -51,7 +57,7 @@
   let limit = $state(PAGE)
   let modelSearch = $state('')
   let modelSearchInput = $state<HTMLInputElement | null>(null)
-
+  const expandedRoots = new SvelteSet<string>()
   let index = $derived(getSessionIndex(folderPath))
   let sources = $derived(index.snapshot?.sources ?? [])
   let refreshing = $derived(index.loading || sources.some((source) => source.refreshing))
@@ -88,6 +94,9 @@
     for (const session of rows) {
       if (session.model && !seen.has(modelKey(session.model)))
         seen.set(modelKey(session.model), modelName(session.model))
+      for (const child of session.children) {
+        if (child.model && !seen.has(modelKey(child.model))) seen.set(modelKey(child.model), modelName(child.model))
+      }
     }
     return [...seen]
       .map(([key, label]) => ({ token: `model:${key}`, label }))
@@ -98,6 +107,11 @@
     return needle ? modelOptions.filter((option) => option.label.toLowerCase().includes(needle)) : modelOptions
   })
   let selectedModels = $derived(parsed.models.length)
+
+  function toggleRoot(id: string) {
+    if (expandedRoots.has(id)) expandedRoots.delete(id)
+    else expandedRoots.add(id)
+  }
 
   function setQuery(next: string) {
     query = next
@@ -239,47 +253,64 @@
     {/each}
 
     {#if rows.length === 0}
-      <SidebarRow variant="info" divider={false}>
+      <SidebarNote>
         {loadingHistory ? 'Loading session history…' : 'No past sessions in this folder'}
-      </SidebarRow>
+      </SidebarNote>
     {:else if matches.length === 0}
-      <SidebarRow variant="info" divider={false}>No matching sessions</SidebarRow>
+      <SidebarNote>No matching sessions</SidebarNote>
     {:else}
       {#each visible as session (`${session.source.kind}:${session.source.kind === 'harness' ? session.source.harnessId : ''}:${session.sessionId}`)}
         {@const brand = session.source.kind === 'harness' ? sessionBrand(folderPath, session.source.harnessId) : null}
         {@const preset = sessionLaunchPreset(folderPath, session)}
         {@const date = validDate(session.updatedAt)}
+        {@const liveSummary =
+          session.source.kind === 'axo' ? getChatLiveSummary(folderPath, session.sessionId) : undefined}
+        {@const liveTone = liveSummary ? chatSummaryTone(liveSummary) : 'idle'}
+        {@const children = session.children}
+        {@const hasChildren = children.length > 0}
+        {@const autoExpand = filtering && hasChildren && children.some((c) => childMatchesQuery(c, parsed))}
+        {@const isExpanded = expandedRoots.has(session.sessionId) || autoExpand}
         <ContextMenu.Root>
           <ContextMenu.Trigger class="contents">
-            <SidebarRow
-              variant="leaf"
-              divider={false}
-              class="h-auto py-1.5"
-              onclick={() => openIndexedSession(folderPath, session, preset)}
-            >
-              <span class="min-w-0 flex-1 space-y-0.5">
-                <span class="block truncate text-fg">{session.title || 'Untitled Session'}</span>
-                {#if session.lastMessage}
-                  <span class="block truncate text-xs text-muted">
-                    <span class="text-subtle">{session.lastMessage.role === 'user' ? 'You:' : 'Agent:'}</span>
-                    {session.lastMessage.text}
-                  </span>
-                {/if}
-                <span class="flex min-w-0 items-center gap-1 text-2xs whitespace-nowrap text-subtle">
-                  {#if session.source.kind === 'axo'}
-                    <Icon icon={MessagesSquareIcon} size={11} class="shrink-0" />
-                  {:else if brand?.icon}
-                    <HarnessIcon icon={brand.icon} size={11} class="shrink-0" />
-                  {/if}
-                  <span class="shrink-0">{brand ? launchLabel(brand.label, preset) : 'axo'}</span>
-                  {#if session.messageCount}
-                    <span class="shrink-0">· {session.messageCount} {session.messageCount === 1 ? 'msg' : 'msgs'}</span>
-                  {/if}
-                  {#if session.model}<span class="min-w-0 truncate">· {modelName(session.model)}</span>{/if}
-                  {#if date}<span class="shrink-0">· <span class="font-mono">{timeAgo(date)}</span></span>{/if}
-                </span>
-              </span>
-            </SidebarRow>
+            {#if hasChildren}
+              <div
+                class={cn(sidebarRowVariants({ density: 'compact', divider: false }), 'h-auto gap-1 py-0 pr-1.5 pl-0')}
+              >
+                <button
+                  type="button"
+                  class="flex min-w-0 flex-1 cursor-pointer items-center py-1.5 ps-2.5 text-left focus-visible:shadow-focus-ring focus-visible:outline-none"
+                  onclick={() => openIndexedSession(folderPath, session, preset)}
+                >
+                  {@render rootRowBody(session, brand, preset, date, liveTone)}
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  aria-label={isExpanded ? 'Collapse subagents' : 'Expand subagents'}
+                  onclick={(e) => {
+                    e.stopPropagation()
+                    toggleRoot(session.sessionId)
+                  }}
+                  class="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded px-1 py-0.5 font-mono text-2xs text-muted hover:bg-raised hover:text-bright focus-visible:shadow-focus-ring focus-visible:outline-none"
+                >
+                  <Icon
+                    icon={ChevronRightIcon}
+                    size={11}
+                    class={cn('duration-fast transition-transform', isExpanded && 'rotate-90')}
+                  />
+                  <span>{children.length}</span>
+                </button>
+              </div>
+            {:else}
+              <SidebarRow
+                density="compact"
+                divider={false}
+                class="h-auto py-1.5"
+                onclick={() => openIndexedSession(folderPath, session, preset)}
+              >
+                {@render rootRowBody(session, brand, preset, date, liveTone)}
+              </SidebarRow>
+            {/if}
           </ContextMenu.Trigger>
           <!-- Only worth a menu when several presets of this harness share the session's store. -->
           {#if session.source.kind === 'harness' && brand && session.source.presets.length > 1}
@@ -298,17 +329,79 @@
             </ContextMenu.Content>
           {/if}
         </ContextMenu.Root>
+        {#if hasChildren && isExpanded}
+          {#each children as child (child.sessionId)}
+            {@const childDate = validDate(child.updatedAt)}
+            <SidebarRow
+              density="compact"
+              divider={false}
+              class="h-auto py-1 ps-6"
+              onclick={() =>
+                openChatSession(
+                  folderPath,
+                  child.sessionId,
+                  child.title ?? child.teamMember ?? child.agent ?? 'Subagent'
+                )}
+            >
+              <Chip class="shrink-0 font-mono text-2xs">{child.teamMember ?? child.agent ?? 'subagent'}</Chip>
+              <span class="min-w-0 flex-1 truncate text-xs text-fg">{child.title || 'Subagent'}</span>
+              {#if child.model}
+                <span class="shrink-0 text-2xs text-subtle">{modelName(child.model)}</span>
+              {/if}
+              {#if childDate}
+                <span class="shrink-0 font-mono text-2xs text-subtle">{timeAgo(childDate)}</span>
+              {/if}
+            </SidebarRow>
+          {/each}
+        {/if}
       {/each}
       {#if matches.length > visible.length}
-        <SidebarRow variant="action" divider={false} onclick={() => (limit += PAGE)}>Show More</SidebarRow>
+        <SidebarRow density="compact" tone="muted" divider={false} onclick={() => (limit += PAGE)}>Show More</SidebarRow
+        >
       {/if}
     {/if}
   </div>
 </div>
 
 {#snippet statusLine(tone: StatusTone, message: string)}
-  <SidebarRow variant="info" divider={false} class="h-auto min-h-6 items-start py-1">
+  <SidebarNote class="h-auto min-h-6 items-start py-1">
     <StatusDot {tone} size="sm" class="mt-1 shrink-0" />
     <span class="min-w-0 flex-1 break-words">{message}</span>
-  </SidebarRow>
+  </SidebarNote>
+{/snippet}
+
+{#snippet rootRowBody(
+  session: IndexedSession,
+  brand: ReturnType<typeof sessionBrand> | null,
+  preset: string | null,
+  date: string | null,
+  liveTone: StatusTone
+)}
+  <span class="min-w-0 flex-1 space-y-0.5">
+    <span class="flex items-center gap-1.5">
+      <span class="min-w-0 flex-1 truncate text-fg">{session.title || 'Untitled Session'}</span>
+      {#if liveTone !== 'idle'}
+        <StatusDot tone={liveTone} size="sm" class="shrink-0" />
+      {/if}
+    </span>
+    {#if session.lastMessage}
+      <span class="block truncate text-xs text-muted">
+        <span class="text-subtle">{session.lastMessage.role === 'user' ? 'You:' : 'Agent:'}</span>
+        {session.lastMessage.text}
+      </span>
+    {/if}
+    <span class="flex min-w-0 items-center gap-1 text-2xs whitespace-nowrap text-subtle">
+      {#if session.source.kind === 'axo'}
+        <Icon icon={MessagesSquareIcon} size={11} class="shrink-0" />
+      {:else if brand?.icon}
+        <HarnessIcon icon={brand.icon} size={11} class="shrink-0" />
+      {/if}
+      <span class="shrink-0">{brand ? launchLabel(brand.label, preset) : 'axo'}</span>
+      {#if session.messageCount}
+        <span class="shrink-0">· {session.messageCount} {session.messageCount === 1 ? 'msg' : 'msgs'}</span>
+      {/if}
+      {#if session.model}<span class="min-w-0 truncate">· {modelName(session.model)}</span>{/if}
+      {#if date}<span class="shrink-0">· <span class="font-mono">{timeAgo(date)}</span></span>{/if}
+    </span>
+  </span>
 {/snippet}

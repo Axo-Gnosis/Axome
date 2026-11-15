@@ -17,11 +17,16 @@ import type {
   AppRuntimeInfo,
   BranchSummary,
   ChatAnswer,
+  ChatContextDetails,
   ChatForkInfo,
+  ChatJobOutput,
+  ChatLiveSummary,
   ChatLinkTarget,
+  ChatLocalFiles,
   ChatModelCatalog,
   ChatModel,
   ChatPart,
+  ChatSummariesChangedEvent,
   ChatThinking,
   ExtensionCatalog,
   ExtensionGrammar,
@@ -269,6 +274,38 @@ export const backend = {
     },
     fork(folderPath: string, sessionId: string, entryId: string): Promise<ChatForkInfo> {
       return invoke<ChatForkInfo>('chat_fork', { folderPath, sessionId, entryId })
+    },
+    background(folderPath: string, sessionId: string, callId: string): Promise<boolean> {
+      return invoke<boolean>('chat_background', { folderPath, sessionId, callId })
+    },
+    killJob(folderPath: string, sessionId: string, jobId: string): Promise<boolean> {
+      return invoke<boolean>('chat_kill_job', { folderPath, sessionId, jobId })
+    },
+    resumeWakes(folderPath: string, sessionId: string): Promise<void> {
+      return invoke<void>('chat_resume_wakes', { folderPath, sessionId })
+    },
+    resume(folderPath: string, sessionId: string): Promise<void> {
+      return invoke<void>('chat_resume', { folderPath, sessionId })
+    },
+    watchJob(
+      folderPath: string,
+      sessionId: string,
+      attachId: string,
+      jobId: string | null
+    ): Promise<ChatJobOutput | null> {
+      return invoke<ChatJobOutput | null>('chat_watch_job', { folderPath, sessionId, attachId, jobId })
+    },
+    contextDetails(folderPath: string, sessionId: string): Promise<ChatContextDetails> {
+      return invoke<ChatContextDetails>('chat_context_details', { folderPath, sessionId })
+    },
+    localFiles(folderPath: string, sessionId: string): Promise<ChatLocalFiles> {
+      return invoke<ChatLocalFiles>('chat_local_files', { folderPath, sessionId })
+    },
+    liveSummaries(folderPath: string): Promise<ChatLiveSummary[]> {
+      return invoke<ChatLiveSummary[]>('chat_live_summaries', { folderPath })
+    },
+    onSummariesChanged(handler: (event: ChatSummariesChangedEvent) => void): Promise<Unsubscribe> {
+      return getHostTransport().subscribe('chat-summaries-changed', handler)
     },
     attach(params: ChatStreamRequest['params'], sinks: ChatSinks): StreamHandle<void> {
       return getHostTransport().openStream({ method: 'chat_attach', params }, sinks)

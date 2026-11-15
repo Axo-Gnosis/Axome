@@ -8,9 +8,12 @@
 import { backend } from '$lib/api/backend'
 import { stopTerminalProcess } from '$lib/features/terminal/lifecycle'
 import * as chats from '$lib/features/chat/registry'
+import { formatCount } from '$lib/features/chat/format'
+import { isActiveJob } from '$lib/features/chat/jobs'
+import { getChatLiveSummary } from '$lib/features/chat/summaries.svelte'
 import { confirmAsync } from '$lib/features/confirm/service.svelte'
 import { notify } from '$lib/features/notifications/state.svelte'
-import { isProcessLive, type TabId } from '$lib/features/workbench/model'
+import { isProcessLive, type ChatTab, type TabId } from '$lib/features/workbench/model'
 import { closeTab, getActiveTab, getTabs, releaseClosedWorktreeFolders } from '$lib/features/workbench/state.svelte'
 import {
   clearTextSurfaceDirty,
@@ -22,6 +25,46 @@ import { getErrorMessage } from '$lib/utils/client-error'
 import { isPathWithin } from '$lib/utils/paths'
 import { isTabInert } from '$lib/features/workbench/groups.svelte'
 import { textModelRevision, type TextModelRevision } from '$lib/features/editor/renderers/monaco/text/modelCache'
+
+async function confirmStopChatWork(tab: ChatTab): Promise<'none' | 'confirmed' | 'cancelled'> {
+  if (!tab.sessionId) return 'none'
+  const controller = chats.get(tab.id)
+  if (controller?.readOnly || controller?.state?.isChild) return 'none'
+  const liveJobs = controller?.state?.live.jobs
+  let commands = 0
+  let children = 0
+  if (liveJobs !== undefined) {
+    for (const job of liveJobs) {
+      if (!isActiveJob(job.status)) continue
+      if (job.kind.kind === 'command') commands += 1
+      else children += 1
+    }
+  } else {
+    const summary = getChatLiveSummary(tab.folderPath, tab.sessionId)
+    commands = summary?.activeCommands ?? 0
+    children = summary?.activeChildren ?? 0
+  }
+  if (commands === 0 && children === 0) return 'none'
+  const parts: string[] = []
+  if (commands > 0) parts.push(formatCount(commands, 'background job'))
+  if (children > 0) parts.push(formatCount(children, 'subagent'))
+  const proceed = await confirmAsync({
+    title: 'Close Chat',
+    message: `Closing this chat will stop ${parts.join(' and ')}.`,
+    confirmLabel: 'Stop and Close',
+    cancelLabel: 'Cancel'
+  })
+  return proceed ? 'confirmed' : 'cancelled'
+}
+
+function confirmDiscard(fileName: string): Promise<boolean> {
+  return confirmAsync({
+    title: 'Unsaved changes',
+    message: `${fileName} has unsaved changes. Close and lose them?`,
+    confirmLabel: 'Close',
+    cancelLabel: 'Keep editing'
+  })
+}
 
 /**
  * Close a specific tab with full safety checks:
@@ -36,7 +79,7 @@ import { textModelRevision, type TextModelRevision } from '$lib/features/editor/
  */
 export async function closeTabWithChecks(
   tabId: TabId,
-  options: { strict?: boolean; unsavedRevision?: TextModelRevision | null } = {}
+  options: { strict?: boolean; unsavedRevision?: TextModelRevision | null; chatWorkConfirmed?: boolean } = {}
 ): Promise<boolean> {
   const tab = getTabs().find((t) => t.id === tabId)
   if (!tab) return false
@@ -48,12 +91,7 @@ export async function closeTabWithChecks(
     const consent = options.unsavedRevision
     if (!revision || !consent || revision.model !== consent.model || revision.version !== consent.version) {
       for (;;) {
-        const proceed = await confirmAsync({
-          title: 'Unsaved changes',
-          message: `${tab.fileName} has unsaved changes. Close and lose them?`,
-          confirmLabel: 'Close',
-          cancelLabel: 'Keep editing'
-        })
+        const proceed = await confirmDiscard(tab.fileName)
         if (!proceed) return false
         const current = textModelRevision(tab)
         if (
@@ -76,6 +114,23 @@ export async function closeTabWithChecks(
     isTabInert(current)
   )
     return false
+
+  if (tab.kind === 'chat' && tab.sessionId && !options.chatWorkConfirmed) {
+    const consent = await confirmStopChatWork(tab)
+    if (consent === 'cancelled') return false
+    if (consent === 'confirmed') {
+      current = getTabs().find((candidate) => candidate.id === tabId)
+      if (
+        !current ||
+        current.folderPath !== tab.folderPath ||
+        current.kind !== 'chat' ||
+        current.sessionId !== tab.sessionId ||
+        current.locked ||
+        isTabInert(current)
+      )
+        return false
+    }
+  }
 
   if ((tab.kind === 'session' || tab.kind === 'shell') && (tab.runId !== null || isProcessLive(tab.status))) {
     try {
@@ -141,23 +196,30 @@ export async function closeWorktreeTabs(roots: string[]): Promise<boolean> {
     return false
   }
   const unsavedConsent = new Map<TabId, TextModelRevision | null>()
+  const chatWorkConsent = new Set<TabId>()
   for (const tab of affected) {
-    if (tab.kind !== 'text' || !isTextSurfaceDirty(tab.id)) continue
-    const revision = textModelRevision(tab)
-    const proceed = await confirmAsync({
-      title: 'Unsaved changes',
-      message: `${tab.fileName} has unsaved changes. Close and lose them?`,
-      confirmLabel: 'Close',
-      cancelLabel: 'Keep editing'
-    })
-    if (!proceed) return false
-    unsavedConsent.set(tab.id, revision)
+    if (tab.kind === 'text' && isTextSurfaceDirty(tab.id)) {
+      const revision = textModelRevision(tab)
+      const proceed = await confirmDiscard(tab.fileName)
+      if (!proceed) return false
+      unsavedConsent.set(tab.id, revision)
+    } else if (tab.kind === 'chat' && tab.sessionId) {
+      const consent = await confirmStopChatWork(tab)
+      if (consent === 'cancelled') return false
+      if (consent === 'confirmed') chatWorkConsent.add(tab.id)
+    }
   }
   let closed = 0
   try {
     for (const tab of affected) {
       if (!getTabs().some((current) => current.id === tab.id)) continue
-      if (!(await closeTabWithChecks(tab.id, { strict: true, unsavedRevision: unsavedConsent.get(tab.id) }))) {
+      if (
+        !(await closeTabWithChecks(tab.id, {
+          strict: true,
+          unsavedRevision: unsavedConsent.get(tab.id),
+          chatWorkConfirmed: chatWorkConsent.has(tab.id)
+        }))
+      ) {
         throw new Error('A tab could not be stopped or closed.')
       }
       closed += 1

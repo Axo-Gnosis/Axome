@@ -5,7 +5,13 @@ Surveys of axo as Axome sees it. Each was made by a read-only subagent against a
 - **Labels:** claims marked [INFERENCE] were not verified directly.
 - **Axome side:** every report also cites Axome at its HEAD of the day; Axome had not changed between the surveys.
 
-## axo `843cd73` (2026-11-10): current
+## axo `cd12162` (2026-11-13): delta survey
+
+| File | Question |
+|---|---|
+| [`axo-cd12162/host-capability-handoff.md`](axo-cd12162/host-capability-handoff.md) | What axo added after `97513d6` for Axome: activity signal, typed receipts and host `send`, prompt/context/ledger inspection, labeled command output, effective mode and edited results, retry detail, project skill roots; and which phase uses each |
+
+## axo `843cd73` (2026-11-10): current baseline
 
 | File | Question |
 |---|---|

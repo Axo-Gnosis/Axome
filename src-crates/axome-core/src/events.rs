@@ -1,3 +1,4 @@
+use axome_protocol::chat::ChatSummariesChangedEvent;
 use axome_protocol::files::FilesChangedEvent;
 use axome_protocol::git::GitChangedEvent;
 use axome_protocol::rpc::RecentFolder;
@@ -26,6 +27,7 @@ pub enum HostEvent {
     NixChanged(String),
     SessionsChanged(String),
     IssuesChanged(String),
+    ChatSummariesChanged(ChatSummariesChangedEvent),
     FileMoved {
         folder_path: PathBuf,
         old_path: PathBuf,

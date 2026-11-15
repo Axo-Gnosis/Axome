@@ -10,61 +10,130 @@ import {
   setChatTabStatus,
   setChatTabTitle
 } from '$lib/features/workbench/state.svelte'
-import type { ChatAnswer, ChatBlock, ChatEntry, ChatEvent, ChatPart, ChatState } from '$lib/types/backend'
+import type {
+  ChatAnswer,
+  ChatBlock,
+  ChatEntry,
+  ChatEvent,
+  ChatJobOutput,
+  ChatPart,
+  ChatState
+} from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 import { getOrCreate } from './registry'
 import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
 import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent } from './parts/parts'
 
+export type ChatTarget = { kind: 'tab'; tabId: TabId } | { kind: 'session'; folderPath: string; sessionId: string }
+
+type JobOutputEvent = Extract<ChatEvent, { type: 'jobOutput' }>
+
+function mergeJobOutput(prev: ChatJobOutput | undefined, event: JobOutputEvent): ChatJobOutput {
+  const chunks = event.reset || !prev ? [] : prev.chunks.map((chunk) => ({ ...chunk }))
+  for (const chunk of event.output.chunks) {
+    const last = chunks.at(-1)
+    if (last?.stream === chunk.stream) last.text += chunk.text
+    else chunks.push({ ...chunk })
+  }
+  const MAX_CHARS = 131_072
+  let excess = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0) - MAX_CHARS
+  const clamped = excess > 0
+  while (excess > 0 && chunks.length) {
+    const first = chunks[0]
+    if (first.text.length <= excess) {
+      excess -= first.text.length
+      chunks.shift()
+    } else {
+      // Don't leave a low surrogate at the capped head.
+      const code = first.text.charCodeAt(excess)
+      first.text = first.text.slice(excess + (code >= 0xdc00 && code <= 0xdfff ? 1 : 0))
+      break
+    }
+  }
+  return {
+    chunks,
+    captureFailed: event.output.captureFailed,
+    truncated: event.reset ? event.output.truncated : prev?.truncated || event.output.truncated || clamped,
+    done: event.output.done
+  }
+}
+
 export class ChatController {
-  readonly tabId: TabId
+  readonly #target: ChatTarget
   state = $state<ChatState | null>(null)
   connection = $state<'detached' | 'attaching' | 'live' | 'reconnecting' | 'closed'>('detached')
   error = $state<string | null>(null)
   draft = $state<ChatPart[]>([])
   editing = $state<{ entryId: string; anchor: string | null; parts: ChatPart[] } | null>(null)
+  jobOutputs = $state<Record<string, ChatJobOutput>>({})
   #handle: StreamHandle<void> | null = null
   #generation = 0
   #closing = false
+  #attachId = $state<string | null>(null)
+  #watchSeq = 0
+  #watchChain: Promise<void> = Promise.resolve()
+  // The job this attachment watches; `pending` buffers deltas until the tail response lands.
+  #watch: { jobId: string; pending: JobOutputEvent[] | null } | null = null
 
-  constructor(tabId: TabId) {
-    this.tabId = tabId
+  constructor(target: ChatTarget) {
+    this.#target = target
   }
 
   get #tab(): ChatTab | undefined {
-    const tab = getTabs().find((candidate) => candidate.id === this.tabId)
+    const target = this.#target
+    if (target.kind !== 'tab') return undefined
+    const tab = getTabs().find((candidate) => candidate.id === target.tabId)
     return tab?.kind === 'chat' ? tab : undefined
+  }
+
+  get folderPath(): string | null {
+    return this.#target.kind === 'tab' ? (this.#tab?.folderPath ?? null) : this.#target.folderPath
+  }
+
+  get sessionId(): string | null {
+    return this.#target.kind === 'tab' ? (this.#tab?.sessionId ?? null) : this.#target.sessionId
   }
 
   get busy(): boolean {
     return !!this.state && (this.state.live.running || this.state.live.maintenance !== null)
   }
 
+  get attachId(): string | null {
+    return this.#attachId
+  }
+
+  get readOnly(): boolean {
+    return this.state?.readOnly ?? false
+  }
+
   async attach(): Promise<void> {
     this.release()
-    const tab = this.#tab
-    if (!tab) return
+    const folderPath = this.folderPath
+    if (!folderPath) return
+    let sessionId = this.sessionId
+    if (this.#target.kind === 'session' && !sessionId) return
     this.error = null
     // A reconnect keeps the transcript it shows until the new snapshot replaces it.
-    if (this.state?.sessionId !== tab.sessionId) this.state = null
+    if (this.state?.sessionId !== sessionId) this.state = null
     this.connection = 'attaching'
     const generation = this.#generation
     try {
-      let sessionId = tab.sessionId
-      if (sessionId) void loadChatModels(tab.folderPath)
+      if (sessionId) void loadChatModels(folderPath)
       else {
-        await loadChatModels(tab.folderPath)
+        await loadChatModels(folderPath)
         if (generation !== this.#generation) return
-        const { catalog, error } = getChatModels(tab.folderPath)
+        const { catalog, error } = getChatModels(folderPath)
         const model = catalog?.defaultModel ?? catalog?.models[0]?.selector
         if (!catalog || !model) throw new Error(error ?? `No axo models are available. ${MODELS_HINT}`)
-        sessionId = await backend.chat.create(tab.folderPath, model, catalog.defaultThinking)
+        sessionId = await backend.chat.create(folderPath, model, catalog.defaultThinking)
         // Kept even when superseded: the next attach reuses it, and the backend reclaims an unattached one.
-        setChatTabSessionId(this.tabId, sessionId)
+        if (this.#target.kind === 'tab') setChatTabSessionId(this.#target.tabId, sessionId)
         if (generation !== this.#generation) return
       }
+      const attachId = crypto.randomUUID()
+      this.#attachId = attachId
       const handle = backend.chat.attach(
-        { attachId: crypto.randomUUID(), folderPath: tab.folderPath, sessionId },
+        { attachId, folderPath, sessionId },
         {
           onEvent: (event) => {
             if (generation === this.#generation) this.apply(event)
@@ -75,9 +144,10 @@ export class ChatController {
       await handle.ready
     } catch (error) {
       if (generation !== this.#generation) return
+      this.#attachId = null
       this.connection = 'closed'
       this.error = getErrorMessage(error)
-      setChatTabStatus(this.tabId, 'failed')
+      if (this.#target.kind === 'tab') setChatTabStatus(this.#target.tabId, 'failed')
       throw error
     }
   }
@@ -88,7 +158,7 @@ export class ChatController {
         this.state = event.state
         this.connection = 'live'
         this.error = null
-        setChatTabTitle(this.tabId, event.state.live.title ?? 'New Chat')
+        if (this.#target.kind === 'tab') setChatTabTitle(this.#target.tabId, event.state.live.title ?? 'New Chat')
         break
       case 'entry':
         if (this.state) {
@@ -98,7 +168,10 @@ export class ChatController {
         break
       case 'live':
         if (this.state) this.state.live = event.live
-        setChatTabTitle(this.tabId, event.live.title ?? 'New Chat')
+        if (this.#target.kind === 'tab') setChatTabTitle(this.#target.tabId, event.live.title ?? 'New Chat')
+        break
+      case 'sessionTools':
+        if (this.state) this.state.sessionTools = event.tools
         break
       case 'delta': {
         if (!this.state) break
@@ -138,18 +211,30 @@ export class ChatController {
         }
         break
       }
-      case 'notice':
+      case 'jobOutput': {
+        const watch = this.#watch
+        if (watch?.jobId !== event.jobId) break
+        if (watch.pending) watch.pending.push(event)
+        else this.jobOutputs = { [event.jobId]: mergeJobOutput(this.jobOutputs[event.jobId], event) }
+        break
+      }
+      case 'error':
         notify.error('axo', event.message)
         break
       case 'closed':
         if (this.#closing) return
         if (event.missing) {
-          setChatTabSessionId(this.tabId, null)
-          this.state = null
-          this.editing = null
-          this.error = null
-          notify.info('Started a new chat', 'The previous axo session no longer exists.')
-          void this.attach().catch(() => {})
+          if (this.#target.kind === 'tab') {
+            setChatTabSessionId(this.#target.tabId, null)
+            this.state = null
+            this.editing = null
+            this.error = null
+            notify.info('Started a new chat', 'The previous axo session no longer exists.')
+            void this.attach().catch(() => {})
+          } else {
+            this.connection = 'closed'
+            this.error = event.message || 'The axo session no longer exists.'
+          }
         } else {
           this.connection = 'closed'
           this.error = event.message
@@ -159,24 +244,27 @@ export class ChatController {
         this.connection = 'reconnecting'
         break
     }
-    setChatTabStatus(
-      this.tabId,
-      this.connection === 'closed'
-        ? 'failed'
-        : this.state?.live.questions.length
-          ? 'waiting'
-          : this.busy
-            ? 'running'
-            : 'idle'
-    )
+    if (this.#target.kind === 'tab') {
+      setChatTabStatus(
+        this.#target.tabId,
+        this.connection === 'closed'
+          ? 'failed'
+          : this.state?.live.questions.length
+            ? 'waiting'
+            : this.busy
+              ? 'running'
+              : 'idle'
+      )
+    }
   }
 
   async close(): Promise<void> {
-    const tab = this.#tab
-    if (!tab?.sessionId) return
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId) return
     this.#closing = true
     try {
-      await backend.chat.close(tab.folderPath, tab.sessionId)
+      await backend.chat.close(folderPath, sessionId)
     } catch (error) {
       this.#closing = false
       throw error
@@ -206,10 +294,11 @@ export class ChatController {
 
   /** Runs a catalog command; resolves to its error message, or null once it ran or began. */
   async runCommand(name: string, args: Record<string, unknown>): Promise<string | null> {
-    const tab = this.#tab
-    if (!tab?.sessionId || this.connection !== 'live') return 'The chat is not connected.'
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId || this.connection !== 'live') return 'The chat is not connected.'
     try {
-      await backend.chat.runCommand(tab.folderPath, tab.sessionId, name, args)
+      await backend.chat.runCommand(folderPath, sessionId, name, args)
       return null
     } catch (error) {
       return getErrorMessage(error)
@@ -217,10 +306,11 @@ export class ChatController {
   }
 
   async #withSession(operation: (folderPath: string, sessionId: string) => Promise<unknown>): Promise<boolean> {
-    const tab = this.#tab
-    if (!tab?.sessionId) return false
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId) return false
     try {
-      await operation(tab.folderPath, tab.sessionId)
+      await operation(folderPath, sessionId)
       return true
     } catch (error) {
       notify.error('axo', getErrorMessage(error))
@@ -238,9 +328,10 @@ export class ChatController {
   }
 
   async stop(): Promise<void> {
-    const tab = this.#tab
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
     // Closing a tab must observe abort failures and keep the tab open.
-    if (tab?.sessionId) await backend.chat.abort(tab.folderPath, tab.sessionId)
+    if (folderPath && sessionId) await backend.chat.abort(folderPath, sessionId)
   }
 
   async answer(callId: string, answers: ChatAnswer[]): Promise<void> {
@@ -249,6 +340,69 @@ export class ChatController {
 
   async dismiss(callId: string): Promise<void> {
     await this.#withSession((folder, id) => backend.chat.dismiss(folder, id, callId))
+  }
+
+  async background(callId: string): Promise<boolean> {
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId) return false
+    try {
+      return await backend.chat.background(folderPath, sessionId, callId)
+    } catch (error) {
+      notify.error('axo', getErrorMessage(error))
+      return false
+    }
+  }
+
+  async killJob(jobId: string): Promise<boolean> {
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId) return false
+    try {
+      return await backend.chat.killJob(folderPath, sessionId, jobId)
+    } catch (error) {
+      notify.error('axo', getErrorMessage(error))
+      return false
+    }
+  }
+
+  async resumeWakes(): Promise<void> {
+    await this.#withSession((folder, id) => backend.chat.resumeWakes(folder, id))
+  }
+
+  async resume(): Promise<void> {
+    await this.#withSession((folder, id) => backend.chat.resume(folder, id))
+  }
+
+  watchJob(jobId: string | null): Promise<void> {
+    const seq = ++this.#watchSeq
+    this.#watchChain = this.#watchChain.then(() => this.#runWatch(seq, jobId))
+    return this.#watchChain
+  }
+
+  async #runWatch(seq: number, jobId: string | null): Promise<void> {
+    // Superseded before it was sent: the newer call replaces the server-side watcher itself.
+    if (seq !== this.#watchSeq) return
+    const attachId = this.#attachId
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!attachId || !folderPath || !sessionId) return
+    const watch = jobId ? { jobId, pending: [] as JobOutputEvent[] | null } : null
+    this.#watch = watch
+    const kept = jobId ? this.jobOutputs[jobId] : undefined
+    this.jobOutputs = jobId && kept ? { [jobId]: kept } : {}
+    try {
+      const out = await backend.chat.watchJob(folderPath, sessionId, attachId, jobId)
+      if (this.#attachId !== attachId || this.#watch !== watch || !watch) return
+      let output = out ?? undefined
+      for (const event of watch.pending ?? []) output = mergeJobOutput(output, event)
+      watch.pending = null
+      if (output) this.jobOutputs = { [watch.jobId]: output }
+    } catch (error) {
+      if (watch) watch.pending = null
+      if (this.#attachId !== attachId) return
+      notify.error('axo', getErrorMessage(error))
+    }
   }
 
   startEdit(entry: ChatEntry): void {
@@ -292,6 +446,10 @@ export class ChatController {
     this.#generation++
     this.#handle?.dispose()
     this.#handle = null
+    this.#attachId = null
+    this.jobOutputs = {}
+    this.#watch = null
+    this.#watchSeq++
     this.connection = 'detached'
   }
 }

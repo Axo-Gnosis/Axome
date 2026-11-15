@@ -25,18 +25,19 @@
   let {
     value,
     size = 14,
+    tone = 'muted',
     label,
     class: className,
     ...rest
   }: SVGAttributes<SVGSVGElement> & {
     value: number
     size?: number
+    tone?: ProgressRingTone
     label?: string
     class?: string
   } = $props()
 
   let clampedValue = $derived(Math.min(1, Math.max(0, value)))
-  let tone = $derived<ProgressRingTone>(clampedValue >= 0.95 ? 'danger' : clampedValue >= 0.8 ? 'warning' : 'muted')
 </script>
 
 <svg

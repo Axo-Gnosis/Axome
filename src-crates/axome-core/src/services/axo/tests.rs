@@ -8,8 +8,9 @@ use axo::{Axo, Command, ConfigLayer, ConfigSource, PromptRequest, SessionOptions
 use axo_ai::testing::{reply_text, reply_tool_calls};
 use axo_ai::{FileCredentialStore, Models, ModelsConfig, ModelsOptions, ScriptedApi, ScriptedTurn};
 use axome_protocol::chat::{
-    ChatAnswer, ChatCommandKind, ChatEntry, ChatEntryBody, ChatEvent, ChatLinkTarget, ChatPart,
-    ChatRunOutcome, ChatThinking,
+    ChatAnswer, ChatCommandKind, ChatEntry, ChatEntryBody, ChatEvent, ChatJobKind, ChatJobStatus,
+    ChatLinkTarget, ChatLive, ChatOutputChunk, ChatOutputStream, ChatPart, ChatRunOutcome,
+    ChatThinking,
 };
 use base64::Engine as _;
 use parking_lot::Mutex;
@@ -17,8 +18,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::engine::Engine;
-use super::AxoService;
-use crate::events::EventSink;
+use super::{live, AxoService};
+use crate::events::{EventSink, HostEvent};
 use crate::services::db::DatabaseService;
 
 struct FixtureConfig(Value);
@@ -35,8 +36,11 @@ impl ConfigSource for FixtureConfig {
         })
     }
 
-    fn project(&self, _cwd: &Path) -> Result<ConfigLayer, axo::Error> {
-        Ok(ConfigLayer::default())
+    fn project(&self, cwd: &Path) -> Result<ConfigLayer, axo::Error> {
+        Ok(ConfigLayer {
+            agent_roots: vec![cwd.join(".axome").join("agents")],
+            ..Default::default()
+        })
     }
 }
 
@@ -47,6 +51,7 @@ struct Fixture {
     folder: PathBuf,
     dir: PathBuf,
     api: Arc<ScriptedApi>,
+    host_events: Arc<Mutex<Vec<HostEvent>>>,
 }
 
 impl Fixture {
@@ -55,6 +60,12 @@ impl Fixture {
     }
 
     async fn with_settings(turns: Vec<ScriptedTurn>, settings: Value) -> Self {
+        let host_events = Arc::new(Mutex::new(Vec::new()));
+        let collected = Arc::clone(&host_events);
+        let events: EventSink<HostEvent> = Arc::new(move |event| {
+            collected.lock().push(event);
+            Ok(())
+        });
         let dir = std::env::temp_dir().join(format!("axome-axo-{}", uuid::Uuid::new_v4()));
         let folder = dir.join("work");
         std::fs::create_dir_all(&folder).unwrap();
@@ -102,19 +113,22 @@ impl Fixture {
         .streamer(api.clone())
         .build();
         let db = Arc::new(DatabaseService::new(dir.join("test.db")).unwrap());
-        let service = AxoService::with_engine(
+        let service = AxoService::with_engine_and_events(
             db,
+            crate::HostDirs::under(&dir),
             Engine {
                 axo: Arc::new(axo),
                 models,
                 models_error: None,
             },
+            events,
         );
         Self {
             service,
             folder,
             dir,
             api,
+            host_events,
         }
     }
 
@@ -126,12 +140,7 @@ impl Fixture {
     }
 
     async fn attach(&self, id: &str, attach_id: &str) -> Events {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let collected = Arc::clone(&events);
-        let sink: EventSink<ChatEvent> = Arc::new(move |event| {
-            collected.lock().push(event);
-            Ok(())
-        });
+        let (events, sink) = collector();
         self.service
             .attach(&self.folder, id, attach_id.into(), sink)
             .await
@@ -149,28 +158,22 @@ impl Fixture {
             )
             .await
             .unwrap();
-        self.wait_settled(id, events, runs).await;
+        wait_settled(events, runs).await;
     }
+}
 
-    async fn wait_settled(&self, id: &str, events: &Events, runs: usize) {
-        wait_until(|| settled(&events.lock(), runs)).await;
-        let session = self.service.sessions.lock()[id].session.clone();
-        // axo 97513d6 publishes RunEnd before releasing its busy claim; Axome's
-        // idle event is therefore not an admission barrier. Until axo exposes an
-        // activity notification, fixture sequencing must also check its snapshot.
-        // This does not fix the production race for actions immediately after a reply.
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let live = session.attach(None).await.live;
-                if !live.running && live.maintenance.is_none() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for axo to release its busy claim");
-    }
+fn collector() -> (Events, EventSink<ChatEvent>) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let collected = Arc::clone(&events);
+    let sink: EventSink<ChatEvent> = Arc::new(move |event| {
+        collected.lock().push(event);
+        Ok(())
+    });
+    (events, sink)
+}
+
+async fn wait_settled(events: &Events, runs: usize) {
+    wait_until(|| settled(&events.lock(), runs)).await;
 }
 
 impl Drop for Fixture {
@@ -231,12 +234,15 @@ fn settled(events: &[ChatEvent], runs: usize) -> bool {
         .count();
     done == runs
         && events.iter().rev().find_map(|event| match event {
-            ChatEvent::Live { live } => Some(!live.running && live.questions.is_empty()),
-            ChatEvent::Snapshot { state } => {
-                Some(!state.live.running && state.live.questions.is_empty())
-            }
+            ChatEvent::Live { live } => Some(idle(live)),
+            ChatEvent::Snapshot { state } => Some(idle(&state.live)),
             _ => None,
         }) == Some(true)
+}
+
+/// Live idle comes from axo's `Activity`, published after queued input and wakes drain.
+fn idle(live: &ChatLive) -> bool {
+    !live.running && live.maintenance.is_none() && live.questions.is_empty()
 }
 
 fn entries(events: &[ChatEvent]) -> Vec<ChatEntry> {
@@ -420,24 +426,25 @@ async fn edit_creates_sibling_and_switches_back() {
 
     // A fresh subscriber must see the edited branch and all its sibling metadata.
     let edited = fixture.attach(&id, "edited").await;
-    let snapshot = edited.lock();
-    let Some(ChatEvent::Snapshot { state }) = snapshot.first() else {
-        panic!("attach must begin with a snapshot");
-    };
-    let ChatEntryBody::User {
-        parts,
-        anchor: edited_anchor,
-        siblings,
-        ..
-    } = &last_user(&state.entries).body
-    else {
-        unreachable!()
-    };
-    assert_eq!(parts, &text_parts("three"));
-    assert_eq!(edited_anchor, anchor);
-    assert_eq!(siblings.len(), 2);
-    assert!(siblings.contains(&two.id));
-    drop(snapshot);
+    {
+        let snapshot = edited.lock();
+        let Some(ChatEvent::Snapshot { state }) = snapshot.first() else {
+            panic!("attach must begin with a snapshot");
+        };
+        let ChatEntryBody::User {
+            parts,
+            anchor: edited_anchor,
+            siblings,
+            ..
+        } = &last_user(&state.entries).body
+        else {
+            unreachable!()
+        };
+        assert_eq!(parts, &text_parts("three"));
+        assert_eq!(edited_anchor, anchor);
+        assert_eq!(siblings.len(), 2);
+        assert!(siblings.contains(&two.id));
+    }
 
     fixture
         .service
@@ -523,15 +530,23 @@ fn list_history_rejects_a_stopped_runtime() {
     let dir = std::env::temp_dir().join(format!("axome-axo-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let db = Arc::new(DatabaseService::new(dir.join("test.db")).unwrap());
+    let host_events = Arc::new(Mutex::new(Vec::new()));
+    let collected = Arc::clone(&host_events);
+    let events: EventSink<HostEvent> = Arc::new(move |event| {
+        collected.lock().push(event);
+        Ok(())
+    });
     let fixture = Fixture {
         service: AxoService::new(
             db,
             crate::HostDirs::under(&dir),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            events,
         ),
         folder: dir.clone(),
         dir,
         api: Arc::new(ScriptedApi::default()),
+        host_events,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -620,7 +635,7 @@ async fn submit_parts(fixture: &Fixture, id: &str, events: &Events) {
         )
         .await
         .unwrap();
-    fixture.wait_settled(id, events, 1).await;
+    wait_settled(events, 1).await;
 }
 
 fn jsonl(path: &Path) -> Vec<Value> {
@@ -700,6 +715,7 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
             model: Some("test/m".into()),
             thinking: Some(axo_ai::ThinkingLevel::Off),
             ask_enabled: true,
+            agents: super::bundled::agents().to_vec(),
             ..Default::default()
         })
         .await
@@ -1072,6 +1088,26 @@ async fn unwritten_sessions_are_reclaimed_after_grace() {
     wait_until(|| fixture.service.loaded() == 0).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_stream_detach_keeps_replacement_subscriber() {
+    let fixture = Fixture::new(vec![ScriptedTurn::Reply(reply_text("one"))]).await;
+    let id = fixture.create().await;
+    let (_, first) = collector();
+    let (second_events, second) = collector();
+    for sink in [&first, &second] {
+        fixture
+            .service
+            .attach(&fixture.folder, &id, "same".into(), sink.clone())
+            .await
+            .unwrap();
+    }
+    // The reconnected stream reused the id; the stale stream's teardown must not remove it.
+    fixture.service.detach_sink(&id, "same", &first);
+    fixture.prompt(&id, "hello", &second_events, 1).await;
+    fixture.service.detach_sink(&id, "same", &second);
+    wait_until(|| fixture.service.loaded() == 0).await;
+}
+
 #[test]
 fn settings_mirror_defaults_match_axo() {
     let mirrored = serde_json::to_value(axome_protocol::axo_settings::AxoSettings::default())
@@ -1165,11 +1201,23 @@ async fn list_history_excludes_spawned_child() {
     let child = session
         .spawn(axo::SpawnRequest {
             task: "check".into(),
+            agent: Some("scout".into()),
             model: Some("test/m2".into()),
             ..Default::default()
         })
         .await
         .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let live = child.session.attach(None).await.live;
+            if !live.running && live.maintenance.is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     let all = fixture
         .service
         .axo()
@@ -1195,6 +1243,10 @@ async fn list_history_excludes_spawned_child() {
             .collect::<Vec<_>>(),
         [id.as_str()]
     );
+    assert_eq!(history.rows[0].children.len(), 1);
+    let nested = &history.rows[0].children[0];
+    assert_eq!(nested.session_id, child.session.id());
+    assert_eq!(nested.agent.as_deref(), Some("scout"));
     session.shutdown().await;
 }
 
@@ -1267,14 +1319,11 @@ async fn engine_rebuilds_when_extended_context_changes() {
         db,
         dirs.clone(),
         axome_protocol::server_config::Supervision::ProcessGroup,
+        Arc::new(|_| Ok(())),
     );
     service.bind_runtime();
 
     let first = service.engine().await.unwrap();
-    assert_eq!(
-        service.engine.lock().await.stamp.map(|(_, ext)| ext),
-        Some(true)
-    );
 
     std::fs::write(
         dirs.settings_path(),
@@ -1283,12 +1332,486 @@ async fn engine_rebuilds_when_extended_context_changes() {
     .unwrap();
 
     let second = service.engine().await.unwrap();
-    assert_eq!(
-        service.engine.lock().await.stamp.map(|(_, ext)| ext),
-        Some(false)
-    );
     assert!(!Arc::ptr_eq(&first, &second));
 
     service.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn job_output_preserves_stream_order_and_split_utf8() {
+    use axo::{OutputChunk, OutputStream};
+    let mut pending = None;
+    let chunks = live::decode_output(
+        vec![
+            OutputChunk {
+                stream: OutputStream::Stdout,
+                bytes: vec![0xa9, b'a', 0xc3],
+            },
+            OutputChunk {
+                stream: OutputStream::Stdout,
+                bytes: vec![0xa9],
+            },
+            OutputChunk {
+                stream: OutputStream::Stderr,
+                bytes: b"error".to_vec(),
+            },
+            OutputChunk {
+                stream: OutputStream::Stdout,
+                bytes: vec![0xe2, 0x82],
+            },
+        ],
+        &mut pending,
+        true,
+        false,
+    );
+    assert_eq!(
+        chunks,
+        vec![
+            ChatOutputChunk {
+                stream: ChatOutputStream::Stdout,
+                text: "aé".into()
+            },
+            ChatOutputChunk {
+                stream: ChatOutputStream::Stderr,
+                text: "error".into()
+            },
+        ]
+    );
+    let chunks = live::decode_output(
+        vec![OutputChunk {
+            stream: OutputStream::Stdout,
+            bytes: vec![0xac],
+        }],
+        &mut pending,
+        false,
+        true,
+    );
+    assert_eq!(
+        chunks,
+        vec![ChatOutputChunk {
+            stream: ChatOutputStream::Stdout,
+            text: "€".into(),
+        }]
+    );
+    assert!(pending.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_watch_job_live_and_unloaded_and_kill_job() {
+    if isolated_reopen_test("background_watch_job_live_and_unloaded_and_kill_job") {
+        return;
+    }
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "call_bg",
+            "bash",
+            json!({"command": "touch cmd-started; while [ ! -f bg-release ]; do sleep 0.05; done; echo after-release; echo error-output >&2"}),
+        )])),
+        ScriptedTurn::Reply(reply_text("promoted")),
+        ScriptedTurn::Reply(reply_text("job finished")),
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "call_kill",
+            "bash",
+            json!({"command": "sleep 300", "async": true}),
+        )])),
+        ScriptedTurn::Reply(reply_text("started second")),
+        ScriptedTurn::Reply(reply_text("second killed")),
+    ])
+    .await;
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+
+    fixture
+        .service
+        .prompt(&fixture.folder, &id, "req-bg".into(), text_parts("run bg"))
+        .await
+        .unwrap();
+    wait_until(|| fixture.folder.join("cmd-started").exists()).await;
+
+    let promoted = fixture
+        .service
+        .background(&fixture.folder, &id, "call_bg".into())
+        .await
+        .unwrap();
+    assert!(promoted, "foreground command should promote to background");
+    wait_settled(&events, 1).await;
+
+    let live_out = fixture
+        .service
+        .watch_job(&fixture.folder, &id, "a".into(), Some("bg_1".into()))
+        .await
+        .unwrap()
+        .expect("live command job output");
+    assert!(!live_out.done);
+
+    std::fs::write(fixture.folder.join("bg-release"), "").unwrap();
+    wait_until(|| {
+        events.lock().iter().any(|event| {
+            matches!(
+                event,
+                ChatEvent::JobOutput {
+                    job_id,
+                    output: axome_protocol::chat::ChatJobOutput { done: true, .. },
+                    ..
+                } if job_id == "bg_1"
+            )
+        })
+    })
+    .await;
+    let streamed: Vec<ChatOutputChunk> = events
+        .lock()
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::JobOutput { job_id, output, .. } if job_id == "bg_1" => {
+                Some(output.chunks.clone())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for (stream, text) in [
+        (ChatOutputStream::Stdout, "after-release"),
+        (ChatOutputStream::Stderr, "error-output"),
+    ] {
+        assert!(
+            live_out
+                .chunks
+                .iter()
+                .chain(&streamed)
+                .any(|chunk| chunk.stream == stream && chunk.text.contains(text)),
+            "missing {stream:?} output {text:?}"
+        );
+    }
+    assert!(!live_out.capture_failed);
+    wait_settled(&events, 2).await;
+
+    fixture.service.detach(&id, "a");
+    wait_until(|| fixture.service.loaded() == 0).await;
+
+    let unloaded_out = fixture
+        .service
+        .watch_job(&fixture.folder, &id, "other".into(), Some("bg_1".into()))
+        .await
+        .unwrap()
+        .expect("unloaded artifact fallback output");
+    assert!(unloaded_out.done);
+    assert!(!unloaded_out.capture_failed);
+    for (stream, text) in [
+        (ChatOutputStream::Stdout, "after-release"),
+        (ChatOutputStream::Stderr, "error-output"),
+    ] {
+        assert!(unloaded_out
+            .chunks
+            .iter()
+            .any(|chunk| chunk.stream == stream && chunk.text.contains(text)));
+    }
+    assert_eq!(
+        fixture.service.loaded(),
+        0,
+        "unloaded watch_job must not load the session"
+    );
+
+    let events_b = fixture.attach(&id, "b").await;
+    fixture.prompt(&id, "start killable", &events_b, 1).await;
+    let running_job_id = events_b
+        .lock()
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            ChatEvent::Live { live } => live.jobs.iter().find_map(|job| {
+                matches!(job.kind, ChatJobKind::Command { .. })
+                    .then_some(job)
+                    .filter(|j| j.status == ChatJobStatus::Running)
+                    .map(|j| j.id.clone())
+            }),
+            ChatEvent::Snapshot { state } => state.live.jobs.iter().find_map(|job| {
+                matches!(job.kind, ChatJobKind::Command { .. })
+                    .then_some(job)
+                    .filter(|j| j.status == ChatJobStatus::Running)
+                    .map(|j| j.id.clone())
+            }),
+            _ => None,
+        })
+        .expect("running command job");
+    let killed = fixture
+        .service
+        .kill_job(&fixture.folder, &id, running_job_id.clone())
+        .await
+        .unwrap();
+    assert!(killed);
+    wait_until(|| {
+        events_b.lock().iter().rev().any(|event| {
+            matches!(
+                event,
+                ChatEvent::Live { live }
+                    if live.jobs.iter().any(|j| {
+                        j.id == running_job_id
+                            && matches!(j.status, ChatJobStatus::Failed | ChatJobStatus::Finished | ChatJobStatus::Interrupted)
+                    })
+            )
+        })
+    })
+    .await;
+    wait_settled(&events_b, 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn summaries_follow_activity() {
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "call_1",
+            "bash",
+            json!({"command": "while [ ! -f sum-release ]; do sleep 0.05; done; echo ok"}),
+        )])),
+        ScriptedTurn::Reply(reply_text("done")),
+    ])
+    .await;
+    let host_events = &fixture.host_events;
+
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+    {
+        let guard = events.lock();
+        let Some(ChatEvent::Snapshot { state }) = guard.first() else {
+            panic!("expected Snapshot event");
+        };
+        assert!(!state.read_only);
+    }
+
+    fixture
+        .service
+        .prompt(&fixture.folder, &id, "req-sum".into(), text_parts("work"))
+        .await
+        .unwrap();
+    wait_until(|| {
+        host_events.lock().iter().any(|event| {
+            matches!(
+                event,
+                HostEvent::ChatSummariesChanged(changed)
+                    if changed.summaries.iter().any(|s| s.session_id == id && s.running)
+            )
+        })
+    })
+    .await;
+    assert!(fixture.service.active_folder(&id).is_some());
+
+    std::fs::write(fixture.folder.join("sum-release"), "").unwrap();
+    wait_settled(&events, 1).await;
+    wait_until(|| {
+        host_events
+            .lock()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                HostEvent::ChatSummariesChanged(changed) => Some(changed),
+                _ => None,
+            })
+            .is_some_and(|changed| {
+                changed
+                    .summaries
+                    .iter()
+                    .any(|s| s.session_id == id && !s.running)
+            })
+    })
+    .await;
+    assert_eq!(fixture.service.active_folder(&id), None);
+
+    fixture.service.detach(&id, "a");
+    wait_until(|| fixture.service.loaded() == 0).await;
+    wait_until(|| {
+        host_events
+            .lock()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                HostEvent::ChatSummariesChanged(changed) => Some(changed),
+                _ => None,
+            })
+            .is_some_and(|changed| changed.summaries.is_empty())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_agents_override_bundled() {
+    let fixture = Fixture::new(vec![]).await;
+    let agents_dir = fixture.folder.join(".axome").join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    std::fs::write(
+        agents_dir.join("scout.md"),
+        "---\nname: scout\ndescription: Custom project scout\nrunAs: subagent\nmodel: \"@work\"\n---\nOverride body.\n",
+    )
+    .unwrap();
+
+    let engine = fixture.service.engine().await.unwrap();
+    let catalog = engine
+        .axo
+        .catalog(
+            &fixture.folder,
+            Some(axo::ProjectAccess::Trust),
+            super::bundled::agents(),
+            &[],
+            &[],
+        )
+        .unwrap();
+    let catalog_scout = catalog
+        .agents
+        .iter()
+        .find_map(|def| match def {
+            axo::context::agents::AgentDef::Agent(spec) if spec.name == "scout" => Some(spec),
+            _ => None,
+        })
+        .expect("catalog scout");
+    assert_eq!(catalog_scout.description, "Custom project scout");
+    assert_eq!(catalog_scout.model.as_deref(), Some("@work"));
+
+    let catalog_task = catalog
+        .agents
+        .iter()
+        .find_map(|def| match def {
+            axo::context::agents::AgentDef::Agent(spec) if spec.name == "task" => Some(spec),
+            _ => None,
+        })
+        .expect("catalog task");
+    assert_eq!(catalog_task.run_as, axo::RunAs::Subagent);
+    assert_eq!(catalog_task.model.as_deref(), Some("@work"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn child_readonly_resume_pinning_and_close_lifecycle() {
+    if isolated_reopen_test("child_readonly_resume_pinning_and_close_lifecycle") {
+        return;
+    }
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_text("root reply")),
+        ScriptedTurn::Reply(reply_text("wake reply")),
+    ])
+    .await;
+    fixture
+        .api
+        .lane("m2", vec![ScriptedTurn::Reply(reply_text("child done"))]);
+
+    let root_id = fixture.create().await;
+    let root_events = fixture.attach(&root_id, "a").await;
+    fixture.prompt(&root_id, "hello", &root_events, 1).await;
+
+    let root_session = fixture.service.sessions.lock()[&root_id].session.clone();
+    let child = root_session
+        .spawn(axo::SpawnRequest {
+            task: "check".into(),
+            model: Some("test/m2".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let child_id = child.session.id().to_owned();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let live = child.session.attach(None).await.live;
+            if !live.running && live.maintenance.is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(child);
+    drop(root_session);
+    wait_settled(&root_events, 2).await;
+    fixture.service.detach(&root_id, "a");
+    wait_until(|| fixture.service.loaded() == 0).await;
+    fixture.service.wait_retiring(&root_id).await;
+    let child_events = fixture.attach(&child_id, "b").await;
+    {
+        let events = child_events.lock();
+        let snapshot = events
+            .iter()
+            .find_map(|event| match event {
+                ChatEvent::Snapshot { state } => Some(state),
+                _ => None,
+            })
+            .expect("read-only child snapshot");
+        assert_eq!(snapshot.session_id, child_id);
+        assert!(snapshot.read_only);
+        assert!(snapshot.is_child);
+    }
+    assert_eq!(fixture.service.loaded(), 0);
+    assert!(fixture
+        .service
+        .prompt(
+            &fixture.folder,
+            &child_id,
+            "req-ro".into(),
+            text_parts("nope"),
+        )
+        .await
+        .is_err());
+
+    fixture
+        .service
+        .resume(&fixture.folder, &child_id)
+        .await
+        .unwrap();
+    assert_eq!(fixture.service.loaded(), 2);
+    {
+        let events = child_events.lock();
+        let live_snapshot = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                ChatEvent::Snapshot { state } => Some(state),
+                _ => None,
+            })
+            .expect("live child snapshot after resume");
+        assert!(!live_snapshot.read_only);
+        assert!(live_snapshot.is_child);
+    }
+    let summaries = fixture.service.live_summaries(&fixture.folder);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].session_id, root_id);
+
+    let _root_events2 = fixture.attach(&root_id, "a2").await;
+    fixture.service.detach(&root_id, "a2");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(fixture.service.loaded(), 2);
+
+    let root_events3 = fixture.attach(&root_id, "a3").await;
+    fixture.service.close(&child_id).await.unwrap();
+    assert!(child_events
+        .lock()
+        .iter()
+        .any(|event| matches!(event, ChatEvent::Closed { .. })));
+    assert_eq!(fixture.service.loaded(), 1);
+    assert!(!root_events3
+        .lock()
+        .iter()
+        .any(|event| matches!(event, ChatEvent::Closed { .. })));
+
+    let child_events2 = fixture.attach(&child_id, "b2").await;
+    {
+        let events = child_events2.lock();
+        let snapshot = events
+            .iter()
+            .find_map(|event| match event {
+                ChatEvent::Snapshot { state } => Some(state),
+                _ => None,
+            })
+            .expect("reattached child snapshot");
+        assert!(!snapshot.read_only);
+        assert!(snapshot.is_child);
+    }
+    assert_eq!(fixture.service.loaded(), 2);
+
+    fixture.service.close(&root_id).await.unwrap();
+    assert!(root_events3
+        .lock()
+        .iter()
+        .any(|event| matches!(event, ChatEvent::Closed { .. })));
+    assert!(child_events2
+        .lock()
+        .iter()
+        .any(|event| matches!(event, ChatEvent::Closed { .. })));
+    assert_eq!(fixture.service.loaded(), 0);
 }

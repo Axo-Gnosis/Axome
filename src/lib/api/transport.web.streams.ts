@@ -373,7 +373,7 @@ export function createWebStreams(options: WebStreamsOptions): WebStreams {
     let created: LiveSocket | null = null
     return connect(
       options,
-      { kind: 'chat', folder_path: owner.folderPath, session_id: owner.sessionId },
+      { kind: 'chat', attach_id: owner.attachId, folder_path: owner.folderPath, session_id: owner.sessionId },
       currentGeneration,
       ({ tag, body }) => {
         if (owner.disposed || owner.terminal || owner.socket !== created || owner.generation !== currentGeneration)

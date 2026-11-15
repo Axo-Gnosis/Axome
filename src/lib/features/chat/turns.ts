@@ -1,4 +1,5 @@
 import type { ChatBlock, ChatContent, ChatEntry, ChatEntryBody, ChatLive, ChatThinking } from '$lib/types/backend'
+import { record } from './elements/tool/payload'
 
 export type UserEntry = ChatEntry & { body: Extract<ChatEntryBody, { kind: 'user' }> }
 export type AssistantEntry = ChatEntry & { body: Extract<ChatEntryBody, { kind: 'assistant' }> }
@@ -22,7 +23,17 @@ export type Step =
         | { kind: 'thinking'; text: string; redacted: boolean }
         | Extract<
             ChatEntryBody,
-            { kind: 'notice' | 'compaction' | 'branchSummary' | 'modelChange' | 'thinkingChange' | 'contextMoved' }
+            {
+              kind:
+                | 'notice'
+                | 'compaction'
+                | 'branchSummary'
+                | 'modelChange'
+                | 'thinkingChange'
+                | 'contextMoved'
+                | 'agentChange'
+                | 'modeChange'
+            }
           >
       ))
 /** Recorded settings for this turn; null when absent from the transcript. */
@@ -50,7 +61,7 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
   const settings: TurnConfig = { model: null, thinking: null }
   function start(user: UserEntry | null, timestamp: string | null = user?.timestamp ?? null): Turn {
     const turn: Turn = {
-      id: user?.id ?? 'turn:0',
+      id: user?.id ?? `turn:${turns.length}`,
       user,
       config: { ...settings },
       steps: [],
@@ -69,12 +80,31 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
       if (block.type === 'toolCall') {
         const result = results.get(block.id) ?? null
         const run = runs.get(block.id)
+        let name = block.name
+        let arguments_ = block.arguments
+        if (name === 'call') {
+          const args = record(block.arguments)
+          name =
+            typeof args.tool === 'string' && args.tool.length > 0
+              ? args.tool
+              : run && run.name !== 'call'
+                ? run.name
+                : result && result.toolName !== 'call'
+                  ? result.toolName
+                  : 'call'
+          arguments_ =
+            name !== 'call'
+              ? 'args' in args && args.args !== undefined
+                ? args.args
+                : (run?.arguments ?? {})
+              : block.arguments
+        }
         turn.steps.push({
           ...base,
           kind: 'tool',
           callId: block.id,
-          name: block.name,
-          arguments: block.arguments,
+          name,
+          arguments: arguments_,
           status: result ? (result.isError ? 'error' : 'done') : 'running',
           result,
           details: result?.details ?? run?.details,
@@ -97,11 +127,24 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     if (body.kind === 'thinkingChange') settings.thinking = body.thinking
     // Selections before any content are the session's starting config, not command results.
     if (!current && (body.kind === 'modelChange' || body.kind === 'thinkingChange')) continue
+    if (current && current.end !== null && (body.kind === 'assistant' || body.kind === 'notice')) {
+      current = undefined
+    }
+    if (body.kind === 'toolResult') {
+      if (current && current.end === null) current.endedAt = entry.timestamp
+      continue
+    }
+    if (
+      body.kind === 'notice' &&
+      body.notice.kind === 'mail' &&
+      current &&
+      (current.user !== null || current.steps.length > 0)
+    ) {
+      current = start(null, entry.timestamp)
+    }
     current ??= start(null, entry.timestamp)
     // Only the run's own entries time a reply; picker changes and maintenance recorded later don't.
-    if (body.kind === 'assistant' || body.kind === 'toolResult' || body.kind === 'notice' || body.kind === 'runEnd')
-      current.endedAt = entry.timestamp
-    if (body.kind === 'toolResult') continue
+    if (body.kind === 'assistant' || body.kind === 'notice' || body.kind === 'runEnd') current.endedAt = entry.timestamp
     if (body.kind === 'assistant') {
       current.config = { model: body.model, thinking: settings.thinking }
       current.assistants.push(entry as AssistantEntry)
@@ -110,10 +153,12 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     else current.steps.push({ ...body, id: entry.id, entryId: entry.id })
   }
   if (streaming !== null) {
+    if (current && current.end !== null) current = undefined
     current ??= start(null)
     blocks(current, streaming, null)
   }
-  if (current) current.running = live.running
+  // Activity `running` also covers standalone maintenance; an ended turn never resumes.
+  if (current) current.running = live.running && current.end === null
   return turns
 }
 

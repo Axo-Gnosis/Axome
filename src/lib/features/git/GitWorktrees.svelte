@@ -117,7 +117,10 @@
                 <Tooltip.Trigger
                   type="button"
                   data-slot="worktree-row"
-                  class="{sidebarRowVariants({ variant: 'leaf', pressed: worktree.isCurrent })} h-auto min-h-8 py-1.5"
+                  class="{sidebarRowVariants({
+                    density: 'compact',
+                    pressed: worktree.isCurrent
+                  })} h-auto min-h-8 py-1.5"
                   aria-disabled={!openable || busy}
                   aria-label={`Open ${worktree.branch ?? 'detached'} worktree: ${worktree.path}`}
                   onclick={() => {

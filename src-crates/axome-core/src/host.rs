@@ -80,7 +80,12 @@ impl Host {
         let issues = Arc::new(IssueService::new());
         let git = Arc::new(GitService::new());
         EnvironmentService::current();
-        let axo = AxoService::new(Arc::clone(&db), dirs.clone(), options.supervision);
+        let axo = AxoService::new(
+            Arc::clone(&db),
+            dirs.clone(),
+            options.supervision,
+            Arc::clone(&events),
+        );
         let session_index = SessionIndexService::new(
             Arc::clone(&db),
             Arc::clone(&events),
@@ -114,6 +119,10 @@ impl Host {
 
     pub(crate) fn emit(&self, event: HostEvent) {
         deliver(&self.events, event);
+    }
+
+    pub fn active_chat_folder(&self, session_id: &str) -> Option<String> {
+        self.axo.active_folder(session_id)
     }
 
     /// The caller releases ownership before evicting a folder's shared resources.

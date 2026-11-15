@@ -1,6 +1,7 @@
 use crate::{errors::ApiError, events::EventSink, services::folders::resolve_folder, Host};
 use axome_protocol::chat::{
-    ChatAnswer, ChatEvent, ChatForkInfo, ChatLinkTarget, ChatModelCatalog, ChatPart, ChatThinking,
+    ChatAnswer, ChatEvent, ChatForkInfo, ChatJobOutput, ChatLinkTarget, ChatLiveSummary,
+    ChatModelCatalog, ChatPart, ChatThinking,
 };
 
 impl Host {
@@ -61,6 +62,11 @@ impl Host {
 
     pub fn chat_close(&self, _folder_path: String, session_id: String) -> Result<(), ApiError> {
         self.axo.block_on(self.axo.close(&session_id))?
+    }
+
+    pub fn chat_resume(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo.block_on(self.axo.resume(&folder, &session_id))?
     }
 
     pub fn chat_close_snapshot(&self, snapshot: &str) {
@@ -153,6 +159,78 @@ impl Host {
             .block_on(self.axo.fork(&folder, &session_id, entry_id))?
     }
 
+    pub fn chat_background(
+        &self,
+        folder_path: String,
+        session_id: String,
+        call_id: String,
+    ) -> Result<bool, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.background(&folder, &session_id, call_id))?
+    }
+
+    pub fn chat_kill_job(
+        &self,
+        folder_path: String,
+        session_id: String,
+        job_id: String,
+    ) -> Result<bool, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.kill_job(&folder, &session_id, job_id))?
+    }
+
+    pub fn chat_resume_wakes(
+        &self,
+        folder_path: String,
+        session_id: String,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.resume_wakes(&folder, &session_id))?
+    }
+
+    pub fn chat_watch_job(
+        &self,
+        folder_path: String,
+        session_id: String,
+        attach_id: String,
+        job_id: Option<String>,
+    ) -> Result<Option<ChatJobOutput>, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.watch_job(&folder, &session_id, attach_id, job_id))?
+    }
+
+    pub fn chat_context_details(
+        &self,
+        folder_path: String,
+        session_id: String,
+    ) -> Result<axome_protocol::chat::ChatContextDetails, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.context_details(&folder, &session_id))?
+    }
+
+    pub fn chat_local_files(
+        &self,
+        folder_path: String,
+        session_id: String,
+    ) -> Result<axome_protocol::chat::ChatLocalFiles, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.local_files(&folder, &session_id))?
+    }
+
+    pub fn chat_live_summaries(
+        &self,
+        folder_path: String,
+    ) -> Result<Vec<ChatLiveSummary>, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        Ok(self.axo.live_summaries(&folder))
+    }
+
     pub fn chat_attach(
         &self,
         folder_path: String,
@@ -167,5 +245,9 @@ impl Host {
 
     pub fn chat_detach(&self, session_id: &str, attach_id: &str) {
         self.axo.detach(session_id, attach_id);
+    }
+
+    pub fn chat_detach_sink(&self, session_id: &str, attach_id: &str, sink: &EventSink<ChatEvent>) {
+        self.axo.detach_sink(session_id, attach_id, sink);
     }
 }

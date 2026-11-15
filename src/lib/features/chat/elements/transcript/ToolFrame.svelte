@@ -19,7 +19,7 @@
   import { cn } from '$lib/utils/cn'
   import type { ToolHeader } from '../tool/toolHeader'
   import BashCommand from '../tool/BashCommand.svelte'
-  import { openToolLocation } from '../tool/referenceNavigation'
+  import { openOwnedPath } from '$lib/features/workbench/links/openLink'
 
   let {
     header,
@@ -28,7 +28,7 @@
     sessionId,
     nested = false,
     onToggle,
-    onOpenLocation,
+    actions,
     children
   }: {
     header: ToolHeader
@@ -37,7 +37,7 @@
     sessionId: string | null
     nested?: boolean
     onToggle: () => void
-    onOpenLocation: (path: string, line?: number) => void
+    actions?: Snippet
     children?: Snippet
   } = $props()
 
@@ -120,8 +120,7 @@
           size="xs"
           class="min-w-0 justify-start p-0 font-mono text-xs font-normal text-fg hover:text-bright hover:underline"
           onclick={() =>
-            header.path !== null &&
-            void openToolLocation(header.path, header.line, { folderPath, sessionId }, onOpenLocation)}
+            header.path !== null && void openOwnedPath(header.path, header.line, { folderPath, sessionId })}
           >{#if !search}<FileIcon filename={header.path} size={12} />{/if}<span class="truncate"
             >{header.pathLabel || header.path}</span
           ></Button
@@ -131,6 +130,7 @@
     <div class="ms-auto flex shrink-0 items-center gap-2">
       {#if header.lines}<NetLineChange added={header.lines.added} removed={header.lines.removed} />{/if}
       {#if header.meta}<span class="text-subtle">{header.meta}</span>{/if}
+      {#if actions}{@render actions()}{/if}
       {#if header.status}
         <span
           class={cn(

@@ -143,10 +143,13 @@
               <!-- Row is a wrapping div so the action buttons can sit as siblings
                to the tooltip-triggering row button. Nesting <button>s inside
                <button>s breaks keyboard/pointer semantics. -->
-              <div class="{sidebarRowVariants({ variant: 'leaf', pressed: isExpanded })} group">
+              <div
+                class="{sidebarRowVariants({ behavior: 'disclosure', density: 'compact', pressed: isExpanded })} group"
+              >
                 <Tooltip.Root>
                   <Tooltip.Trigger
                     class="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-none bg-transparent px-0 text-left focus-visible:shadow-focus-ring focus-visible:outline-none"
+                    aria-expanded={isExpanded}
                     onclick={() => toggleStash(stash.index)}
                   >
                     <span class="shrink-0 rounded bg-accent-bg px-1 py-px font-mono text-2xs text-accent">

@@ -3,7 +3,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
   import { sessionBrand, type HarnessIconSource } from '$lib/features/sessions/harnesses/catalog'
   import HarnessIcon from '$lib/features/sessions/harnesses/HarnessIcon.svelte'
-  import { MoreHorizontalIcon, PlayIcon, TerminalIcon } from '@hugeicons/core-free-icons'
+  import { MessagesSquareIcon, MoreHorizontalIcon, PlayIcon, TerminalIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import type { WorkbenchInfo } from '$lib/types/backend'
   import { cn } from '$lib/utils/cn'
@@ -57,7 +57,13 @@
     const byKey = new Map<string, RunChip>()
     for (const run of workbench.running) {
       const key =
-        run.kind === 'session' ? `session:${run.harness_id}` : run.kind === 'shell' ? 'shell' : `task:${run.task_id}`
+        run.kind === 'session'
+          ? `session:${run.harness_id}`
+          : run.kind === 'shell'
+            ? 'shell'
+            : run.kind === 'chat'
+              ? 'chat'
+              : `task:${run.task_id}`
       const chip = byKey.get(key)
       if (chip) {
         chip.count += 1
@@ -72,6 +78,8 @@
         })
       } else if (run.kind === 'shell') {
         byKey.set(key, { key, label: 'Terminal', icon: TerminalIcon, task: false, count: 1 })
+      } else if (run.kind === 'chat') {
+        byKey.set(key, { key, label: 'Axo', icon: MessagesSquareIcon, task: false, count: 1 })
       } else {
         byKey.set(key, { key, label: run.task_id, icon: null, task: true, count: 1 })
       }

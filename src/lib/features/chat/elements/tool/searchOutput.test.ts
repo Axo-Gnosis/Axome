@@ -22,6 +22,7 @@ function call(name: 'grep' | 'find', source: string, details: unknown = null): T
       content: output,
       details,
       isError: false,
+      deliverables: [],
       durationMs: null
     }
   }

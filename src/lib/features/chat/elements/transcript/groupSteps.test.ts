@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { Step, ToolStep } from '../../turns'
 import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep } from './groupSteps'
 
-function tool(id: string, name = 'read', entryId: string | null = id): ToolStep {
+function tool(id: string, name = 'read', entryId: string | null = id, details: unknown = null): ToolStep {
   return {
     id,
     entryId,
@@ -14,7 +14,7 @@ function tool(id: string, name = 'read', entryId: string | null = id): ToolStep 
     status: 'running',
     result: null,
     output: [],
-    details: null
+    details
   }
 }
 function thinking(id: string, text: string, redacted = false, entryId: string | null = id): Step {
@@ -25,7 +25,7 @@ function thought(id: string, text: string, streaming = false): ThoughtStep {
 }
 const boundaries: Step[] = [
   { id: 'text', entryId: 'text', kind: 'text', text: 'Between calls' },
-  { id: 'notice', entryId: 'notice', kind: 'notice', text: 'Notice' },
+  { id: 'notice', entryId: 'notice', kind: 'notice', notice: { kind: 'host', text: 'Notice' } },
   { id: 'compaction', entryId: 'compaction', kind: 'compaction', summary: 'Summary', tokensBefore: 10 },
   { id: 'branch', entryId: 'branch', kind: 'branchSummary', summary: 'Branch' }
 ]
@@ -131,5 +131,34 @@ test('merged thinking preserves visible text in order without exposing redacted 
   ])
   assert.deepEqual(groupSteps([thinking('a', 'Growing', false, null), thinking('b', 'Saved')]), [
     thought('a', 'Growing\n\nSaved', true)
+  ])
+})
+
+test('receipt tools never merge into toolGroup and stay outside folded work segments', () => {
+  const spawnA = tool('s1', 'spawn')
+  const spawnB = tool('s2', 'spawn')
+  const waitCall = tool('w1', 'wait')
+  const bgBash = tool('b1', 'bash', 'b1', { job: 'bg_1' })
+  const fgBash = tool('b2', 'bash')
+  const readA = tool('r1', 'read')
+  const readB = tool('r2', 'read')
+
+  const receipt = (call: ToolStep) => ({ kind: 'receipt', id: call.id, call })
+  assert.deepEqual(groupSteps([spawnA, spawnB, waitCall, bgBash, fgBash]), [
+    receipt(spawnA),
+    receipt(spawnB),
+    receipt(waitCall),
+    receipt(bgBash),
+    fgBash
+  ])
+  assert.deepEqual(groupSteps([fgBash, bgBash]), [fgBash, receipt(bgBash)])
+
+  const steps = groupSteps([readA, spawnA, waitCall, bgBash, readB])
+  assert.deepEqual(segmentSteps(steps), [
+    { kind: 'work', id: 'work:r1', steps: [readA] },
+    receipt(spawnA),
+    receipt(waitCall),
+    receipt(bgBash),
+    { kind: 'work', id: 'work:r2', steps: [readB] }
   ])
 })

@@ -13,7 +13,16 @@ const live: ChatLive = {
   queue: [],
   questions: [],
   retry: null,
-  stats: { contextTokens: 0, contextWindow: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
+  autoPaused: false,
+  jobs: [],
+  stats: {
+    contextTokens: 0,
+    contextWindow: 0,
+    contextTrigger: null,
+    contextReserve: null,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 },
+    tree: null
+  }
 }
 function entry(id: string, body: ChatEntryBody): ChatEntry {
   return { id, timestamp: '2026-01-01T00:00:00Z', body }
@@ -54,6 +63,7 @@ const result = entry('result', {
   content: [{ type: 'text', text: 'File content' }],
   details: null,
   isError: false,
+  deliverables: [],
   durationMs: 1
 })
 const end = entry('end', { kind: 'runEnd', outcome: 'done', reason: null })
@@ -242,4 +252,118 @@ test('later config and maintenance entries join the turn without extending its d
   assert.equal(turn.endedAt, endedAt)
   assert.equal(turnDurationMs(turn, Date.parse(endedAt) + 5000), 12_000)
   assert.ok(turn.steps.some((step) => step.kind === 'modelChange'))
+})
+
+test('call tool calls unwrap with explicit, running, then result name and args precedence', () => {
+  const callEntry = entry('call-msg', {
+    kind: 'assistant',
+    blocks: [
+      { type: 'toolCall', id: 'c1', name: 'call', arguments: { tool: 'read', args: { path: 'a.ts' } } },
+      { type: 'toolCall', id: 'c2', name: 'call', arguments: {} },
+      { type: 'toolCall', id: 'c3', name: 'call', arguments: {} },
+      { type: 'toolCall', id: 'c4', name: 'read', arguments: { path: 'b.ts' } }
+    ],
+    model: 'test/model',
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: 0 },
+    stopReason: 'toolUse',
+    error: null,
+    durationMs: 5
+  })
+  const c3Result = entry('r3', {
+    kind: 'toolResult',
+    callId: 'c3',
+    toolName: 'grep',
+    content: [{ type: 'text', text: 'match' }],
+    details: null,
+    isError: false,
+    deliverables: [],
+    durationMs: 1
+  })
+  const [turn] = transcriptTurns([user, callEntry, c3Result], null, {
+    ...live,
+    running: true,
+    tools: [{ callId: 'c2', name: 'bash', arguments: { command: 'ls' }, output: [], details: null }]
+  })
+  const steps = turn.steps.filter((s) => s.kind === 'tool')
+  assert.equal(steps.length, 4)
+  assert.equal(steps[0].name, 'read')
+  assert.deepEqual(steps[0].arguments, { path: 'a.ts' })
+
+  assert.equal(steps[1].name, 'bash')
+  assert.deepEqual(steps[1].arguments, { command: 'ls' })
+
+  assert.equal(steps[2].name, 'grep')
+  assert.deepEqual(steps[2].arguments, {})
+
+  assert.equal(steps[3].name, 'read')
+  assert.deepEqual(steps[3].arguments, { path: 'b.ts' })
+})
+
+test('autonomous jobWake after runEnd opens a fresh userless turn with unique id and wake timestamp', () => {
+  const wakeTime = '2026-01-01T00:05:00Z'
+  const turns = transcriptTurns(
+    [
+      user,
+      message,
+      end,
+      {
+        id: 'wake-1',
+        timestamp: wakeTime,
+        body: { kind: 'notice', notice: { kind: 'jobWake', jobs: ['j1'], deliverables: [] } }
+      },
+      { ...message, id: 'wake-answer', timestamp: '2026-01-01T00:05:05Z' }
+    ],
+    null,
+    live
+  )
+  assert.equal(turns.length, 2)
+  assert.equal(turns[0].end, end.body)
+  assert.equal(turns[1].user, null)
+  assert.equal(turns[1].id, 'turn:1')
+  assert.equal(turns[1].startedAt, wakeTime)
+  assert.deepEqual(
+    turns[1].steps.map((s) => s.kind),
+    ['notice', 'text']
+  )
+})
+
+test('incoming mail notice starts its own userless turn even mid-session with unique ids', () => {
+  const mail1Time = '2026-01-01T00:01:00Z'
+  const mail2Time = '2026-01-01T00:02:00Z'
+  const turns = transcriptTurns(
+    [
+      user,
+      work,
+      {
+        id: 'mail-1',
+        timestamp: mail1Time,
+        body: { kind: 'notice', notice: { kind: 'mail', sender: 'scout', text: 'Found it' } }
+      },
+      message,
+      end,
+      {
+        id: 'mail-2',
+        timestamp: mail2Time,
+        body: { kind: 'notice', notice: { kind: 'mail', sender: 'reviewer', text: 'LGTM' } }
+      }
+    ],
+    null,
+    live
+  )
+  assert.equal(turns.length, 3)
+  assert.equal(turns[0].id, user.id)
+  assert.equal(turns[1].user, null)
+  assert.equal(turns[1].id, 'turn:1')
+  assert.equal(turns[1].startedAt, mail1Time)
+  assert.deepEqual(
+    turns[1].steps.map((s) => s.kind),
+    ['notice', 'text']
+  )
+  assert.equal(turns[2].user, null)
+  assert.equal(turns[2].id, 'turn:2')
+  assert.equal(turns[2].startedAt, mail2Time)
+  assert.deepEqual(
+    turns[2].steps.map((s) => s.kind),
+    ['notice']
+  )
 })

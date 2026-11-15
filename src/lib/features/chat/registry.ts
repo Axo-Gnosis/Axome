@@ -7,7 +7,7 @@ const controllers = new Map<TabId, ChatController>()
 export function getOrCreate(tab: ChatTab): ChatController {
   let controller = controllers.get(tab.id)
   if (!controller) {
-    controller = new ChatController(tab.id)
+    controller = new ChatController({ kind: 'tab', tabId: tab.id })
     controllers.set(tab.id, controller)
   }
   return controller

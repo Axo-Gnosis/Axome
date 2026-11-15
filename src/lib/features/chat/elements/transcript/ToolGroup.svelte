@@ -14,8 +14,8 @@
     onView,
     folderPath,
     sessionId,
-    onOpenLocation,
-    controller
+    controller,
+    onOpenJob
   }: {
     group: ToolGroupStep
     expansion?: BlockView
@@ -23,8 +23,8 @@
     onView: (id: string, view: BlockView) => void
     folderPath: string
     sessionId: string | null
-    onOpenLocation: (path: string, line?: number) => void
     controller: ChatController
+    onOpenJob?: (ref?: string) => void
   } = $props()
 
   // Group folding must not overwrite the first call's individual view.
@@ -62,22 +62,11 @@
     {view}
     {folderPath}
     {sessionId}
-    {onOpenLocation}
     onToggle={() => onView(viewId, view === 'collapsed' ? 'preview' : 'collapsed')}
   >
     <div class="flex min-w-0 flex-col border-l border-edge">
       {#each group.calls as call (call.id)}
-        <ToolBlock
-          {call}
-          {expansion}
-          {overrides}
-          {onView}
-          {folderPath}
-          {sessionId}
-          {onOpenLocation}
-          {controller}
-          nested
-        />
+        <ToolBlock {call} {expansion} {overrides} {onView} {folderPath} {sessionId} {controller} nested {onOpenJob} />
       {/each}
     </div>
   </ToolFrame>

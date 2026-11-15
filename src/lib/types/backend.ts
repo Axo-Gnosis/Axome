@@ -120,6 +120,7 @@ export type WorkbenchRun =
   | { kind: 'session'; folder: string; harness_id: string; preset: string | null }
   | { kind: 'shell'; folder: string; preset: string | null }
   | { kind: 'task'; folder: string; task_id: string }
+  | { kind: 'chat'; folder: string }
 
 /** A folder opened in Axome, most recent first. */
 export interface RecentFolder {
@@ -137,6 +138,15 @@ export type SessionSource = { kind: 'harness'; harnessId: string; presets: (stri
 
 export type SessionSourceKey = { kind: 'harness'; harnessId: string; preset: string | null } | { kind: 'axo' }
 
+export interface IndexedChildSession {
+  sessionId: string
+  agent: string | null
+  teamMember: string | null
+  title: string | null
+  model: string | null
+  updatedAt: string | null
+}
+
 export interface IndexedSession {
   source: SessionSource
   sessionId: string
@@ -146,6 +156,7 @@ export interface IndexedSession {
   updatedAt: string | null
   model: string | null
   gitBranch: string | null
+  children: IndexedChildSession[]
 }
 
 export type SessionIndexStatus = 'pending' | 'ready' | 'missing' | 'error'
@@ -254,6 +265,49 @@ export type ChatPart =
   | { type: 'content'; name: string; /** Base64. */ bytes: string }
   | { type: 'saved'; url: string; image: boolean }
 
+export type ChatKiller = 'model' | 'host'
+
+export type ChatCommandExit =
+  | { type: 'exited'; code: number }
+  | { type: 'signaled'; signal: number }
+  | { type: 'timedOut'; afterSecs: number }
+  | { type: 'killed'; by: ChatKiller }
+  | { type: 'aborted' }
+  | { type: 'interrupted' }
+
+export interface ChatTeamRef {
+  id: string
+  member: string
+  name: string | null
+}
+
+export type ChatDeliverable =
+  | {
+      kind: 'command'
+      jobId: string
+      command: string
+      exit: ChatCommandExit | null
+      isError: boolean
+    }
+  | {
+      kind: 'child'
+      jobId: string
+      agent: string | null
+      team: ChatTeamRef | null
+      note: boolean
+      partial: boolean
+      isError: boolean
+      text: string
+      value: unknown | null
+    }
+
+export type ChatNotice =
+  | { kind: 'jobWake'; jobs: string[]; deliverables: ChatDeliverable[] }
+  | { kind: 'mail'; sender: string; text: string }
+  | { kind: 'turnBudget'; text: string }
+  | { kind: 'yieldNudge'; text: string }
+  | { kind: 'host'; text: string }
+
 export type ChatEntryBody =
   | { kind: 'user'; parts: ChatPart[]; anchor: string | null; siblings: string[] }
   | {
@@ -272,11 +326,14 @@ export type ChatEntryBody =
       content: ChatContent[]
       details: unknown | null
       isError: boolean
+      deliverables: ChatDeliverable[]
       durationMs: number | null
     }
-  | { kind: 'notice'; text: string }
+  | { kind: 'notice'; notice: ChatNotice }
   | { kind: 'modelChange'; model: string }
   | { kind: 'thinkingChange'; thinking: ChatThinking }
+  | { kind: 'agentChange'; agent: string | null }
+  | { kind: 'modeChange'; mode: string | null }
   | { kind: 'compaction'; summary: string; tokensBefore: number }
   | { kind: 'branchSummary'; summary: string }
   | { kind: 'contextMoved'; blocks: number }
@@ -327,17 +384,94 @@ export interface ChatAnswer {
 
 export interface ChatRetry {
   attempt: number
+  maxRetries: number
   delayMs: number
+  error: string | null
 }
 
 export interface ChatStats {
   contextTokens: number
   contextWindow: number
-  input: number
-  output: number
-  cacheRead: number
-  cacheWrite: number
-  cost: number
+  contextTrigger: number | null
+  contextReserve: number | null
+  usage: ChatUsage
+  tree: ChatUsage | null
+}
+
+export type ChatJobStatus = 'queued' | 'running' | 'helpersRunning' | 'finished' | 'failed' | 'interrupted'
+export type ChatPromotion = 'async' | 'timer' | 'steer' | 'host'
+
+export interface ChatChildProgress {
+  turns: number
+  maxTurns: number
+  tools: string[]
+}
+
+export type ChatJobKind =
+  | {
+      kind: 'command'
+      command: string
+      artifact: number
+      promotion: ChatPromotion | null
+      endedAt: number | null
+      exit: ChatCommandExit | null
+    }
+  | {
+      kind: 'child'
+      sessionId: string
+      agent: string | null
+      model: string
+      team: ChatTeamRef | null
+      progress: ChatChildProgress | null
+      unreadMail: number
+    }
+
+export interface ChatJob {
+  id: string
+  status: ChatJobStatus
+  callId: string | null
+  startedAt: number
+  kind: ChatJobKind
+}
+
+export type ChatToolExposure = 'direct' | 'deferred'
+
+export interface ChatSessionTool {
+  name: string
+  summary: string
+  description: string
+  parameters: Record<string, unknown>
+  exposure: ChatToolExposure
+  promoted: boolean
+  allowedInMode: boolean
+}
+
+export type ChatOutputStream = 'stdout' | 'stderr' | 'merged'
+
+export interface ChatOutputChunk {
+  stream: ChatOutputStream
+  text: string
+}
+
+export interface ChatJobOutput {
+  chunks: ChatOutputChunk[]
+  captureFailed: boolean
+  truncated: boolean
+  done: boolean
+}
+
+export interface ChatLiveSummary {
+  sessionId: string
+  running: boolean
+  waiting: boolean
+  autoPaused: boolean
+  activeCommands: number
+  activeChildren: number
+}
+
+export interface ChatSummariesChangedEvent {
+  folderPath: string
+  summaries: ChatLiveSummary[]
 }
 
 export interface ChatLive {
@@ -350,6 +484,8 @@ export interface ChatLive {
   queue: ChatQueued[]
   questions: ChatQuestions[]
   retry: ChatRetry | null
+  autoPaused: boolean
+  jobs: ChatJob[]
   stats: ChatStats
 }
 
@@ -361,12 +497,99 @@ export type ChatCommand = { name: string; description: string; policy: ChatComma
   | { kind: 'skill'; argumentHint: string | null }
 )
 
+export interface ChatSkillInfo {
+  name: string
+  description: string
+  path: string
+  modelInvocable: boolean
+  argumentHint: string | null
+}
+
+export type ChatAgentRunAs = 'root' | 'subagent' | 'any'
+
+export interface ChatAgentInfo {
+  name: string
+  description: string
+  team: boolean
+  runAs: ChatAgentRunAs | null
+  model: string | null
+  tools: string[] | null
+  bashReadOnly: boolean
+  maxTurns: number | null
+  structuredOutput: boolean
+  members: string[]
+  path: string | null
+}
+
+export interface ChatModeInfo {
+  name: string
+  description: string
+  argumentHint: string | null
+  modelInvocable: boolean
+  model: string | null
+  toolsAllow: string[] | null
+  toolsDeny: string[]
+  bashReadOnly: boolean
+  resultReviewed: boolean | null
+  path: string | null
+}
+
+export interface ChatKeywordInfo {
+  name: string
+  description: string
+  requiresTools: string[]
+  model: string | null
+  path: string | null
+}
+
+export interface ChatToolbox {
+  skills: ChatSkillInfo[]
+  agents: ChatAgentInfo[]
+  modes: ChatModeInfo[]
+  keywords: ChatKeywordInfo[]
+  diagnostics: string[]
+}
+
+export interface ChatPromptSection {
+  name: string
+  body: string
+}
+
+export interface ChatContextFile {
+  path: string
+  content: string
+  nested: boolean
+}
+
+export interface ChatContextDetails {
+  prompt: ChatPromptSection[]
+  contextFiles: ChatContextFile[]
+}
+
+/** The session's `local://` files and the canonical directory they live in. */
+export interface ChatLocalFiles {
+  /** Canonical absolute path of the `local://` root, for matching ledger paths under it. */
+  root: string
+  files: ChatLocalFile[]
+}
+
+/** A file under the session's `local://` root. */
+export interface ChatLocalFile {
+  /** Relative to the `local://` root, `/`-separated. */
+  path: string
+  size: number
+}
+
 export interface ChatState {
   sessionId: string
+  readOnly: boolean
+  isChild: boolean
   entries: ChatEntry[]
   streaming: ChatBlock[] | null
   live: ChatLive
   commands: ChatCommand[]
+  sessionTools: ChatSessionTool[]
+  toolbox: ChatToolbox
 }
 
 export type ChatDelta =
@@ -380,8 +603,10 @@ export type ChatEvent =
   | { type: 'snapshot'; state: ChatState }
   | { type: 'entry'; entry: ChatEntry }
   | { type: 'live'; live: ChatLive }
+  | { type: 'sessionTools'; tools: ChatSessionTool[] }
   | { type: 'delta'; delta: ChatDelta }
-  | { type: 'notice'; message: string }
+  | { type: 'jobOutput'; jobId: string; reset: boolean; output: ChatJobOutput }
+  | { type: 'error'; message: string }
   | { type: 'closed'; message: string; missing: boolean }
   | { type: 'reconnecting' }
 

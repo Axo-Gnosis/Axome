@@ -5,6 +5,7 @@ import { isProcessLive, type ChatTab, type SessionTab, type TabId } from '$lib/f
 import { addChatTab, addSessionTab, getTabs, setActiveTab } from '$lib/features/workbench/state.svelte'
 import type { IndexedSession } from '$lib/types/backend'
 import { getSessionIndex } from './state.svelte'
+import { getChatLiveSummary, isChatBusy } from '$lib/features/chat/summaries.svelte'
 
 /** Open a dormant tab; the terminal surface starts it on activation. */
 export function startSession(folderPath: string, harnessId: string, preset: string | null): TabId {
@@ -15,14 +16,18 @@ export function startSession(folderPath: string, harnessId: string, preset: stri
 
 /** Live agents above one share the folder's working tree. */
 export function countLiveAgents(folderPath: string): number {
-  return getTabs().filter(
-    (tab) =>
-      tab.folderPath === folderPath &&
-      ((tab.kind === 'session' && isProcessLive(tab.status)) || (tab.kind === 'chat' && tab.status === 'running'))
-  ).length
+  return getTabs().filter((tab) => {
+    if (tab.folderPath !== folderPath) return false
+    if (tab.kind === 'session') return isProcessLive(tab.status)
+    if (tab.kind === 'chat') {
+      const summary = getChatLiveSummary(folderPath, tab.sessionId)
+      return summary ? isChatBusy(summary) : tab.status === 'running'
+    }
+    return false
+  }).length
 }
 
-export function findIndexedSessionTab(folderPath: string, session: IndexedSession): SessionTab | ChatTab | undefined {
+function findIndexedSessionTab(folderPath: string, session: IndexedSession): SessionTab | ChatTab | undefined {
   const source = session.source
   return getTabs().find(
     (tab): tab is SessionTab | ChatTab =>
@@ -35,7 +40,7 @@ export function findIndexedSessionTab(folderPath: string, session: IndexedSessio
 
 export function historyRows(folderPath: string): IndexedSession[] {
   return (getSessionIndex(folderPath).snapshot?.sessions ?? []).filter(
-    (session) => !findIndexedSessionTab(folderPath, session)
+    (session) => !findIndexedSessionTab(folderPath, session) || session.children.length > 0
   )
 }
 

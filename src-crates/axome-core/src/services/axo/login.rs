@@ -43,9 +43,7 @@ impl AxoService {
             )));
         }
         let mut slot = self.login.lock().await;
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(ApiError::Internal("Axome is shutting down".into()));
-        }
+        self.ensure_open()?;
         // Wait for cancellation to release the single loopback listener before starting another.
         if let Some(old) = slot.take() {
             old.stop().await;

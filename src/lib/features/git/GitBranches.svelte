@@ -5,7 +5,7 @@
 
 <script lang="ts" module>
   import { treeIndent, treeIndentValue } from '$lib/components/ui/tree-indent'
-  import { SidebarRow, sidebarRowVariants } from '$lib/components/ui/sidebar-row'
+  import { SidebarNote, SidebarRow, sidebarRowVariants } from '$lib/components/ui/sidebar-row'
 
   const BRANCH_HISTORY_PAGE_SIZE = 5
 </script>
@@ -514,13 +514,13 @@
   {@const color = branchColor(branch)}
   <div class="bg-surface">
     {#if history?.loading && history.commits.length === 0}
-      <SidebarRow variant="info" divider={false} {depth} class="text-subtle">Loading commits...</SidebarRow>
+      <SidebarNote {depth} class="text-subtle">Loading commits...</SidebarNote>
     {:else if history?.error}
-      <SidebarRow variant="info" divider={false} {depth} class="text-danger">
+      <SidebarNote {depth} class="text-danger">
         {history.error}
-      </SidebarRow>
+      </SidebarNote>
     {:else if !history || history.commits.length === 0}
-      <SidebarRow variant="info" divider={false} {depth} class="text-subtle">No commits found.</SidebarRow>
+      <SidebarNote {depth} class="text-subtle">No commits found.</SidebarNote>
     {:else}
       {#each history.commits as commit (commit.hash)}
         <GitCommitRow
@@ -535,13 +535,13 @@
       {/each}
 
       {#if history.loading}
-        <SidebarRow variant="info" divider={false} {depth} class="text-subtle">Loading commits...</SidebarRow>
+        <SidebarNote {depth} class="text-subtle">Loading commits...</SidebarNote>
       {:else if !history.exhausted}
         <SidebarRow
-          variant="action"
+          density="compact"
+          tone="muted"
           on="surface"
           {depth}
-          class="text-xs"
           onclick={() => void loadBranchHistory(branch, history.limit + BRANCH_HISTORY_PAGE_SIZE)}
         >
           <Icon icon={MoreHorizontalIcon} size={12} class="shrink-0" />
@@ -564,7 +564,7 @@
   {#if node.branch}
     {@render branchRow(node.branch, depth, node.isSelf ? '(self)' : null)}
   {:else}
-    <SidebarRow variant="info" {depth}>
+    <SidebarRow behavior="display" density="compact" tone="muted" {depth}>
       <span class="truncate">{node.name}/</span>
     </SidebarRow>
   {/if}
@@ -583,7 +583,8 @@
     <ContextMenu.Trigger class="contents">
       <div
         class="{sidebarRowVariants({
-          variant: 'leaf',
+          behavior: 'disclosure',
+          density: 'compact',
           pressed: branch.isCurrent || isExpanded
         })} group"
         style:padding-left={treeIndent(depth)}
@@ -593,6 +594,7 @@
             type="button"
             class="flex h-full min-w-0 flex-1 items-center gap-1.5 border-none bg-transparent p-0 text-left focus-visible:shadow-focus-ring focus-visible:outline-none"
             aria-label={`${branch.name} branch`}
+            aria-expanded={isExpanded}
             onclick={() => toggleBranchHistory(branch)}
           >
             <Icon icon={GitBranchIcon} size={12} class={branch.isCurrent ? 'text-accent' : 'text-muted'} {color} />

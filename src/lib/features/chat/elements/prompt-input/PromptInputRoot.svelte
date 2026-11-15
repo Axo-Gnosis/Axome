@@ -5,14 +5,25 @@
   import { keymap } from 'prosemirror-keymap'
   import { history, undo, redo } from 'prosemirror-history'
   import { deleteSelection, selectAll } from 'prosemirror-commands'
+  import { IconButton } from '$lib/components/ui/button'
+  import Icon from '$lib/icons/Icon.svelte'
   import type { ChatCommand, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
-  import { File01Icon, Folder01Icon, SlashIcon, SparklesIcon } from '@hugeicons/core-free-icons'
+  import {
+    ArrowUp02Icon,
+    File01Icon,
+    Folder01Icon,
+    Navigation03Icon,
+    Queue01Icon,
+    SlashIcon,
+    SparklesIcon
+  } from '@hugeicons/core-free-icons'
   import { notify } from '$lib/features/notifications/state.svelte'
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
   import {
     CONTENT_LIMIT,
     CONTENT_LIMIT_MESSAGE,
     contentBytes,
+    hasContent,
     invokedSkill,
     partsText
   } from '$lib/features/chat/parts/parts'
@@ -78,6 +89,9 @@
   // The argument a failed send flagged; cleared by the next edit.
   let invalid = $state<string | null>(null)
   let submitting = $state(false)
+  let altHeld = $state(false)
+  const sendMode = $derived<'send' | 'steer' | 'followUp'>(running ? (altHeld ? 'followUp' : 'steer') : 'send')
+  const canSend = $derived(!disabled && !submitting && hasContent(parts))
   const skill = $derived(invokedSkill(parts, commands))
   type Query =
     | { kind: 'file' | 'command'; text: string; from: number; to: number }
@@ -200,7 +214,7 @@
     if (skill) return { title: '/' + skill.name, note: skill.argumentHint ?? undefined, text: skill.description }
     return null
   })
-  export function getParts(): ChatPart[] {
+  function getParts(): ChatPart[] {
     return view ? documentParts(view.state.doc) : parts
   }
   // A new draft starts a new history, so a sent message's attachments aren't kept for undo.
@@ -212,12 +226,12 @@
     invalid = null
     updateQuery()
   }
-  export function setParts(next: ChatPart[]): void {
+  function setParts(next: ChatPart[]): void {
     parts = next
     lastParts = parts
     if (view) load(next)
   }
-  export function clear(): void {
+  function clear(): void {
     setParts([])
   }
   export function focus(insert?: string): void {
@@ -243,7 +257,7 @@
       tr.insertText(' ', from + 1)
     view!.dispatch(tr.scrollIntoView())
   }
-  export async function submit(followUp = false): Promise<void> {
+  async function submit(followUp = false): Promise<void> {
     if (disabled || submitting) return
     if (view && line) {
       const { command } = line
@@ -275,7 +289,7 @@
         clear()
         focus()
       } else fail(error, null, end)
-    } else if (followUp) onAltSubmit()
+    } else if (running && followUp) onAltSubmit()
     else onSubmit()
   }
   /** Accepts the highlighted item; `descend` (Tab) types a folder's path into the mention to list it instead. */
@@ -662,6 +676,13 @@
   })
 </script>
 
+<!-- Capture before the composer consumes Enter; Alt is transient, never a saved send mode. -->
+<svelte:window
+  onkeydowncapture={(event) => (altHeld = event.altKey)}
+  onkeyupcapture={(event) => (altHeld = event.altKey)}
+  onblur={() => (altHeld = false)}
+/>
+
 <div
   data-slot="prompt-input-root"
   role="group"
@@ -706,6 +727,20 @@
     {#if start}{@render start()}{/if}
     <div class="ms-auto flex min-w-0 items-center gap-1.5">
       {#if end}{@render end()}{/if}
+      <IconButton
+        size="md"
+        tooltip={sendMode === 'send' ? 'Send' : sendMode === 'steer' ? 'Steer' : 'Follow-up'}
+        shortcut={sendMode === 'followUp' ? 'Alt+Enter' : 'Enter'}
+        tooltipSide="top"
+        disabled={!canSend}
+        class={canSend ? 'bg-accent-dim text-ground hover:bg-accent hover:text-ground' : ''}
+        onclick={(event) => void submit(event.altKey)}
+      >
+        <Icon
+          icon={sendMode === 'send' ? ArrowUp02Icon : sendMode === 'steer' ? Navigation03Icon : Queue01Icon}
+          size={14}
+        />
+      </IconButton>
     </div>
   </div>
 </div>

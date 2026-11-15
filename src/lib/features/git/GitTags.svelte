@@ -73,7 +73,7 @@
                 <Tooltip.Trigger
                   type="button"
                   data-slot="tag-row"
-                  class={sidebarRowVariants({ variant: 'leaf' })}
+                  class={sidebarRowVariants({ density: 'compact' })}
                   onclick={() => void openCommitDiff(folderPath, tag.hash, tag.shortHash, tag.subject)}
                 >
                   <Icon icon={Tag01Icon} size={12} class="shrink-0 text-muted" />

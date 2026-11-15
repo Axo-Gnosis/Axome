@@ -118,6 +118,33 @@
   --duration-med: 240ms;
   --duration-slow: 400ms;
 
+  /* WORKING STATUS // foreground-only wave and staggered dots; not the tab beam. */
+  --animate-working-wave: working-wave 3s linear infinite;
+  --animate-working-dot: working-dot 1.5s var(--ease-out-quart) infinite;
+
+  @keyframes working-wave {
+    from {
+      background-position: 200% center;
+    }
+    to {
+      background-position: 0% center;
+    }
+  }
+
+  @keyframes working-dot {
+    0%,
+    60%,
+    100% {
+      color: var(--color-muted);
+    }
+    20% {
+      color: var(--color-accent);
+    }
+    35% {
+      color: var(--color-accent-bright);
+    }
+  }
+
   /*
    * SHADOWS // elevation is reserved for floating surfaces only
    * (popovers, dropdowns, command palette, toasts). Cards, buttons,

@@ -65,7 +65,8 @@ const eventNames: Record<string, string> = {
   nix_changed: 'nix-changed',
   sessions_changed: 'sessions-changed',
   issues_changed: 'issues-changed',
-  workbenches_changed: 'workbenches-changed'
+  workbenches_changed: 'workbenches-changed',
+  chat_summaries_changed: 'chat-summaries-changed'
 }
 
 export function createWebHostTransport(options: WebHostTransportOptions): WebHostTransport {

@@ -19,6 +19,7 @@ pub(crate) fn to_wire(event: HostEvent) -> Option<HostEventWire> {
         HostEvent::NixChanged(folder) => Some(HostEventWire::NixChanged(folder)),
         HostEvent::SessionsChanged(folder) => Some(HostEventWire::SessionsChanged(folder)),
         HostEvent::IssuesChanged(folder) => Some(HostEventWire::IssuesChanged(folder)),
+        HostEvent::ChatSummariesChanged(event) => Some(HostEventWire::ChatSummariesChanged(event)),
         HostEvent::FileMoved { .. } | HostEvent::FileDeleted(_) => None,
     }
 }
@@ -100,6 +101,7 @@ pub(crate) async fn claimed(session: &Mutex<Session>, event: &HostEventWire) -> 
         }
         HostEventWire::FilesChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::GitChanged(event) => Some(event.folder_path.as_str()),
+        HostEventWire::ChatSummariesChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::SettingsChanged(event) => match event.folder_path.as_deref() {
             Some(folder) => Some(folder),
             None => return true,

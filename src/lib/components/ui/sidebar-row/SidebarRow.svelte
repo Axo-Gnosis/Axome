@@ -1,38 +1,29 @@
 <!--
   @component
-  SidebarRow. Single source of truth for sidebar list rows: epic and
-  branch group headers, branch / stash leaves, "show more" actions,
-  and non-interactive info rows. The class recipe is exported from the
-  module script for cases that need a different wrapping element (e.g.
-  a tooltip trigger or context-menu host) while still pinning the
-  visual contract to one place.
-
-  Variants:
-    - section: h-7. Group/section header.
-    - leaf:    h-6. Tree row for an item.
-    - action:  h-6, text-xs muted. "Show more" / inline "+ Add".
-    - info:    h-6, text-xs muted, no hover. Loading / empty / dir placeholder.
-
-  `on` names the backing surface so hover always steps up exactly one
-  level: rows on `ground` (top-level panel lists, the default) hover to
-  bg-surface, rows on `surface` (expanded group containers) hover to
-  bg-raised. `divider` toggles the `border-t border-edge/30` rule
-  independently from variant; `depth` resolves via treeIndent for
-  nested tree rows; `pressed` applies the bg-raised accent for
-  current/expanded items.
+  Sidebar rows separate behavior, density and tone. The exported recipe also
+  supports composed native controls. `on` chooses the backing surface; hover
+  steps up one level only for interactive rows.
+  Disclosure state stays caller-owned. `content` associates an expanded region
+  with its trigger, while `actions` always renders sibling controls.
 -->
-
 <script lang="ts" module>
   import { tv, type VariantProps } from 'tailwind-variants'
 
   export const sidebarRowVariants = tv({
-    base: 'flex w-full items-center gap-1.5 px-2.5 text-left focus-visible:shadow-focus-ring focus-visible:outline-none',
+    base: 'flex w-full items-center gap-1.5 px-2.5 text-left text-sm',
     variants: {
-      variant: {
-        section: 'h-7 text-sm',
-        leaf: 'h-6 text-sm',
-        action: 'h-6 text-sm text-muted hover:text-bright',
-        info: 'h-6 text-xs text-muted'
+      behavior: {
+        display: '',
+        action: 'focus-visible:shadow-focus-ring focus-visible:outline-none',
+        disclosure: 'focus-visible:shadow-focus-ring focus-visible:outline-none'
+      },
+      density: {
+        compact: 'h-6',
+        normal: 'h-7'
+      },
+      tone: {
+        default: '',
+        muted: 'text-muted'
       },
       on: {
         ground: '',
@@ -47,20 +38,24 @@
         false: ''
       }
     },
-    // Hover steps one surface up from the backing; info rows never hover.
     compoundVariants: [
-      { variant: ['section', 'leaf', 'action'], on: 'ground', class: 'hover:bg-surface' },
-      { variant: ['section', 'leaf', 'action'], on: 'surface', class: 'hover:bg-raised' }
+      { behavior: ['action', 'disclosure'], on: 'ground', class: 'hover:bg-surface' },
+      { behavior: ['action', 'disclosure'], on: 'surface', class: 'hover:bg-raised' },
+      { behavior: ['action', 'disclosure'], tone: 'muted', class: 'hover:text-bright' }
     ],
     defaultVariants: {
-      variant: 'section',
+      behavior: 'action',
+      density: 'normal',
+      tone: 'default',
       on: 'ground',
       divider: true,
       pressed: false
     }
   })
 
-  export type SidebarRowVariant = NonNullable<VariantProps<typeof sidebarRowVariants>['variant']>
+  export type SidebarRowBehavior = NonNullable<VariantProps<typeof sidebarRowVariants>['behavior']>
+  export type SidebarRowDensity = NonNullable<VariantProps<typeof sidebarRowVariants>['density']>
+  export type SidebarRowTone = NonNullable<VariantProps<typeof sidebarRowVariants>['tone']>
   export type SidebarRowOn = NonNullable<VariantProps<typeof sidebarRowVariants>['on']>
 </script>
 
@@ -68,48 +63,109 @@
   import { cn } from '$lib/utils/cn'
   import { treeIndent } from '$lib/components/ui/tree-indent'
   import type { Snippet } from 'svelte'
+  import type { HTMLAttributes, HTMLButtonAttributes } from 'svelte/elements'
 
+  const uid = $props.id()
   let {
-    variant = 'section' as SidebarRowVariant,
-    on = 'ground' as SidebarRowOn,
+    behavior = 'action',
+    density = 'normal',
+    tone = 'default',
+    on = 'ground',
+    expanded = false,
     pressed = false,
     divider = true,
     depth = 0,
+    id,
+    style: customStyle,
     class: className,
     children,
+    actions,
+    content,
     ...rest
-  }: {
-    variant?: SidebarRowVariant
-    on?: SidebarRowOn
-    pressed?: boolean
-    divider?: boolean
-    depth?: number
-    class?: string
-    children: Snippet
-    [key: string]: unknown
-  } = $props()
+  }: HTMLAttributes<HTMLElement> &
+    Pick<HTMLButtonAttributes, 'disabled'> & {
+      behavior?: SidebarRowBehavior
+      density?: SidebarRowDensity
+      tone?: SidebarRowTone
+      on?: SidebarRowOn
+      expanded?: boolean
+      pressed?: boolean
+      divider?: boolean
+      depth?: number
+      children?: Snippet
+      actions?: Snippet
+      content?: Snippet
+    } = $props()
 
-  let interactive = $derived(variant !== 'info')
-  let style = $derived(depth > 0 ? `padding-left: ${treeIndent(depth)}` : undefined)
+  const interactive = $derived(behavior !== 'display')
+  const associated = $derived(behavior === 'disclosure' && !!content)
+  const triggerId = $derived(id ?? (associated ? `${uid}-trigger` : undefined))
+  const style = $derived(`${depth > 0 ? `padding-left: ${treeIndent(depth)};` : ''}${customStyle ?? ''}`)
 </script>
 
-{#if interactive}
+{#snippet rowBody()}
+  {#if children}{@render children()}{/if}
+{/snippet}
+
+{#if actions}
+  <div
+    data-slot="sidebar-row"
+    class={cn(
+      sidebarRowVariants({ behavior, density, tone, on, pressed, divider }),
+      'group/sidebar-row pr-1',
+      className
+    )}
+    {style}
+  >
+    {#if interactive}
+      <button
+        type="button"
+        id={triggerId}
+        aria-expanded={behavior === 'disclosure' ? expanded : undefined}
+        aria-controls={associated ? `${uid}-content` : undefined}
+        class="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left focus-visible:shadow-focus-ring focus-visible:outline-none"
+        {...rest}
+      >
+        {@render rowBody()}
+      </button>
+    {:else}
+      <div {id} class="flex min-w-0 flex-1 items-center gap-1.5" {...rest}>
+        {@render rowBody()}
+      </div>
+    {/if}
+    <div
+      class="hidden shrink-0 items-center gap-0.5 group-hover/sidebar-row:flex group-has-[:focus-visible]/sidebar-row:flex"
+    >
+      {@render actions()}
+    </div>
+  </div>
+{:else if interactive}
   <button
     type="button"
+    id={triggerId}
     data-slot="sidebar-row"
-    class={cn(sidebarRowVariants({ variant, on, pressed, divider }), className)}
+    aria-expanded={behavior === 'disclosure' ? expanded : undefined}
+    aria-controls={associated ? `${uid}-content` : undefined}
+    class={cn(sidebarRowVariants({ behavior, density, tone, on, pressed, divider }), className)}
     {style}
     {...rest}
   >
-    {@render children()}
+    {@render rowBody()}
   </button>
 {:else}
   <div
+    {id}
     data-slot="sidebar-row"
-    class={cn(sidebarRowVariants({ variant, on, pressed, divider }), className)}
+    class={cn(sidebarRowVariants({ behavior, density, tone, on, pressed, divider }), className)}
     {style}
     {...rest}
   >
-    {@render children()}
+    {@render rowBody()}
+  </div>
+{/if}
+
+{#if behavior === 'disclosure' && content && expanded}
+  <div id={`${uid}-content`} role="region" aria-labelledby={triggerId}>
+    {@render content()}
   </div>
 {/if}

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axome_protocol::session::{LastMessage, MessageRole};
+use axome_protocol::session::{IndexedChildSession, LastMessage, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
 use parking_lot::Mutex;
 
@@ -35,6 +35,7 @@ pub(crate) struct HistoryRow {
     pub updated_at: Option<String>,
     pub model: Option<String>,
     pub git_branch: Option<String>,
+    pub children: Vec<IndexedChildSession>,
 }
 
 impl HistoryRow {

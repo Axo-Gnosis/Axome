@@ -212,8 +212,6 @@
     <IconButton tooltip="Refresh issues" onclick={refresh}>
       <Icon icon={RefreshCwIcon} size={11} />
     </IconButton>
-  {/snippet}
-  {#snippet headerExtra()}
     <InfoTooltip ariaLabel="About the issues view" contentClass="w-80">
       <div class="space-y-2">
         <p class="font-medium text-bright">Issues view</p>
@@ -313,9 +311,9 @@
     </div>
 
     <SidebarRow
-      variant="action"
+      tone="muted"
       divider={false}
-      class="h-7 shrink-0 border-b border-edge bg-ground"
+      class="shrink-0 border-b border-edge bg-ground"
       onclick={() => openCapture('epic')}
     >
       <Icon icon={Layers01Icon} size={12} class="shrink-0" />
@@ -419,7 +417,7 @@
         <Tooltip.Root>
           <Tooltip.Trigger
             type="button"
-            class={sidebarRowVariants({ variant: 'section' })}
+            class={sidebarRowVariants({ behavior: 'disclosure' })}
             onclick={() => toggleEpic(id)}
             ondblclick={() => void openEpicTab(folderPath, epic.id, epic.title)}
             aria-expanded={!collapsed}
@@ -465,7 +463,7 @@
       </ContextMenu.Content>
     </ContextMenu.Root>
   {:else}
-    <SidebarRow variant="section" onclick={() => toggleEpic(id)} aria-expanded={!collapsed}>
+    <SidebarRow behavior="disclosure" onclick={() => toggleEpic(id)} expanded={!collapsed}>
       <Icon icon={Layers01Icon} size={12} class="shrink-0 text-warning" />
       <span class="min-w-0 flex-1 truncate text-subtle italic">Unassigned</span>
       <ProgressBar done={group.done} active={group.active} total={group.total} />
@@ -481,7 +479,13 @@
         {/each}
       {/each}
       {#if epic}
-        <SidebarRow variant="action" on="surface" divider={false} onclick={() => openCapture('issue', epic.id)}>
+        <SidebarRow
+          density="compact"
+          tone="muted"
+          on="surface"
+          divider={false}
+          onclick={() => openCapture('issue', epic.id)}
+        >
           <span>New issue…</span>
           <Icon icon={PlusIcon} size={12} class="ml-auto shrink-0" />
         </SidebarRow>

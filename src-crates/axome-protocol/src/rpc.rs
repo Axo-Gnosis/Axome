@@ -114,6 +114,9 @@ pub enum WorkbenchRun {
         folder: String,
         task_id: String,
     },
+    Chat {
+        folder: String,
+    },
 }
 
 /// A recently opened folder; `opened_at` is RFC 3339 UTC.
@@ -731,6 +734,8 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatClose => chat_close(folder_path: String, session_id: String) -> ();
             #[route(folder_path)]
+            ChatResume => chat_resume(folder_path: String, session_id: String) -> ();
+            #[route(folder_path)]
             ChatAnswer => chat_answer(folder_path: String, session_id: String, call_id: String, answers: Vec<$crate::chat::ChatAnswer>) -> ();
             #[route(folder_path)]
             ChatDismiss => chat_dismiss(folder_path: String, session_id: String, call_id: String) -> ();
@@ -744,6 +749,20 @@ macro_rules! axome_rpc_ops {
             ChatSelectBranch => chat_select_branch(folder_path: String, session_id: String, entry_id: String) -> ();
             #[route(folder_path)]
             ChatFork => chat_fork(folder_path: String, session_id: String, entry_id: String) -> $crate::chat::ChatForkInfo;
+            #[route(folder_path)]
+            ChatBackground => chat_background(folder_path: String, session_id: String, call_id: String) -> bool;
+            #[route(folder_path)]
+            ChatKillJob => chat_kill_job(folder_path: String, session_id: String, job_id: String) -> bool;
+            #[route(folder_path)]
+            ChatResumeWakes => chat_resume_wakes(folder_path: String, session_id: String) -> ();
+            #[route(folder_path)]
+            ChatWatchJob => chat_watch_job(folder_path: String, session_id: String, attach_id: String, job_id: Option<String>) -> Option<$crate::chat::ChatJobOutput>;
+            #[route(folder_path)]
+            ChatLiveSummaries => chat_live_summaries(folder_path: String) -> Vec<$crate::chat::ChatLiveSummary>;
+            #[route(folder_path)]
+            ChatContextDetails => chat_context_details(folder_path: String, session_id: String) -> $crate::chat::ChatContextDetails;
+            #[route(folder_path)]
+            ChatLocalFiles => chat_local_files(folder_path: String, session_id: String) -> $crate::chat::ChatLocalFiles;
             #[route(folder_path)]
             ShellStart => shell_start(
                 run_id: String,
@@ -864,6 +883,7 @@ pub enum Open {
         session_id: String,
     },
     Chat {
+        attach_id: String,
         folder_path: String,
         session_id: String,
     },
@@ -995,6 +1015,7 @@ pub enum HostEventWire {
     NixChanged(String),
     SessionsChanged(String),
     IssuesChanged(String),
+    ChatSummariesChanged(crate::chat::ChatSummariesChangedEvent),
     RecentFoldersChanged(Vec<RecentFolder>),
     /// The workbench registry changed: an attach, takeover, detach, or Close.
     WorkbenchesChanged(()),

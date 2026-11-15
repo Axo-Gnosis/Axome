@@ -1,21 +1,41 @@
 <script lang="ts">
-  import { IconButton } from '$lib/components/ui/button'
+  import { Button, IconButton, iconButtonVariants } from '$lib/components/ui/button'
+  import * as Tooltip from '$lib/components/ui/tooltip'
   import { StatusDot } from '$lib/components/ui/status-dot'
+  import { Separator } from '$lib/components/ui/separator'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import * as Message from '$lib/features/chat/elements/message'
-  import { formatCost, formatDuration, formatTokens } from '$lib/features/chat/format'
+  import { cacheHitPercent, formatCost, formatDuration, formatTokens, modelName } from '$lib/features/chat/format'
   import { turnDurationMs, type Turn } from '$lib/features/chat/turns'
-  import { modelName } from '$lib/features/sessions/query'
   import type { BlockView } from '$lib/features/chat/view'
-  import { TriangleAlertIcon, CircleXIcon, CopyIcon, GitForkIcon, InfoIcon } from '@hugeicons/core-free-icons'
-  import Icon from '$lib/icons/Icon.svelte'
+  import { notify } from '$lib/features/notifications/state.svelte'
+  import {
+    ArrowDown02Icon,
+    ArrowUp02Icon,
+    CircleXIcon,
+    Clock01Icon,
+    CopyIcon,
+    DatabaseExportIcon,
+    DatabaseImportIcon,
+    DollarCircleIcon,
+    GitForkIcon,
+    InfoIcon,
+    SigmaIcon,
+    StopIcon,
+    TriangleAlertIcon
+  } from '@hugeicons/core-free-icons'
+  import Icon, { type IconData } from '$lib/icons/Icon.svelte'
   import { copyToClipboard } from '$lib/utils/clipboard'
   import { cn } from '$lib/utils/cn'
+  import { getErrorMessage } from '$lib/utils/client-error'
   import ThinkingBlock from './ThinkingBlock.svelte'
+  import NoticeBlock from './NoticeBlock.svelte'
   import ToolBlock from './ToolBlock.svelte'
+  import ToolReceipt from './ToolReceipt.svelte'
   import SummaryBlock from './SummaryBlock.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import WorkBlock from './WorkBlock.svelte'
+  import WorkingIndicator from './WorkingIndicator.svelte'
   import { groupSteps, segmentSteps, type TranscriptStep } from './groupSteps'
 
   let {
@@ -28,7 +48,7 @@
     expansion = 'collapsed',
     overrides,
     onView,
-    onOpenLocation
+    onOpenJob
   }: {
     turn: Turn
     controller: ChatController
@@ -39,35 +59,39 @@
     expansion?: BlockView
     overrides: Record<string, BlockView>
     onView: (stepId: string, view: BlockView) => void
-    onOpenLocation: (path: string, line?: number) => void
+    onOpenJob?: (ref?: string) => void
   } = $props()
-
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
   const duration = $derived(turnDurationMs(turn, now))
   const segments = $derived(segmentSteps(groupSteps(turn.steps)))
   const asking = $derived(new Set(controller.state?.live.questions.map((questions) => questions.callId)))
+  const retry = $derived(turn.running ? (controller.state?.live.retry ?? null) : null)
+  const canStop = $derived(turn.running && controller.connection === 'live' && !controller.readOnly)
   // All visible messages belong to one reply, with one copy/fork/details footer.
   const copyText = $derived(turn.steps.flatMap((step) => (step.kind === 'text' ? [step.text] : [])).join('\n\n'))
   const usage = $derived.by(() => {
-    if (!turn.assistants.length) return ''
-    const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
+    if (!turn.assistants.length) return null
+    const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 }
+    let assistantMs = 0
+    let hasAssistantMs = false
     for (const entry of turn.assistants) {
       sum.input += entry.body.usage.input
       sum.output += entry.body.usage.output
       sum.cacheRead += entry.body.usage.cacheRead
       sum.cacheWrite += entry.body.usage.cacheWrite
+      sum.totalTokens += entry.body.usage.totalTokens
       sum.cost += entry.body.usage.cost
+      if (entry.body.durationMs !== null) {
+        assistantMs += entry.body.durationMs
+        hasAssistantMs = true
+      }
     }
-    return [
-      `${formatTokens(sum.input)} in`,
-      `${formatTokens(sum.output)} out`,
-      sum.cacheRead ? `${formatTokens(sum.cacheRead)} cache R` : '',
-      sum.cacheWrite ? `${formatTokens(sum.cacheWrite)} cache W` : '',
-      formatCost(sum.cost)
-    ]
-      .filter(Boolean)
-      .join(' · ')
+    const totalTokens = sum.totalTokens || sum.input + sum.output + sum.cacheRead + sum.cacheWrite
+    const rateMs = hasAssistantMs ? assistantMs : duration
+    const tokensPerSec =
+      sum.output > 0 && rateMs !== null && rateMs > 0 ? Math.round(sum.output / (rateMs / 1000)) : null
+    return { ...sum, totalTokens, cacheHitPercent: cacheHitPercent(sum), tokensPerSec }
   })
   const notices = $derived.by(() => {
     const rows: { text: string; danger: boolean }[] = []
@@ -89,7 +113,38 @@
     }
     return rows
   })
+
+  async function stop() {
+    try {
+      await controller.stop()
+    } catch (error) {
+      notify.error('Stop chat failed', getErrorMessage(error))
+    }
+  }
 </script>
+
+{#snippet stat(icon: IconData, label: string, value: string, note?: string)}
+  <div class="flex items-center justify-between gap-4">
+    <dt class="flex items-center gap-2 text-muted">
+      <Icon {icon} size={14} class="shrink-0" />
+      <span>{label}</span>
+    </dt>
+    <dd class="font-mono text-fg tabular-nums">
+      {value}{#if note}
+        <span class="text-muted">· {note}</span>
+      {/if}
+    </dd>
+  </div>
+{/snippet}
+
+{#snippet stopControl()}
+  {#if canStop}
+    <Button type="button" variant="text" size="xs" class="ms-auto gap-1.5" aria-keyshortcuts="Escape" onclick={stop}>
+      <Icon icon={StopIcon} size={12} class="text-danger" />
+      Stop
+    </Button>
+  {/if}
+{/snippet}
 
 {#snippet render(step: TranscriptStep)}
   {#if step.kind === 'text'}
@@ -104,8 +159,8 @@
       {onView}
       {folderPath}
       {sessionId}
-      {onOpenLocation}
       {controller}
+      {onOpenJob}
     />
   {:else if step.kind === 'tool'}
     <ToolBlock
@@ -115,14 +170,16 @@
       {onView}
       {folderPath}
       {sessionId}
-      {onOpenLocation}
       {controller}
+      {onOpenJob}
     />
+  {:else if step.kind === 'receipt'}
+    <ToolReceipt call={step.call} {folderPath} {sessionId} {onOpenJob} />
   {:else if step.kind === 'notice'}
-    <div class="text-sm whitespace-pre-wrap text-muted">{step.text}</div>
+    <NoticeBlock notice={step.notice} {folderPath} {sessionId} {onOpenJob} />
   {:else if step.kind === 'compaction' || step.kind === 'branchSummary'}
     <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
-  {:else if step.kind === 'modelChange' || step.kind === 'thinkingChange' || step.kind === 'contextMoved'}
+  {:else if step.kind === 'modelChange' || step.kind === 'thinkingChange' || step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
     <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
       <Icon icon={InfoIcon} size={14} />
       <span
@@ -130,13 +187,19 @@
           ? `Model → ${step.model}`
           : step.kind === 'thinkingChange'
             ? `Thinking → ${step.thinking}`
-            : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
+            : step.kind === 'agentChange'
+              ? `Persona → ${step.agent ?? 'Default'}`
+              : step.kind === 'modeChange'
+                ? step.mode
+                  ? `Mode → ${step.mode}`
+                  : 'Exited mode'
+                : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
       >
     </div>
   {/if}
 {/snippet}
 
-<div data-slot="agent-block" class="group/message flex min-w-0 flex-col gap-3 py-2">
+<div data-slot="agent-block" class="flex min-w-0 flex-col gap-3 py-2">
   {#each segments as segment, index (segment.id)}
     {#if segment.kind === 'work'}
       <WorkBlock
@@ -148,15 +211,27 @@
         {asking}
         {onView}
         {render}
+        stop={canStop ? stopControl : undefined}
       />
     {:else}
       {@render render(segment)}
     {/if}
   {/each}
   {#if turn.running && segments.at(-1)?.kind !== 'work'}
-    <div class="flex items-center gap-2 text-sm text-muted">
-      <StatusDot tone="working" size="sm" />
-      <span class="tabular-nums">Working{duration !== null ? ` · ${formatDuration(duration)}` : ''}</span>
+    <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+      <WorkingIndicator {duration} />
+      {@render stopControl()}
+    </div>
+  {/if}
+  {#if retry}
+    <div class="flex min-w-0 items-center gap-2 text-sm text-warning">
+      <StatusDot tone="waiting" size="sm" />
+      <span class="shrink-0 tabular-nums"
+        >Retrying {retry.attempt}/{retry.maxRetries} · in {formatDuration(retry.delayMs)}</span
+      >
+      {#if retry.error}
+        <span class="min-w-0 truncate text-muted" title={retry.error}>{retry.error}</span>
+      {/if}
     </div>
   {/if}
   {#each notices as notice}
@@ -166,9 +241,7 @@
     </div>
   {/each}
   {#if !turn.running}
-    <div
-      class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-focus-within/message:opacity-100 [@media(hover:hover)]:group-hover/message:opacity-100"
-    >
+    <div class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle">
       {#if lastAssistant}
         <IconButton tooltip="Copy" class="shrink-0 text-subtle" onclick={() => void copyToClipboard(copyText)}
           ><Icon icon={CopyIcon} size={14} /></IconButton
@@ -181,14 +254,44 @@
         >
       {/if}
       {#if duration !== null || usage}
-        <IconButton
-          ariaLabel="Response Details"
-          tooltip={[duration === null ? null : formatDuration(duration), usage].filter(Boolean).join(' · ')}
-          tooltipSide="top"
-          class="shrink-0 text-subtle"
-        >
-          <Icon icon={InfoIcon} size={14} />
-        </IconButton>
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            type="button"
+            aria-label="Response Details"
+            class={cn(iconButtonVariants({ size: 'sm' }), 'shrink-0 text-subtle')}
+          >
+            <Icon icon={InfoIcon} size={14} />
+          </Tooltip.Trigger>
+          <Tooltip.Content side="top" align="start" class="w-64 p-3">
+            <div class="mb-2 text-xs font-medium tracking-wide text-muted uppercase">Message usage</div>
+            <dl class="flex flex-col gap-1.5 text-sm">
+              {#if duration !== null}
+                {@render stat(Clock01Icon, 'Duration', formatDuration(duration))}
+              {/if}
+              {#if usage}
+                {@render stat(ArrowUp02Icon, 'Input', formatTokens(usage.input))}
+                {@render stat(ArrowDown02Icon, 'Output', formatTokens(usage.output))}
+                {#if usage.cacheRead > 0}
+                  {@render stat(
+                    DatabaseExportIcon,
+                    'Cache read',
+                    formatTokens(usage.cacheRead),
+                    usage.cacheHitPercent !== null ? `${usage.cacheHitPercent}% hit` : undefined
+                  )}
+                {/if}
+                {#if usage.cacheWrite > 0}
+                  {@render stat(DatabaseImportIcon, 'Cache write', formatTokens(usage.cacheWrite))}
+                {/if}
+                <Separator class="my-0.5 bg-edge-strong" />
+                {@render stat(SigmaIcon, 'Total', formatTokens(usage.totalTokens))}
+                {#if usage.tokensPerSec !== null}
+                  {@render stat(ArrowDown02Icon, 'Rate', `${usage.tokensPerSec} tok/s avg`)}
+                {/if}
+                {@render stat(DollarCircleIcon, 'Cost', formatCost(usage.cost))}
+              {/if}
+            </dl>
+          </Tooltip.Content>
+        </Tooltip.Root>
       {/if}
       {#if lastAssistant}
         <span class="ml-1 truncate font-mono text-xs text-muted" title={lastAssistant.body.model}

@@ -10,6 +10,7 @@
   import { IconButton } from '$lib/components/ui/button'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
+  import { cn } from '$lib/utils/cn'
   import { logicalKey } from '$lib/utils/keyboardEvent'
 
   let { children, footer }: { children?: Snippet; footer?: Snippet } = $props()
@@ -17,7 +18,6 @@
   let viewport: HTMLDivElement | undefined
   let transcript: HTMLDivElement | undefined
   let atBottom = $state(true)
-  let gutterWidth = $state(0)
   let anchor: ScrollAnchor | null = null
   const expansionAnchor = new ExpansionAnchor()
   let changing = false
@@ -153,14 +153,9 @@
       },
       options
     )
-    const syncGutter = () => {
-      gutterWidth = Math.max(0, scroller.offsetWidth - scroller.clientWidth)
-    }
     scrollToBottom()
-    syncGutter()
     const observer = new ResizeObserver(() => {
       if (active && viewport === scroller) {
-        syncGutter()
         restorePosition()
       }
     })
@@ -176,7 +171,6 @@
       changing = false
       anchor = null
       settledTop = Number.NaN
-      gutterWidth = 0
     }
   }
 </script>
@@ -185,7 +179,7 @@
 <div data-slot="conversation" role="region" aria-label="Conversation" class="flex min-h-0 flex-1 flex-col">
   <div
     bind:this={viewport}
-    class="min-h-0 flex-1 overflow-y-auto px-4 [overflow-anchor:none]"
+    class="min-h-0 flex-1 scrollbar-none overflow-y-auto px-4 [overflow-anchor:none]"
     onscroll={updateAtBottom}
   >
     <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
@@ -195,15 +189,21 @@
     </div>
   </div>
 
-  <div class="shrink-0 px-4" style:margin-right="{gutterWidth}px">
-    <div class="relative mx-auto w-full max-w-5xl pb-4">
+  <div class="shrink-0 px-4">
+    <!-- Isolate negative layers so the scroll control's shadow stays behind the composer, not the page. -->
+    <div
+      class={cn(
+        'before:duration-fast relative isolate mx-auto w-full max-w-5xl pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:-z-10 before:h-8 before:bg-linear-to-t before:from-ground before:from-20% before:to-transparent before:transition-opacity',
+        atBottom && 'before:opacity-0'
+      )}
+    >
       {#if !atBottom}
         <IconButton
           size="md"
           tooltip="Scroll to Bottom"
           tooltipSide="top"
           onclick={scrollToBottom}
-          class="absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 border border-edge bg-raised shadow-popover"
+          class="absolute bottom-full left-1/2 -z-10 mb-2 -translate-x-1/2 border border-edge bg-raised shadow-popover"
         >
           <Icon icon={ArrowDown02Icon} size={14} />
         </IconButton>

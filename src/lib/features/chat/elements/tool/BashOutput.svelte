@@ -26,9 +26,6 @@
   const output = $derived(bashOutput(call, view === 'preview' ? 12 : null))
   const hasContent = $derived(output.parts.some((part) => part.type === 'image' || part.text.length > 0))
   const running = $derived(call.status === 'running')
-  const noticeSummary = $derived(
-    output.notice?.replace(/^Showing lines /, 'Recorded lines ') ?? 'Recorded output is truncated.'
-  )
 </script>
 
 <TerminalOutput output={call.output}>
@@ -51,7 +48,7 @@
     {/if}
     {#if output.fullOutput}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle">
-        <span>{noticeSummary}</span>
+        <span>Recorded output is truncated.</span>
         <Button
           type="button"
           variant="text"
@@ -61,9 +58,6 @@
           onclick={() => void openLink(output.fullOutput!, { folderPath, sessionId })}>Open Full Output</Button
         >
       </div>
-    {/if}
-    {#if output.status}
-      <pre class="m-0 font-mono text-xs wrap-anywhere whitespace-pre-wrap text-danger-bright">{output.status}</pre>
     {/if}
   </div>
 </TerminalOutput>
