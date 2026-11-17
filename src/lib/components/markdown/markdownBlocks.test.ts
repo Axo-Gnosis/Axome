@@ -1,15 +1,40 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { splitMarkdownBlocks } from './markdownBlocks'
+import { normalizeNestedMarkdownFences, splitMessageBlocks } from './markdownBlocks'
 
-test('splitMarkdownBlocks preserves source across heading, paragraph, and code blocks', () => {
-  const source = '# A\n\npara\n\n```ts\nx\n```\n'
-  const blocks = splitMarkdownBlocks(source)
-  assert.equal(blocks.length, 3)
-  assert.equal(blocks.join(''), source)
+test('splitMessageBlocks extracts top-level fenced code blocks alongside markdown slices', () => {
+  const source = 'Intro\n\n```markdown\n# Plan\n```\n\nOutro\n'
+  assert.deepEqual(splitMessageBlocks(source), [
+    { kind: 'markdown', source: 'Intro\n\n' },
+    { kind: 'code', lang: 'markdown', code: '# Plan' },
+    { kind: 'markdown', source: 'Outro\n' }
+  ])
 })
 
-test('splitMarkdownBlocks keeps reference definitions in one document', () => {
-  const source = '# A\n\nA [link][x].\n\n[x]: https://e.x\n'
-  assert.deepEqual(splitMarkdownBlocks(source), [source])
+test('splitMessageBlocks keeps empty-language code blocks and reference-definition docs intact', () => {
+  assert.deepEqual(splitMessageBlocks('```\nhello\n```\n'), [{ kind: 'code', lang: '', code: 'hello' }])
+  const withRef = '```ts\nx\n```\n\n[x]: https://e.x\n'
+  assert.deepEqual(splitMessageBlocks(withRef), [{ kind: 'markdown', source: withRef }])
+})
+
+test('splitMessageBlocks keeps naive nested 3-backtick fences inside markdown blocks intact', () => {
+  const source = ['```markdown', '```mermaid', 'flowchart TD', '  A --> B', '```', '```'].join('\n')
+  assert.deepEqual(splitMessageBlocks(source), [
+    {
+      kind: 'code',
+      lang: 'markdown',
+      code: ['```mermaid', 'flowchart TD', '  A --> B', '```'].join('\n')
+    }
+  ])
+})
+
+test('normalizeNestedMarkdownFences handles streaming, multiple inner blocks, CRLF, and non-markdown fences', () => {
+  const streaming = '```markdown\r\n```mermaid\r\nA --> B'
+  assert.equal(normalizeNestedMarkdownFences(streaming), '````markdown\r\n```mermaid\r\nA --> B')
+
+  const validFour = '````markdown\n```ts\nconst x = 1\n```\n````\n'
+  assert.equal(normalizeNestedMarkdownFences(validFour), validFour)
+
+  const insideRust = '```rust\nlet s = "```markdown\\n```ts\\n";\n```\n'
+  assert.equal(normalizeNestedMarkdownFences(insideRust), insideRust)
 })

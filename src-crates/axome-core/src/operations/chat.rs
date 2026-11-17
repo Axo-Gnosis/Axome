@@ -55,6 +55,26 @@ impl Host {
             .block_on(self.axo.follow_up(&folder, &session_id, parts))?
     }
 
+    pub fn chat_withdraw(
+        &self,
+        folder_path: String,
+        session_id: String,
+        submission_id: String,
+    ) -> Result<Vec<ChatPart>, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.withdraw(&folder, &session_id, submission_id))?
+    }
+
+    pub fn chat_send_now(
+        &self,
+        folder_path: String,
+        session_id: String,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo.block_on(self.axo.send_now(&folder, &session_id))?
+    }
+
     pub fn chat_abort(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
         self.axo.block_on(self.axo.abort(&folder, &session_id))?
@@ -101,6 +121,78 @@ impl Host {
         let folder = resolve_folder(&folder_path)?;
         self.axo
             .block_on(self.axo.dismiss(&folder, &session_id, call_id))?
+    }
+
+    pub fn chat_set_agent(
+        &self,
+        folder_path: String,
+        session_id: String,
+        agent: Option<String>,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.set_agent(&folder, &session_id, agent))?
+    }
+
+    pub fn chat_set_mode(
+        &self,
+        folder_path: String,
+        session_id: String,
+        mode: Option<String>,
+        parts: Vec<ChatPart>,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.set_mode(&folder, &session_id, mode, parts))?
+    }
+
+    pub fn chat_keyword_matches(
+        &self,
+        folder_path: String,
+        session_id: String,
+        texts: Vec<String>,
+    ) -> Result<Vec<Vec<axome_protocol::chat::ChatKeywordMatch>>, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.keyword_matches(&folder, &session_id, texts))?
+    }
+
+    pub fn chat_accept_result(
+        &self,
+        folder_path: String,
+        session_id: String,
+        call_id: String,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.accept_result(&folder, &session_id, call_id))?
+    }
+
+    pub fn chat_revise_result(
+        &self,
+        folder_path: String,
+        session_id: String,
+        call_id: String,
+        feedback: String,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.revise_result(&folder, &session_id, call_id, feedback))?
+    }
+
+    pub fn chat_accept_plan(
+        &self,
+        folder_path: String,
+        session_id: String,
+        call_id: String,
+        save_as: String,
+        then: axome_protocol::chat::ChatPlanThen,
+    ) -> Result<String, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo.block_on(
+            self.axo
+                .accept_plan(&folder, &session_id, call_id, save_as, then),
+        )?
     }
 
     pub fn chat_run_command(
@@ -221,6 +313,33 @@ impl Host {
         let folder = resolve_folder(&folder_path)?;
         self.axo
             .block_on(self.axo.local_files(&folder, &session_id))?
+    }
+
+    pub fn chat_squash_changes(
+        &self,
+        folder_path: String,
+        session_id: String,
+        changes: Vec<serde_json::Value>,
+    ) -> Result<Vec<axome_protocol::chat::ChatSquashedChange>, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.squash_changes(&folder, &session_id, changes))?
+    }
+
+    pub fn chat_turn_diff_file(
+        &self,
+        folder_path: String,
+        session_id: String,
+        before_sha: Option<String>,
+        after_sha: String,
+    ) -> Result<axome_protocol::git::DiffFileContent, ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo.block_on(self.axo.turn_diff_file(
+            &folder,
+            &session_id,
+            before_sha,
+            after_sha,
+        ))?
     }
 
     pub fn chat_live_summaries(

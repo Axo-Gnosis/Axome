@@ -252,10 +252,14 @@ pub enum ChatNotice {
 pub enum ChatEntryBody {
     /// `anchor`: where an edit of this message branches from (`None` = session start).
     /// `siblings`: ids of every user message with the same anchor (itself included), oldest first.
+    /// `from`: set when a parent agent routed this input with `send`.
+    /// `keywords`: names of the keywords that fired for this submission, first occurrence first.
     User {
         parts: Vec<ChatPart>,
         anchor: Option<String>,
         siblings: Vec<String>,
+        from: Option<ChatSender>,
+        keywords: Vec<String>,
     },
     Assistant {
         blocks: Vec<ChatBlock>,
@@ -308,6 +312,13 @@ pub enum ChatEntryBody {
     },
 }
 
+/// The agent session that routed a user entry; `name` is its display name when known.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSender {
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ChatMaintenance {
@@ -337,6 +348,7 @@ pub enum ChatQueueKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatQueued {
+    pub submission_id: String,
     pub kind: ChatQueueKind,
     pub parts: Vec<ChatPart>,
 }
@@ -543,6 +555,25 @@ pub struct ChatLive {
     pub retry: Option<ChatRetry>,
     pub stats: ChatStats,
     pub jobs: Vec<ChatJob>,
+    /// The selected persona; `None` = Default.
+    pub agent: Option<String>,
+    /// The selected mode.
+    pub mode: Option<String>,
+    /// The mode the current model request runs under; differs from `mode` until the next request.
+    pub effective_mode: Option<String>,
+    /// Mode results awaiting review.
+    pub reviews: Vec<ChatReview>,
+}
+
+/// A mode result awaiting review, mirroring `axo::PendingResult`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatReview {
+    pub call_id: String,
+    pub mode: String,
+    pub result: serde_json::Value,
+    /// The mode is marked `axome: { plan: true }`.
+    pub plan: bool,
 }
 
 /// When a built-in may run, mirroring `axo::CommandPolicy`.
@@ -568,6 +599,8 @@ pub enum ChatCommandKind {
     Builtin { parameters: serde_json::Value },
     /// One free-text argument.
     Skill { argument_hint: Option<String> },
+    /// Enters a mode; the rest of the message is its prompt.
+    Mode { argument_hint: Option<String> },
 }
 
 /// One entry of the session's command catalog, mirroring `axo::CommandInfo` JSON.
@@ -626,8 +659,24 @@ pub struct ChatModeInfo {
     pub tools_allow: Option<Vec<String>>,
     pub tools_deny: Vec<String>,
     pub bash_read_only: bool,
+    /// Where `write` and `edit` may write; `None` = unrestricted.
+    pub writes: Option<Vec<String>>,
     pub result_reviewed: Option<bool>,
     pub path: Option<String>,
+    /// The mode is marked `axome: { plan: true }`.
+    pub plan: bool,
+}
+
+/// What follows accepting a reviewed plan.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatPlanThen {
+    /// The run ends after saving.
+    Save,
+    /// The run continues and implements the plan.
+    Work,
+    /// The run ends, the session compacts, then a new turn implements the plan.
+    CompactWork,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -687,6 +736,15 @@ pub struct ChatLocalFile {
     /// Relative to the `local://` root, `/`-separated.
     pub path: String,
     pub size: u64,
+}
+
+/// A keyword occurrence in composer text, in UTF-16 code units.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatKeywordMatch {
+    pub name: String,
+    pub start: u32,
+    pub end: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -795,4 +853,21 @@ pub enum ChatLinkTarget {
     Virtual { text: String },
     /// Not a scheme this session registers.
     Unhandled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSquashedChange {
+    pub path: String,
+    pub key: String,
+    pub url: Option<String>,
+    pub created: bool,
+    pub before_sha: Option<String>,
+    pub after_sha: String,
+    pub binary: bool,
+    pub omitted: bool,
+    pub mutations: usize,
+    pub discontinuous: bool,
+    pub additions: Option<usize>,
+    pub deletions: Option<usize>,
 }

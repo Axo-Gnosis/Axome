@@ -44,11 +44,12 @@
   import { contextUsage, formatCost } from '$lib/features/chat/format'
   import { jobsStatus } from '$lib/features/chat/jobs'
   import Icon from '$lib/icons/Icon.svelte'
-  import { AiFile01Icon, TerminalIcon, UserGroupIcon, ToolCaseIcon } from '@hugeicons/core-free-icons'
+  import { AiFile01Icon, TaskEdit01Icon, TerminalIcon, UserGroupIcon, ToolCaseIcon } from '@hugeicons/core-free-icons'
   import AgentsPanel from './AgentsPanel.svelte'
   import ContextPanel from './ContextPanel.svelte'
   import FilesPanel from './FilesPanel.svelte'
   import JobsPanel from './JobsPanel.svelte'
+  import PlanPanel from './PlanPanel.svelte'
   import ToolboxPanel from './ToolboxPanel.svelte'
   import type { SessionSidebarState } from './state.svelte'
 
@@ -77,6 +78,13 @@
   })
   const agentsStatus = $derived(jobsStatus(jobs, 'child', 'Failed subagent'))
   const commandsStatus = $derived(jobsStatus(jobs, 'command', 'Failed job'))
+  const planReview = $derived(chat?.live.reviews.some((review) => review.plan) ?? false)
+  const planMode = $derived(
+    !!chat?.live.mode && !!chat.toolbox.modes.find((mode) => mode.name === chat.live.mode)?.plan
+  )
+  // Kept while open so the panel can always be toggled closed from its own button.
+  const showPlan = $derived(planMode || planReview || sidebar.view === 'plan')
+  const planStatus = $derived<ToneStatus | null>(planReview ? { tone: 'waiting', text: 'Ready for review' } : null)
   let panelEl = $state<HTMLDivElement | null>(null)
   let resizeAnchor = 0
 </script>
@@ -138,6 +146,17 @@
   >
     <Icon icon={TerminalIcon} size={16} />
   </RailButton>
+  {#if showPlan}
+    <RailButton
+      tooltipSide="left"
+      label="Plan"
+      active={sidebar.view === 'plan'}
+      status={planStatus}
+      onclick={() => sidebar.toggle('plan')}
+    >
+      <Icon icon={TaskEdit01Icon} size={16} />
+    </RailButton>
+  {/if}
 </div>
 {#if sidebar.view !== null}
   <div
@@ -160,6 +179,8 @@
       <ContextPanel state={chat ?? null} folderPath={owner.folderPath} {owner} />
     {:else if sidebar.view === 'files'}
       <FilesPanel state={chat ?? null} folderPath={owner.folderPath} {owner} />
+    {:else if sidebar.view === 'plan'}
+      <PlanPanel {controller} {owner} />
     {/if}
   </div>
 {/if}

@@ -22,10 +22,13 @@ import type {
   ChatJobOutput,
   ChatLiveSummary,
   ChatLinkTarget,
+  ChatKeywordMatch,
   ChatLocalFiles,
   ChatModelCatalog,
   ChatModel,
   ChatPart,
+  ChatPlanThen,
+  ChatSquashedChange,
   ChatSummariesChangedEvent,
   ChatThinking,
   ExtensionCatalog,
@@ -247,6 +250,12 @@ export const backend = {
     followUp(folderPath: string, sessionId: string, parts: ChatPart[]): Promise<void> {
       return invoke<void>('chat_follow_up', { folderPath, sessionId, parts })
     },
+    withdraw(folderPath: string, sessionId: string, submissionId: string): Promise<ChatPart[]> {
+      return invoke<ChatPart[]>('chat_withdraw', { folderPath, sessionId, submissionId })
+    },
+    sendNow(folderPath: string, sessionId: string): Promise<void> {
+      return invoke<void>('chat_send_now', { folderPath, sessionId })
+    },
     abort(folderPath: string, sessionId: string): Promise<void> {
       return invoke<void>('chat_abort', { folderPath, sessionId })
     },
@@ -300,6 +309,45 @@ export const backend = {
     },
     localFiles(folderPath: string, sessionId: string): Promise<ChatLocalFiles> {
       return invoke<ChatLocalFiles>('chat_local_files', { folderPath, sessionId })
+    },
+    squashChanges(folderPath: string, sessionId: string, changes: unknown[]): Promise<ChatSquashedChange[]> {
+      return invoke<ChatSquashedChange[]>('chat_squash_changes', { folderPath, sessionId, changes })
+    },
+    turnDiffFile(
+      folderPath: string,
+      sessionId: string,
+      beforeSha: string | null,
+      afterSha: string
+    ): Promise<DiffFileContent> {
+      return invoke<DiffFileContent>('chat_turn_diff_file', { folderPath, sessionId, beforeSha, afterSha })
+    },
+    /** Switches the persona; null selects Default. */
+    setAgent(folderPath: string, sessionId: string, agent: string | null): Promise<void> {
+      return invoke<void>('chat_set_agent', { folderPath, sessionId, agent })
+    },
+    /** Enters a mode (null exits), then submits `parts` when non-empty. */
+    setMode(folderPath: string, sessionId: string, mode: string | null, parts: ChatPart[]): Promise<void> {
+      return invoke<void>('chat_set_mode', { folderPath, sessionId, mode, parts })
+    },
+    /** Keyword occurrences per text, in UTF-16 offsets. */
+    keywordMatches(folderPath: string, sessionId: string, texts: string[]): Promise<ChatKeywordMatch[][]> {
+      return invoke<ChatKeywordMatch[][]>('chat_keyword_matches', { folderPath, sessionId, texts })
+    },
+    acceptResult(folderPath: string, sessionId: string, callId: string): Promise<void> {
+      return invoke<void>('chat_accept_result', { folderPath, sessionId, callId })
+    },
+    reviseResult(folderPath: string, sessionId: string, callId: string, feedback: string): Promise<void> {
+      return invoke<void>('chat_revise_result', { folderPath, sessionId, callId, feedback })
+    },
+    /** Saves a reviewed plan under `plansDir` and accepts it; resolves to the saved path. */
+    acceptPlan(
+      folderPath: string,
+      sessionId: string,
+      callId: string,
+      saveAs: string,
+      then: ChatPlanThen
+    ): Promise<string> {
+      return invoke<string>('chat_accept_plan', { folderPath, sessionId, callId, saveAs, then })
     },
     liveSummaries(folderPath: string): Promise<ChatLiveSummary[]> {
       return invoke<ChatLiveSummary[]>('chat_live_summaries', { folderPath })

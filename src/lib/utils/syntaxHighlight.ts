@@ -1,9 +1,9 @@
 import type { BundledLanguage, Highlighter, ThemedToken } from 'shiki'
 
-export const SHIKI_THEME_NAME = 'axome'
+const SHIKI_THEME_NAME = 'axome'
 let highlighterPromise: Promise<Highlighter> | null = null
 
-export function getHighlighter(): Promise<Highlighter> {
+function getHighlighter(): Promise<Highlighter> {
   return (highlighterPromise ??= import('shiki').then(
     ({ createHighlighter, createCssVariablesTheme, createJavaScriptRegexEngine }) =>
       createHighlighter({
@@ -49,6 +49,28 @@ export function codeTokens(code: string, language: string): Promise<ThemedToken[
     cachedCharacters -= entry.size
   })
   return value
+}
+
+export type HighlightSpan = { text: string; color?: string }
+
+/** Tokenizes `code` into contiguous spans preserving exact source whitespace and line endings. */
+export async function highlightSpans(code: string, language: string): Promise<HighlightSpan[] | null> {
+  const lines = await codeTokens(code, language)
+  if (!lines) return null
+  const spans: HighlightSpan[] = []
+  let offset = 0
+  // Slice the original source, including gaps between tokens, so line endings
+  // and whitespace never depend on Shiki's line-oriented representation.
+  for (const line of lines) {
+    for (const token of line) {
+      if (token.offset > offset) spans.push({ text: code.slice(offset, token.offset) })
+      const end = token.offset + token.content.length
+      spans.push({ text: code.slice(token.offset, end), color: token.color })
+      offset = end
+    }
+  }
+  if (offset < code.length) spans.push({ text: code.slice(offset) })
+  return spans
 }
 
 async function tokenizeCode(code: string, language: string): Promise<ThemedToken[][] | null> {

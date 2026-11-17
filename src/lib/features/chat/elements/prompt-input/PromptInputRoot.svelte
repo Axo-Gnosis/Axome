@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { mount, unmount, onMount, type Snippet } from 'svelte'
+  import { mount, unmount, onMount, untrack, type Snippet } from 'svelte'
   import { EditorState, Plugin, TextSelection } from 'prosemirror-state'
   import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
   import { keymap } from 'prosemirror-keymap'
   import { history, undo, redo } from 'prosemirror-history'
   import { deleteSelection, selectAll } from 'prosemirror-commands'
   import { IconButton } from '$lib/components/ui/button'
-  import Icon from '$lib/icons/Icon.svelte'
-  import type { ChatCommand, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
+  import Icon, { type IconData } from '$lib/icons/Icon.svelte'
+  import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
   import {
     ArrowUp02Icon,
     File01Icon,
     Folder01Icon,
+    Layers01Icon,
     Navigation03Icon,
     Queue01Icon,
     SlashIcon,
@@ -24,7 +25,7 @@
     CONTENT_LIMIT_MESSAGE,
     contentBytes,
     hasContent,
-    invokedSkill,
+    invokedCommand,
     partsText
   } from '$lib/features/chat/parts/parts'
   import { logicalKey } from '$lib/utils/keyboardEvent'
@@ -61,9 +62,12 @@
     running = false,
     owner,
     onSubmit,
-    onAltSubmit,
+    onFollowUp,
     onCommand,
+    onMode,
     onCancel,
+    keywords = [],
+    keywordMatches,
     start,
     end
   }: {
@@ -74,10 +78,15 @@
     models?: ChatModel[]
     running?: boolean
     owner: { folderPath: string; sessionId: string | null }
-    onSubmit: () => void
-    onAltSubmit: () => void
+    onSubmit: () => unknown
+    onFollowUp?: () => unknown
     onCommand?: (name: string, args: Record<string, unknown>) => Promise<string | null>
+    /** Enters the mode, then submits `parts` (the message without its `/name`) when non-empty. */
+    onMode?: (name: string, parts: ChatPart[]) => Promise<string | null>
     onCancel?: () => void
+    /** Names of the session's keywords; a text containing none skips the `keywordMatches` round trip. */
+    keywords?: string[]
+    keywordMatches?: (texts: string[]) => Promise<ChatKeywordMatch[][]>
     start?: Snippet
     end?: Snippet
   } = $props()
@@ -90,9 +99,13 @@
   let invalid = $state<string | null>(null)
   let submitting = $state(false)
   let altHeld = $state(false)
-  const sendMode = $derived<'send' | 'steer' | 'followUp'>(running ? (altHeld ? 'followUp' : 'steer') : 'send')
+  const sendMode = $derived<'send' | 'steer' | 'followUp'>(
+    running ? (altHeld && onFollowUp ? 'followUp' : 'steer') : 'send'
+  )
   const canSend = $derived(!disabled && !submitting && hasContent(parts))
-  const skill = $derived(invokedSkill(parts, commands))
+  const skill = $derived(invokedCommand(parts, commands, 'skill'))
+  // Only a composer that can enter modes treats `/<mode>` as one; elsewhere it is plain text.
+  const mode = $derived(onMode ? invokedCommand(parts, commands, 'mode') : null)
   type Query =
     | { kind: 'file' | 'command'; text: string; from: number; to: number }
     | { kind: 'argument'; text: string; from: number; to: number; arg: CommandArgument }
@@ -126,6 +139,13 @@
   let outsideKey = ''
   const catalog = $derived(commands.filter(offeredCommand))
   type Item = Suggestion & { command?: ChatCommand; path?: string; value?: string }
+  const catalogRank: Record<ChatCommand['kind'], number> = { builtin: 0, mode: 1, skill: 2 }
+  const catalogGroup: Record<ChatCommand['kind'], string> = { builtin: 'Commands', mode: 'Modes', skill: 'Skills' }
+  const catalogIcon: Record<ChatCommand['kind'], IconData> = {
+    builtin: SlashIcon,
+    mode: Layers01Icon,
+    skill: SparklesIcon
+  }
   const items = $derived.by((): Item[] => {
     if (query?.kind === 'argument') {
       const { arg, text } = query
@@ -176,12 +196,12 @@
     if (query)
       return catalog
         .filter((item) => item.name.startsWith(query!.text))
-        .sort((a, b) => Number(a.kind !== 'builtin') - Number(b.kind !== 'builtin'))
+        .sort((a, b) => catalogRank[a.kind] - catalogRank[b.kind])
         .map((item) => ({
           key: item.name,
-          group: item.kind === 'builtin' ? 'Commands' : 'Skills',
+          group: catalogGroup[item.kind],
           label: item.name,
-          icon: item.kind === 'builtin' ? SlashIcon : SparklesIcon,
+          icon: catalogIcon[item.kind],
           detail: item.description,
           fields:
             item.kind === 'builtin'
@@ -195,7 +215,7 @@
     return []
   })
   const open = $derived(!disabled && !!query)
-  // What the line above the input explains: the argument under the caret, the command, or the skill being typed.
+  // What the line above the input explains: the argument under the caret, the command, or the skill or mode being typed.
   const context = $derived.by(() => {
     if (line?.slot) {
       const required = (line.command.parameters.required ?? []) as string[]
@@ -211,7 +231,9 @@
         note: running && line.command.policy === 'when_idle' ? 'when idle' : undefined,
         text: line.command.description
       }
-    if (skill) return { title: '/' + skill.name, note: skill.argumentHint ?? undefined, text: skill.description }
+    const invoked = skill ?? mode
+    if (invoked)
+      return { title: '/' + invoked.name, note: invoked.argumentHint ?? undefined, text: invoked.description }
     return null
   })
   function getParts(): ChatPart[] {
@@ -219,6 +241,7 @@
   }
   // A new draft starts a new history, so a sent message's attachments aren't kept for undo.
   function load(next: ChatPart[]) {
+    staleKeywords()
     view!.updateState(
       EditorState.create({ schema: promptSchema, doc: partsDocument(next), plugins: view!.state.plugins })
     )
@@ -259,14 +282,25 @@
   }
   async function submit(followUp = false): Promise<void> {
     if (disabled || submitting) return
+    const fail = (message: string, name: string | null, caret: number) => {
+      validation = message
+      invalid = name
+      view!.dispatch(view!.state.tr.setSelection(TextSelection.create(view!.state.doc, caret + 1)))
+      view!.focus()
+    }
+    const settle = async (start: () => Promise<string | null>, end: number) => {
+      submitting = true
+      const error = await start().finally(() => {
+        submitting = false
+      })
+      if (!view) return
+      if (error === null) {
+        clear()
+        focus()
+      } else fail(error, null, end)
+    }
     if (view && line) {
       const { command } = line
-      const fail = (message: string, name: string | null, caret: number) => {
-        validation = message
-        invalid = name
-        view!.dispatch(view!.state.tr.setSelection(TextSelection.create(view!.state.doc, caret + 1)))
-        view!.focus()
-      }
       const end = documentText(view.state.doc).length
       if (getParts().some((part) => part.type !== 'text'))
         return fail(`/${command.name} can't take attachments.`, null, end)
@@ -279,18 +313,27 @@
           result.invalid,
           line.args.find((arg) => arg.name === result.invalid)?.to ?? end
         )
-      if (!onCommand) return
+      const run = onCommand
+      if (!run) return
+      return settle(() => run(command.name, result.args), end)
+    } else if (view && mode && onMode) {
+      const end = documentText(view.state.doc).length
+      if (running && mode.policy === 'when_idle') return fail(`/${mode.name} is available when idle.`, null, end)
+      // The rest of the message, chips included, is what the mode starts with.
+      const [first, ...others] = getParts()
+      const text = first?.type === 'text' ? first.text.slice(mode.name.length + 1).replace(/^\s+/, '') : ''
+      const rest: ChatPart[] = text ? [{ type: 'text', text }, ...others] : others
+      const enter = onMode
+      const name = mode.name
+      return settle(() => enter(name, rest), end)
+    } else {
       submitting = true
-      const error = await onCommand(command.name, result.args).finally(() => {
+      try {
+        await (running && followUp && onFollowUp ? onFollowUp() : onSubmit())
+      } finally {
         submitting = false
-      })
-      if (!view) return
-      if (error === null) {
-        clear()
-        focus()
-      } else fail(error, null, end)
-    } else if (running && followUp) onAltSubmit()
-    else onSubmit()
+      }
+    }
   }
   /** Accepts the highlighted item; `descend` (Tab) types a folder's path into the mention to list it instead. */
   function choose(index = active, descend = false) {
@@ -366,6 +409,45 @@
     }
     if (outsideKey === key) outside = { typed, entries }
   }
+  // Keyword highlights: axo matches the text; offsets are document positions. Every document
+  // change drops them (their positions are stale) and invalidates any match in flight.
+  let keywordRanges: { from: number; to: number }[] = []
+  let keywordGeneration = 0
+  let keywordTimer: ReturnType<typeof setTimeout> | undefined
+  /** Clears the highlights before the next state is drawn and queues a debounced match; returns whether any were shown. */
+  function staleKeywords(): boolean {
+    const shown = keywordRanges.length > 0
+    const generation = ++keywordGeneration
+    keywordRanges = []
+    clearTimeout(keywordTimer)
+    keywordTimer = setTimeout(() => void matchKeywords(generation), 150)
+    return shown
+  }
+  async function matchKeywords(generation: number) {
+    if (!view) return
+    const segments = documentText(view.state.doc).split('\ufffc')
+    const names = keywords.map((name) => name.toLowerCase())
+    // Only saves round trips: axo decides what matches.
+    const candidate =
+      !!keywordMatches && segments.some((segment) => names.some((name) => segment.toLowerCase().includes(name)))
+    let ranges: { from: number; to: number }[] = []
+    if (candidate) {
+      try {
+        const matches = await keywordMatches!(segments)
+        let offset = 0
+        segments.forEach((segment, index) => {
+          for (const match of matches[index] ?? [])
+            ranges.push({ from: offset + 1 + match.start, to: offset + 1 + match.end })
+          offset += segment.length + 1
+        })
+      } catch {
+        ranges = [] // Highlighting is advisory; a failed match shows none.
+      }
+    }
+    if (!view || generation !== keywordGeneration || (!ranges.length && !keywordRanges.length)) return
+    keywordRanges = ranges
+    view.dispatch(view.state.tr.setMeta('keywords', true))
+  }
   function updateQuery() {
     if (!view) return
     const { selection, doc } = view.state
@@ -415,6 +497,11 @@
         if (node.type.name === 'part')
           decorations.push(Decoration.node(pos, pos + node.nodeSize, { 'data-selected': '' }))
       })
+    // A mode's `/name` reads like a command name; keywords axo matched read as accent.
+    const invoked = onMode ? invokedCommand(documentParts(state.doc), commands, 'mode') : null
+    if (invoked) decorations.push(Decoration.inline(1, invoked.name.length + 2, { class: 'font-medium text-bright' }))
+    for (const range of keywordRanges)
+      decorations.push(Decoration.inline(range.from, range.to, { class: 'font-medium text-accent' }))
     // The built-in command being typed is styled: its name, each argument as a pill, the arguments
     // still to come as placeholders, and anything invalid in red. The text itself stays plain.
     const parsed = parseCommandLine(documentText(state.doc), state.selection.from - 1, catalog)
@@ -520,9 +607,9 @@
       }
       return
     }
-    const text = data.getData('text/plain')
+    const text = data.getData('text/plain').replace(/\r\n?/g, '\n')
     if (text) {
-      if (text.length > 1000 || text.split(/\r?\n/).length > 8) insertPart({ type: 'paste', text })
+      if (text.length > 1000 || text.split('\n').length > 8) insertPart({ type: 'paste', text })
       else focus(text)
     }
   }
@@ -564,6 +651,7 @@
         if (transaction.docChanged) {
           validation = ''
           invalid = null
+          staleKeywords()
         }
         view!.updateState(view!.state.apply(transaction))
         if (transaction.docChanged) {
@@ -625,9 +713,19 @@
     })
     lastParts = parts
     return () => {
+      clearTimeout(keywordTimer)
+      keywordGeneration++
       view?.destroy()
       view = undefined
     }
+  })
+  // A changed keyword set (toolbox loaded, a keyword toggled, the session created) re-matches the draft.
+  const keywordKey = $derived(`${!!keywordMatches}\n${keywords.join('\n')}`)
+  $effect(() => {
+    void keywordKey
+    untrack(() => {
+      if (staleKeywords()) view?.dispatch(view.state.tr.setMeta('keywords', true))
+    })
   })
   async function dropPayload(payload: DragPayload, x: number, y: number) {
     const position = view?.posAtCoords({ left: x, top: y })

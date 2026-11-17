@@ -3,10 +3,17 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Where accepted plans are saved when `plansDir` is unset.
+pub const DEFAULT_PLANS_DIR: &str = ".axome/plans";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct AxoSettings {
     pub default_model: Option<String>,
+    /// Axome-owned: persona for new chats; axo ignores the key.
+    pub default_agent: Option<String>,
+    /// Axome-owned: where accepted plans are saved, relative to the folder or absolute; axo ignores the key.
+    pub plans_dir: String,
     pub model_roles: IndexMap<String, String>,
     pub default_thinking_level: ChatThinking,
     pub home_agents_dir: bool,
@@ -28,10 +35,12 @@ impl Default for AxoSettings {
     fn default() -> Self {
         Self {
             default_model: None,
+            default_agent: None,
+            plans_dir: DEFAULT_PLANS_DIR.to_owned(),
             model_roles: IndexMap::new(),
             default_thinking_level: ChatThinking::Medium,
             home_agents_dir: false,
-            steering_mode: AxoQueueMode::OneAtATime,
+            steering_mode: AxoQueueMode::All,
             follow_up_mode: AxoQueueMode::OneAtATime,
             context_files: [
                 "AGENTS.md",

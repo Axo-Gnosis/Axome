@@ -81,7 +81,9 @@ export function captureToggleAnchor(viewport: HTMLElement, target: HTMLElement):
 }
 
 export function restoreScrollAnchor(viewport: HTMLElement, anchor: ScrollAnchor): void {
-  const candidate = anchor.candidates.find(({ element }) => element.isConnected && viewport.contains(element))
+  const candidate = anchor.candidates.find(
+    ({ element }) => element.isConnected && element.getClientRects().length > 0 && viewport.contains(element)
+  )
   if (!candidate) return
   const delta = candidate.element.getBoundingClientRect().top - viewport.getBoundingClientRect().top - candidate.offset
   if (Math.abs(delta) > 0.5) viewport.scrollTop += delta

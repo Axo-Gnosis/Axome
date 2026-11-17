@@ -9,13 +9,14 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { iconButtonVariants } from '$lib/components/ui/button'
   import { Chip } from '$lib/components/ui/chip'
+  import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
   import * as ContextMenu from '$lib/components/ui/context-menu'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
   import { SearchInput } from '$lib/components/ui/input'
   import { SidebarNote, SidebarRow, sidebarRowVariants } from '$lib/components/ui/sidebar-row'
   import { StatusDot, type StatusTone } from '$lib/components/ui/status-dot'
   import { Spinner } from '$lib/components/ui/progress'
-  import { ChevronRightIcon, FilterIcon, MessagesSquareIcon } from '@hugeicons/core-free-icons'
+  import { FilterIcon, MessagesSquareIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import type { IndexedSession } from '$lib/types/backend'
   import { cn } from '$lib/utils/cn'
@@ -293,11 +294,7 @@
                   }}
                   class="inline-flex shrink-0 cursor-pointer items-center gap-0.5 rounded px-1 py-0.5 font-mono text-2xs text-muted hover:bg-raised hover:text-bright focus-visible:shadow-focus-ring focus-visible:outline-none"
                 >
-                  <Icon
-                    icon={ChevronRightIcon}
-                    size={11}
-                    class={cn('duration-fast transition-transform', isExpanded && 'rotate-90')}
-                  />
+                  <DisclosureChevron open={isExpanded} size={11} class="duration-fast" />
                   <span>{children.length}</span>
                 </button>
               </div>

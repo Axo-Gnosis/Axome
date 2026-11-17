@@ -25,6 +25,7 @@
     label = '',
     idPrefix = 'diff',
     folderPath,
+    sessionId = null,
     workingStaged = null,
     commitHash = null,
     stashIndex = null,
@@ -37,6 +38,7 @@
     label?: string
     idPrefix?: string
     folderPath?: string
+    sessionId?: string | null
     workingStaged?: boolean | null
     commitHash?: string | null
     stashIndex?: number | null
@@ -253,6 +255,7 @@
         {store}
         {idPrefix}
         {folderPath}
+        {sessionId}
         {workingStaged}
         {commitHash}
         {stashIndex}

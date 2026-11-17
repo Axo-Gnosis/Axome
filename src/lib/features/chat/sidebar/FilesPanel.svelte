@@ -5,7 +5,6 @@
   import { InfoTooltip } from '$lib/components/ui/tooltip'
   import SidebarDivision from '$lib/features/app-shell/sidebar/SidebarDivision.svelte'
   import SidebarPanel from '$lib/features/app-shell/sidebar/SidebarPanel.svelte'
-  import { record, pathText } from '$lib/features/chat/elements/tool/payload'
   import GitStatusBadge from '$lib/features/git/GitStatusBadge.svelte'
   import { getGitSummary } from '$lib/features/git/state.svelte'
   import { openOwnedPath } from '$lib/features/workbench/links/openLink'
@@ -13,6 +12,7 @@
   import { getErrorMessage } from '$lib/utils/client-error'
   import { buildFileTree, type FileTreeNode } from '$lib/utils/fileTree'
   import { SvelteSet } from 'svelte/reactivity'
+  import { ledgerFiles } from './ledger'
 
   type SessionFile = { path: string; openPath: string; size?: number; status?: string }
 
@@ -66,13 +66,9 @@
     // local:// files have their own group; the ledger records them by absolute session path.
     const localPrefix = local?.root ? `${local.root}/` : null
     const paths = new Map<string, boolean>()
-    for (const { body } of chat?.entries ?? []) {
-      if (body.kind !== 'toolResult' || body.isError) continue
-      const ledger = record(record(body.details).ledger)
-      if (!pathText(ledger.path) || typeof ledger.sha256 !== 'string') continue
-      if (localPrefix && ledger.path.startsWith(localPrefix)) continue
-      const edited = paths.get(ledger.path) === true || ledger.access === 'modify'
-      paths.set(ledger.path, edited)
+    for (const { path, access } of ledgerFiles(chat?.entries ?? [])) {
+      if (localPrefix && path.startsWith(localPrefix)) continue
+      paths.set(path, paths.get(path) === true || access === 'modify')
     }
     const recorded = [...paths]
     return [

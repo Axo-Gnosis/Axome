@@ -5,8 +5,15 @@
   import { Separator } from '$lib/components/ui/separator'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import * as Message from '$lib/features/chat/elements/message'
-  import { cacheHitPercent, formatCost, formatDuration, formatTokens, modelName } from '$lib/features/chat/format'
-  import { turnDurationMs, type Turn } from '$lib/features/chat/turns'
+  import {
+    cacheHitPercent,
+    formatCost,
+    formatDuration,
+    formatRetry,
+    formatTokens,
+    modelName
+  } from '$lib/features/chat/format'
+  import { compactionTokensAfter, turnDurationMs, type Step, type Turn } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
   import { notify } from '$lib/features/notifications/state.svelte'
   import {
@@ -33,6 +40,8 @@
   import ToolBlock from './ToolBlock.svelte'
   import ToolReceipt from './ToolReceipt.svelte'
   import SummaryBlock from './SummaryBlock.svelte'
+  import ReviewCard from './ReviewCard.svelte'
+  import TurnChangesCard from './TurnChangesCard.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import WorkBlock from './WorkBlock.svelte'
   import WorkingIndicator from './WorkingIndicator.svelte'
@@ -40,32 +49,43 @@
 
   let {
     turn,
+    turns,
+    turnIndex,
     controller,
     folderPath,
     sessionId,
     canBranch,
     now,
-    expansion = 'collapsed',
+    expansion,
     overrides,
     onView,
-    onOpenJob
+    onOpenJob,
+    onOpenPlan
   }: {
     turn: Turn
+    turns: Turn[]
+    turnIndex: number
     controller: ChatController
     folderPath: string
     sessionId: string | null
     canBranch: boolean
     now: number
-    expansion?: BlockView
+    expansion: BlockView
     overrides: Record<string, BlockView>
     onView: (stepId: string, view: BlockView) => void
     onOpenJob?: (ref?: string) => void
+    onOpenPlan?: () => void
   } = $props()
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
   const duration = $derived(turnDurationMs(turn, now))
-  const segments = $derived(segmentSteps(groupSteps(turn.steps)))
+  const compactionSteps = $derived(
+    turn.steps.filter((step): step is Extract<Step, { kind: 'compaction' }> => step.kind === 'compaction')
+  )
+  const segments = $derived(segmentSteps(groupSteps(turn.steps.filter((step) => step.kind !== 'compaction'))))
   const asking = $derived(new Set(controller.state?.live.questions.map((questions) => questions.callId)))
+  const reviews = $derived(controller.state?.live.reviews ?? [])
+  const canReview = $derived(controller.connection === 'live' && !controller.readOnly)
   const retry = $derived(turn.running ? (controller.state?.live.retry ?? null) : null)
   const canStop = $derived(turn.running && controller.connection === 'live' && !controller.readOnly)
   // All visible messages belong to one reply, with one copy/fork/details footer.
@@ -174,26 +194,40 @@
       {onOpenJob}
     />
   {:else if step.kind === 'receipt'}
-    <ToolReceipt call={step.call} {folderPath} {sessionId} {onOpenJob} />
+    {@const review =
+      step.call.name === 'yield' ? reviews.find((review) => review.callId === step.call.callId) : undefined}
+    <!-- Match `callId` (axo's tool call id), never `id` (the transcript step id). -->
+    <ToolReceipt call={step.call} {review} {folderPath} {sessionId} {onOpenJob} {onOpenPlan} />
+    {#if review && !review.plan}
+      <ReviewCard
+        {review}
+        {folderPath}
+        {sessionId}
+        disabled={!canReview}
+        onAccept={() => controller.acceptResult(review.callId)}
+        onRevise={(feedback) => controller.reviseResult(review.callId, feedback)}
+        onDismiss={async () => {
+          // dismiss reports its own failure as a notification.
+          await controller.dismiss(review.callId)
+          return null
+        }}
+      />
+    {/if}
   {:else if step.kind === 'notice'}
     <NoticeBlock notice={step.notice} {folderPath} {sessionId} {onOpenJob} />
-  {:else if step.kind === 'compaction' || step.kind === 'branchSummary'}
+  {:else if step.kind === 'branchSummary'}
     <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
-  {:else if step.kind === 'modelChange' || step.kind === 'thinkingChange' || step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
+  {:else if step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
     <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
       <Icon icon={InfoIcon} size={14} />
       <span
-        >{step.kind === 'modelChange'
-          ? `Model → ${step.model}`
-          : step.kind === 'thinkingChange'
-            ? `Thinking → ${step.thinking}`
-            : step.kind === 'agentChange'
-              ? `Persona → ${step.agent ?? 'Default'}`
-              : step.kind === 'modeChange'
-                ? step.mode
-                  ? `Mode → ${step.mode}`
-                  : 'Exited mode'
-                : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
+        >{step.kind === 'agentChange'
+          ? `Persona → ${step.agent ?? 'Default'}`
+          : step.kind === 'modeChange'
+            ? step.mode
+              ? `Mode → ${step.mode}`
+              : 'Exited mode'
+            : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
       >
     </div>
   {/if}
@@ -211,14 +245,14 @@
         {asking}
         {onView}
         {render}
-        stop={canStop ? stopControl : undefined}
+        stop={stopControl}
       />
     {:else}
       {@render render(segment)}
     {/if}
   {/each}
   {#if turn.running && segments.at(-1)?.kind !== 'work'}
-    <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+    <div class="flex min-w-0 items-center gap-3">
       <WorkingIndicator {duration} />
       {@render stopControl()}
     </div>
@@ -226,9 +260,7 @@
   {#if retry}
     <div class="flex min-w-0 items-center gap-2 text-sm text-warning">
       <StatusDot tone="waiting" size="sm" />
-      <span class="shrink-0 tabular-nums"
-        >Retrying {retry.attempt}/{retry.maxRetries} · in {formatDuration(retry.delayMs)}</span
-      >
+      <span class="shrink-0 tabular-nums">{formatRetry(retry)}</span>
       {#if retry.error}
         <span class="min-w-0 truncate text-muted" title={retry.error}>{retry.error}</span>
       {/if}
@@ -241,6 +273,7 @@
     </div>
   {/each}
   {#if !turn.running}
+    <TurnChangesCard {turn} {folderPath} {sessionId} />
     <div class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle">
       {#if lastAssistant}
         <IconButton tooltip="Copy" class="shrink-0 text-subtle" onclick={() => void copyToClipboard(copyText)}
@@ -300,4 +333,14 @@
       {/if}
     </div>
   {/if}
+  {#each compactionSteps as step (step.id)}
+    <SummaryBlock
+      {step}
+      tokensAfter={compactionTokensAfter(turns, turnIndex, step.id, controller.state?.live.stats.contextTokens)}
+      view={overrides[step.id] ?? (detailView === 'full' ? 'preview' : 'collapsed')}
+      {onView}
+      {folderPath}
+      {sessionId}
+    />
+  {/each}
 </div>

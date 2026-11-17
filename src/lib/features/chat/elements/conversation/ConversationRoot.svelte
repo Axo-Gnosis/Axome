@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, type Snippet } from 'svelte'
+  import { tick, untrack, type Snippet } from 'svelte'
   import {
     captureScrollAnchor,
     ExpansionAnchor,
@@ -8,16 +8,26 @@
     type ScrollAnchor
   } from './scrollAnchor'
   import { IconButton } from '$lib/components/ui/button'
+  import type { Turn } from '$lib/features/chat/turns'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
   import { logicalKey } from '$lib/utils/keyboardEvent'
+  import TurnRail from './TurnRail.svelte'
 
-  let { children, footer }: { children?: Snippet; footer?: Snippet } = $props()
+  let { turns = [], children, footer }: { turns?: Turn[]; children?: Snippet; footer?: Snippet } = $props()
 
   let viewport: HTMLDivElement | undefined
   let transcript: HTMLDivElement | undefined
   let atBottom = $state(true)
+  let activeTurnId = $state<string | null>(null)
+  let viewportWidth = $state(0)
+  let viewportHeight = $state(0)
+  const showRail = $derived(turns.length > 0 && viewportWidth >= 560 && viewportHeight >= 160)
+  // Holds justify-end's top offset during disclosures on short chats so expanding pushes down, not up.
+  let lockedSpacer = $state<number | null>(null)
+  // Overscroll headroom so Turn 1's end can always rest at the bottom of the viewport like an only message.
+  let overscrollTop = $state(16)
   let anchor: ScrollAnchor | null = null
   const expansionAnchor = new ExpansionAnchor()
   let changing = false
@@ -36,23 +46,65 @@
     clearTimeout(scrollIdle)
     userScrolling = false
     dragging = false
+    if (viewport?.isConnected) settledTop = viewport.scrollTop
   }
 
   function beginUserScroll() {
     userScrolling = true
+    revision++
     clearTimeout(scrollIdle)
     if (!dragging) scrollIdle = setTimeout(endUserScroll, 250)
   }
 
+  function syncOverscroll(): boolean {
+    if (!viewport?.isConnected || !transcript?.isConnected) return false
+    const firstTurn = turns.length ? transcript.querySelector<HTMLElement>('[data-turn-id]') : null
+    const next = firstTurn ? Math.max(16, Math.ceil(viewport.clientHeight - 8 - firstTurn.offsetHeight)) : 16
+    if (next === overscrollTop) return false
+    overscrollTop = next
+    return true
+  }
+
+  function syncActiveTurn() {
+    if (!turns.length || !viewport?.isConnected || !transcript?.isConnected) {
+      activeTurnId = null
+      return
+    }
+    if (atBottom || nearBottom(viewport)) {
+      activeTurnId = turns.at(-1)!.id
+      return
+    }
+    // View is bottom-up oriented: the active turn is the last one entering above the bottom edge.
+    const threshold = viewport.getBoundingClientRect().bottom - 24
+    let next = turns[0].id
+    for (const el of transcript.querySelectorAll<HTMLElement>('[data-turn-id]')) {
+      const id = el.dataset.turnId
+      if (!id) continue
+      if (el.getBoundingClientRect().top <= threshold) next = id
+      else break
+    }
+    if (next !== activeTurnId) activeTurnId = next
+  }
+
   function updateAtBottom() {
     if (!viewport?.isConnected || changing) return
-    // Our corrections and the clamps they absorbed land exactly on settledTop; anything else is navigation
-    // (wheel, scrollbar, keys, in-page links, focus scrolling).
-    if (!userScrolling && Math.abs(viewport.scrollTop - settledTop) < 1) return
+    const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    // Our corrections and the clamps they absorbed land on settledTop (or the new maxTop when content shrinks);
+    // anything else is navigation (wheel, scrollbar, keys, in-page links, focus scrolling).
+    if (
+      !userScrolling &&
+      (Math.abs(viewport.scrollTop - settledTop) < 1 ||
+        (settledTop > maxTop && Math.abs(viewport.scrollTop - maxTop) < 1))
+    ) {
+      settledTop = viewport.scrollTop
+      syncActiveTurn()
+      return
+    }
     atBottom = nearBottom(viewport)
     anchor = atBottom || !transcript ? null : captureScrollAnchor(viewport, transcript)
     expansionAnchor.reset()
     beginUserScroll()
+    syncActiveTurn()
   }
 
   // Layout changes are not user scrolling. Ignore the scroll event caused by our correction.
@@ -61,6 +113,26 @@
     if (anchor) restoreScrollAnchor(viewport, anchor)
     else if (atBottom) viewport.scrollTop = viewport.scrollHeight
     settledTop = viewport.scrollTop
+  }
+
+  function finishPreserveScroll(scroller: HTMLElement, content: HTMLElement, current: number) {
+    if (current !== revision || viewport !== scroller || transcript !== content || userScrolling) return
+    restorePosition()
+    // The toggle held its header; if that left the view resting at the bottom, keep following new output.
+    if (lockedSpacer !== null) {
+      if (scroller.scrollHeight <= scroller.clientHeight + 0.5) {
+        lockedSpacer = null
+        anchor = null
+        atBottom = true
+        expansionAnchor.reset()
+      }
+      return
+    }
+    if (nearBottom(scroller)) {
+      anchor = null
+      atBottom = true
+      expansionAnchor.reset()
+    }
   }
 
   /** Toggling changes layout, not reading position. Reuse the bulk anchor until the user scrolls. */
@@ -73,6 +145,15 @@
     const content = transcript
     const target = stepId ? transcript.querySelector<HTMLElement>(`[data-view-id="${CSS.escape(stepId)}"]`) : null
     endUserScroll()
+    if (lockedSpacer === null) {
+      const first = transcript.firstElementChild as HTMLElement | null
+      if (first) {
+        const basePad = parseFloat(getComputedStyle(transcript).paddingTop) || 0
+        const marginTop = parseFloat(getComputedStyle(first).marginTop) || 0
+        const offset = first.getBoundingClientRect().top - transcript.getBoundingClientRect().top - marginTop
+        if (offset > basePad + 0.5) lockedSpacer = offset
+      }
+    }
     if (target) {
       anchor = captureToggleAnchor(viewport, target)
       expansionAnchor.reset()
@@ -82,30 +163,62 @@
     atBottom = false
     changing = true
     const current = ++revision
+    let animations: Animation[] = []
     try {
       change()
       await tick()
       if (current === revision && viewport === scroller && transcript === content) {
         restorePosition()
-        // The toggle held its header; if that left the view resting at the bottom, keep following new output.
-        if (nearBottom(scroller)) {
-          anchor = null
-          atBottom = true
-          expansionAnchor.reset()
+        animations = Array.from(scroller.querySelectorAll('[data-disclose]'))
+          .flatMap((el) => el.getAnimations?.() ?? [])
+          .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        if (!animations.length) {
+          finishPreserveScroll(scroller, content, current)
         }
       }
     } finally {
       if (current === revision) changing = false
+    }
+    if (animations.length) {
+      await Promise.allSettled(animations.map((animation) => animation.finished))
+      finishPreserveScroll(scroller, content, current)
     }
   }
 
   export function scrollToBottom(): void {
     endUserScroll()
     expansionAnchor.reset()
+    lockedSpacer = null
     anchor = null
     atBottom = true
     if (viewport) restorePosition()
+    syncActiveTurn()
   }
+
+  function scrollToTurn(turnId: string): void {
+    if (!viewport?.isConnected || !transcript?.isConnected) return
+    const target = transcript.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`)
+    if (!target) return
+    const delta = target.getBoundingClientRect().bottom - (viewport.getBoundingClientRect().bottom - 8)
+    const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const top = Math.max(0, Math.min(maxTop, viewport.scrollTop + delta))
+    expansionAnchor.reset()
+    lockedSpacer = null
+    anchor = null
+    atBottom = false
+    beginUserScroll()
+    activeTurnId = turnId
+    viewport.scrollTo({ top, behavior: 'smooth' })
+  }
+
+  $effect(() => {
+    void turns
+    void tick().then(() => {
+      const resized = syncOverscroll()
+      if (resized) void tick().then(restorePosition)
+      syncActiveTurn()
+    })
+  })
 
   export function scrollPage(direction: 1 | -1): void {
     if (!viewport?.isConnected) return
@@ -153,10 +266,28 @@
       },
       options
     )
-    scrollToBottom()
+    untrack(() => {
+      viewportWidth = scroller.clientWidth
+      viewportHeight = scroller.clientHeight
+      syncOverscroll()
+      scrollToBottom()
+    })
     const observer = new ResizeObserver(() => {
       if (active && viewport === scroller) {
-        restorePosition()
+        viewportWidth = scroller.clientWidth
+        viewportHeight = scroller.clientHeight
+        const resized = syncOverscroll()
+        if (resized) {
+          void tick().then(() => {
+            if (active && viewport === scroller) {
+              restorePosition()
+              syncActiveTurn()
+            }
+          })
+        } else {
+          restorePosition()
+          syncActiveTurn()
+        }
       }
     })
     observer.observe(column)
@@ -169,6 +300,7 @@
       expansionAnchor.reset()
       revision++
       changing = false
+      lockedSpacer = null
       anchor = null
       settledTop = Number.NaN
     }
@@ -177,16 +309,28 @@
 
 <!-- Scroller sits strictly above the composer so messages clip cleanly at its top pixel with no opaque backdrop. -->
 <div data-slot="conversation" role="region" aria-label="Conversation" class="flex min-h-0 flex-1 flex-col">
-  <div
-    bind:this={viewport}
-    class="min-h-0 flex-1 scrollbar-none overflow-y-auto px-4 [overflow-anchor:none]"
-    onscroll={updateAtBottom}
-  >
-    <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
-      <div bind:this={transcript} class="flex flex-1 flex-col justify-end gap-4 pt-4 pb-2">
-        {#if children}{@render children()}{/if}
+  <div class="relative flex min-h-0 flex-1 flex-col">
+    <div
+      bind:this={viewport}
+      class={cn(
+        'min-h-0 flex-1 scrollbar-none overflow-y-auto px-4 [overflow-anchor:none]',
+        showRail && viewportWidth < 1080 && 'pl-7'
+      )}
+      onscroll={updateAtBottom}
+    >
+      <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
+        <div
+          bind:this={transcript}
+          class={cn('flex flex-1 flex-col gap-4 pt-4 pb-2', lockedSpacer === null && 'justify-end')}
+          style:padding-top={`${lockedSpacer ?? overscrollTop}px`}
+        >
+          {#if children}{@render children()}{/if}
+        </div>
       </div>
     </div>
+    {#if showRail}
+      <TurnRail {turns} {activeTurnId} onJump={scrollToTurn} />
+    {/if}
   </div>
 
   <div class="shrink-0 px-4">

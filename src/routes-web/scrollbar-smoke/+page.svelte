@@ -20,7 +20,6 @@
           commands={[]}
           owner={{ folderPath: '/repo/rust/Axome', sessionId: null }}
           onSubmit={() => sent++}
-          onAltSubmit={() => sent++}
         />
         <output class="sr-only">{sent}</output>
       {/snippet}

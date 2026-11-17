@@ -14,7 +14,8 @@
     resolveFileLocationPath
   } from '$lib/features/workbench/links/openLink'
   import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
-  import { imageMime, isImagePart, partLabel } from './parts'
+  import { imageMime, isImagePart } from './image'
+  import { partLabel } from './parts'
 
   let {
     part,

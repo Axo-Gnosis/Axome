@@ -1,10 +1,10 @@
 # Axome plan: adopting axo
 
-This is the live planning document for adopting axo `843cd73` in Axome. It changes freely as we work.
+This is the live planning document for adopting axo in Axome; the pinned revision is below. It changes freely as we work.
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
-- **Pinned axo:** `cd12162` (Phase 2 Live Work on `97513d6`, then the host capability handoff: activity signal, typed receipts, prompt/context inspection, labeled command output, effective mode, edited results, project skill roots; [P8](design.md#decisions), [`research/axo-cd12162/`](research/axo-cd12162/host-capability-handoff.md))
+- **Pinned axo:** `a0ec20d` (Phase 2 Live Work on `97513d6`, then the host capability handoff `cd12162`: activity signal, typed receipts, prompt/context inspection, labeled command output, effective mode, edited results, project skill roots; [P8](design.md#decisions), [`research/axo-cd12162/`](research/axo-cd12162/host-capability-handoff.md); then the Phase 3 batch: fired keywords on submissions, inherited write scopes; [P17](design.md#decisions), [`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md); then per-turn file snapshots (`4d6bc34`) and steer/queue control (`a0ec20d`), see [T10](#t10-remaining-axo-gaps))
 
 ## How we work
 
@@ -22,8 +22,8 @@ This is the live planning document for adopting axo `843cd73` in Axome. It chang
 | [T2](#t2-tool-model) | `kill`, `send`, `call`, deferred tools, tool cards, approval | Q5–Q10 | 3 | Implemented (Phase 2) |
 | [T3](#t3-background-jobs) | Job surface, live output, wakes, closing with running jobs | Q11–Q16 | 4 | Implemented (Phase 2) |
 | [T4](#t4-subagents-and-teams) | Children, teams, steering, results, sidebar | Q17–Q24 | 4 | Implemented (Phase 2) |
-| [T5](#t5-personas) | Root agent per conversation, switching, authoring | Q25–Q28 | 2 | Decided |
-| [T6](#t6-modes) | Plan/research modes, review, mode UI, keywords | Q29–Q35 | 2 | Decided |
+| [T5](#t5-personas) | Root agent per conversation, switching, authoring | Q25–Q28 | 2 | Implemented and verified (Phase 3 Stage A) |
+| [T6](#t6-modes) | Plan/research modes, review, mode UI, keywords | Q29–Q35 | 2 | Implemented and verified (Phase 3) |
 | [T7](#t7-models-and-roles) | `@role` selectors, roles UI, model picker | Q36–Q37 | 2 | Decided |
 | [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Implemented (Phase 2) |
 | [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Implemented (Phase 2) |
@@ -168,7 +168,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T5. Personas
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
+**Status:** Implemented and verified (Phase 3 Stage A; verification record in the roadmap's Phase 3 status) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md)
 
 **What axo gives**
 - `agent_change` entry; reopen restores the persona by name from the definitions loaded at that time. A missing definition gives a diagnostic and the session runs without it.
@@ -183,15 +183,17 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q27.** Switching mid-conversation: how the transcript marks it, and how the user learns the model may change with it.
 - **Q28.** Where personas are authored and stored, and their relation to T4's agent definitions (same files; `runAs` decides where each appears).
 
-**Decisions:** [D5](design.md#decisions).
+**Decisions:** [D5](design.md#decisions), [P17](design.md#decisions) (`defaultAgent` is an Axome-owned key inside `"axo"`).
 
 ---
 
 ## T6. Modes
 
-**Status:** Decided · **Evidence:** [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md)
+**Status:** Implemented and verified on `b961066` (both Phase 3 stages; verification record in the roadmap) · **Evidence:** [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md), [`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md)
 
-**What axo gives**
+Stage A on `cd12162` added mode commands, set-mode-then-steer with attachments intact, the selected/effective mode pill, non-plan review cards, composer keyword highlighting and frontmatter editing. Stage B adopts axo K and W from `b961066`: durable sent-message keyword chips, `plansDir`, bundled `/research` and `/plan*` modes, safe plan saving, and the Plan view with all five review actions.
+
+**What axo gives** (surveyed at `843cd73`; historical where [T10](#t10-remaining-axo-gaps) records a later change: edited results, the effective-mode signal and recorded review outcomes arrived in `cd12162`)
 - Definitions are markdown with frontmatter: `name`, `description`, `argument-hint`, `disable-model-invocation`, `model`, `tools.allow`, `tools.deny`, `result.schema`, `result.review`, `result.then`, plus free extra keys for host policy. Roots come from `ConfigSource` or `SessionOptions`. axo ships none.
 - Enter with `Session::set_mode(Some(name))`, the `/name [prompt]` command through `Session::parse_command`, or the model's `enter_mode` tool (unless the mode disables model invocation). Leave with `set_mode(None)` or by the model finishing through `yield`.
 - Effects: a hidden `mode_notice` message carrying the body; tool limits enforced at call time by tool name (not a shell sandbox); model and thinking switched on entry and restored on exit unless the user changed the model in between.
@@ -201,7 +203,9 @@ How each new entry, event and message renders is decided in its topic; the migra
 - Mode and persona are independent; a mode cannot select a persona.
 
 **Where Axome stands**
-- `Command::decode` does not know modes; dispatch goes through `parse_command` or `set_mode`. The composer labels every non-builtin command as a skill.
+- Modes have their own composer group. The selected mode changes immediately; the effective mode changes at the next model request. Pending reviews recover from axo's journal on reopening.
+- Plan drafts stay in `local://`, render live and open in the normal editor. Accepted plans are saved without overwriting an existing file, then optionally implemented in the same session, after compaction, or in a new chat.
+- Native `write`/`edit` scopes follow child sessions. Read-only bash is a separate native restriction with writable scratch paths; projects under those paths are not protected from bash writes ([P18](design.md#decisions)).
 
 **Questions**
 - **Q29.** Which modes Axome ships (plan first), and what plan mode is: read-only tools, a `@plan` model role, a reviewed result that is the plan.
@@ -212,7 +216,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 - **Q34.** Read-only really meaning read-only: tool-name limits still allow `bash`. Deny bash in plan mode, or add a `ToolPolicy`?
 - **Q35.** User-defined modes: supported, where stored, and how they sit in the `/` picker next to skills and built-ins.
 
-**Decisions:** [D6](design.md#decisions), [D7](design.md#decisions), [D8](design.md#decisions), [D9](design.md#decisions), [D10](design.md#decisions).
+**Decisions:** [D6](design.md#decisions), [D7](design.md#decisions), [D8](design.md#decisions), [D9](design.md#decisions), [D10](design.md#decisions), [P17](design.md#decisions) (Q34 answered by axo-enforced `writes`, not a `ToolPolicy`), [P18](design.md#decisions) (native bash scratch-space exception retained and documented).
 
 ---
 
@@ -273,7 +277,7 @@ How each new entry, event and message renders is decided in its topic; the migra
 
 ## T10. Remaining axo gaps
 
-**Status:** Decided · **Handoff:** [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md) §7–8, [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §7, [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md) §7
+**Status:** Decided · **Handoff:** [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md), [`handoff/axo-phase-3-batch.md`](handoff/axo-phase-3-batch.md) (fulfilled in `b961066`) · **Evidence:** [`research/axo-843cd73/host-surface.md`](research/axo-843cd73/host-surface.md) §7–8, [`research/axo-843cd73/modes.md`](research/axo-843cd73/modes.md) §7, [`research/axo-843cd73/tools.md`](research/axo-843cd73/tools.md) §7, [`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md)
 
 Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) came back 14 shipped, 16 partly, 3 not shipped, 2 decided differently. What remains:
 
@@ -299,9 +303,12 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | Explicit `Session::resume_wakes()` for `auto_paused` | `auto_paused` clears on next user prompt; no dedicated host method | Request small axo helper so `SessionBar`'s `Resume` button clears `auto_paused` and delivers pending job results without sending a dummy prompt ([D16](design.md#decisions)) |
 | ~~**Found in Phase 1:** no authoritative idle signal~~ | **Shipped in `cd12162`:** `SessionEvent::Activity` / `Session::is_running()` publish idle only after queued input and wakes drain | Adopted: `ChatLive.running/maintenance` follow `Activity`; the test fixture's snapshot polling is gone |
 | **`cd12162` handoff, adopted in Phase 2** | stdout/stderr labels (`.log.streams`, `read_chunks`, `CommandOutput::open`); typed `SpawnReceipt`/`WaitReceipt`/`KillReceipt`/`SendReceipt`; `inspect_prompt`, `context_files`, `file_ledger`; `Retry` detail; `ConfigLayer.skill_roots` | Jobs view colours stderr including reopened logs; receipts parse typed details (wait reason shown); Context view adds Prompt, Context files and Files tabs; retry row on the running reply; `.axome/skills/` is a project skill root. Supersedes the "stdout/stderr separation", "typed kill/send receipts" and "prompt introspection" rows above |
-| **`cd12162` handoff, for Phases 3 and 4** | `effective_mode` + `EffectiveMode`; `AcceptResultOptions { replacement, message }` with schema validation; `Session::send` + `SubmissionProvenance`; project skills and settings load at `ProjectAccess::Read` | Addenda in the roadmap's Phase 3 and Phase 4 sections list what each phase plan must verify and plan for. Supersedes the "Mode: effective-mode signal, accept an edited result" row above |
+| **`cd12162` handoff, for Phases 3 and 4** | `effective_mode` + `EffectiveMode`; `AcceptResultOptions { replacement, message }` with schema validation; `Session::send` + `SubmissionProvenance`; project skills and settings load at `ProjectAccess::Read` | Addenda in the roadmap's Phase 3 and Phase 4 sections list what each phase plan must verify and plan for; the Phase 3 items are settled in [P17](design.md#decisions). Supersedes the "Mode: effective-mode signal, accept an edited result" row above |
+| **Phase 3 batch, shipped in `b961066`** | **K:** `Entry::Submission.keywords: Vec<String>` (fired names, deduplicated, text order, model-only included; old journals read empty). **W:** `writes: Option<Vec<String>>` on `ModeSpec`, `AgentSpec`, `ToolScope`, `SpawnLink`; entries are scheme URL prefixes or cwd-relative/absolute directories, absent unrestricted, `[]` none; enforced in `write`/`edit` by real path; effective scope is agent ∩ effective mode ∩ inherited ceiling, persisted on `SpawnLink`, `local://` meaning each child's own; does not restrict `bash` | Pin bumped; Stage B (keyword chip, bundled modes' `writes`, Toolbox `writes` line) uses the names as requested ([`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md)) |
+| **Adopted from axo `4d6bc34`:** per-turn file snapshots & `write` diff metadata | `write` and `edit` record `details.change` (`FileChange`) with content-addressed `<session>/snapshots/<sha256>` blobs, `LineDiff` (`additions`, `deletions`, `firstChangedLine`, `patch`, `patchTruncated`), `Axo::{read_snapshot, squash_changes}`, `Session::{read_snapshot, squash_changes}`, and `axo::{file_change, squash}`. **Breaking:** `edit` dropped top-level `diff`/`patch`/`first_changed_line` | Adopted: `editDiff` / `toolHeader` read `details.change.diff`; transcript-only per-turn `N files changed +A -D [Review]` cards open Monaco `DiffStack` ([`handoff/axo-turn-diff-snapshots.md`](handoff/axo-turn-diff-snapshots.md)) |
+| **Adopted from axo `a0ec20d`:** steer reliability & queue control | `abort` latches when pressed (not after settle); `resume_wakes` delivers held steers/follow-ups; queued steers settle pending `ask` & reviewed `yield` (`ResultResolution::Steered`); `steeringMode` defaults to `"all"`; `LiveSnapshot::queued: Vec<QueuedInput>` replaces `queued_steering`/`queued_follow_up`; `Session::withdraw` removes queued input & writes `Entry::SubmissionWithdrawn` | Pin bumped to `a0ec20d`; collapsible `QueuedMessages` card (`→` promote/interrupt-and-send, Edit prepending w/ `\n`, Cancel), double-Enter guard, and `whitespace: 'pre'` newline preservation landed ([`handoff/axo-steer-queue.md`](handoff/axo-steer-queue.md)) |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.
 
-**Decisions:** [D24](design.md#decisions) — 12 items batched for axo in [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md); remaining rows accepted/handled in Axome.
+**Decisions:** [D24](design.md#decisions) — 12 items batched for axo in [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md); remaining rows accepted/handled in Axome. [P17](design.md#decisions) — the Phase 3 batch (W, K) gated Stage B; [`handoff/axo-phase-3-batch.md`](handoff/axo-phase-3-batch.md) is fulfilled by `b9610666`; both Phase 3 stages are implemented and verified. [P18](design.md#decisions) records the accepted native bash scratch-space exception.

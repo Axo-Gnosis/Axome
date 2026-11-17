@@ -4,6 +4,7 @@
   import StashDiffView from '$lib/features/workbench/surfaces/diff/StashDiffView.svelte'
   import RangeDiffView from '$lib/features/workbench/surfaces/diff/RangeDiffView.svelte'
   import CompareDiffView from '$lib/features/workbench/surfaces/diff/CompareDiffView.svelte'
+  import TurnDiffView from '$lib/features/workbench/surfaces/diff/TurnDiffView.svelte'
   import type { DiffTab } from '$lib/features/workbench/model'
 
   let {
@@ -38,4 +39,6 @@
   />
 {:else if tab?.source.kind === 'compare'}
   <CompareDiffView {folderPath} left={tab.source.left} right={tab.source.right} />
+{:else if tab?.source.kind === 'turn'}
+  <TurnDiffView source={tab.source} {folderPath} initialFile={tab.initialFile} />
 {/if}

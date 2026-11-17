@@ -1,4 +1,4 @@
-import type { ChatStats, ChatUsage } from '$lib/types/backend'
+import type { ChatRetry, ChatStats, ChatUsage } from '$lib/types/backend'
 
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n)
@@ -15,6 +15,11 @@ export function formatDuration(ms: number): string {
   if (ms < 60_000) return `${(ms / 1000).toFixed(1).replace(/\.0$/, '')}s`
   const seconds = Math.floor(ms / 1000)
   return `${Math.floor(seconds / 60)}m${seconds % 60}s`
+}
+
+/** "Retrying 2/5 · in 4s": the retry row of a running turn or standalone maintenance. */
+export function formatRetry(retry: ChatRetry): string {
+  return `Retrying ${retry.attempt}/${retry.maxRetries} · in ${formatDuration(retry.delayMs)}`
 }
 
 export function formatCount(count: number, noun: string): string {

@@ -95,11 +95,32 @@ export interface CompareDiffSource {
   right: CompareFileSide
 }
 
+export interface TurnDiffFile {
+  path: string
+  created: boolean
+  beforeSha: string | null
+  afterSha: string
+  binary: boolean
+  omitted: boolean
+  additions: number | null
+  deletions: number | null
+}
+
+export interface TurnDiffSource {
+  kind: 'turn'
+  sessionId: string
+  turnId: string
+  label: string
+  files: TurnDiffFile[]
+  revealNonce: number
+}
+
 export function compareSidesEqual(a: CompareSide, b: CompareSide): boolean {
   return a.kind === 'file' ? b.kind === 'file' && a.path === b.path : b.kind === 'clipboard' && a.content === b.content
 }
 
-export type DiffSource = WorkingDiffSource | CommitDiffSource | StashDiffSource | RangeDiffSource | CompareDiffSource
+export type DiffSource =
+  WorkingDiffSource | CommitDiffSource | StashDiffSource | RangeDiffSource | CompareDiffSource | TurnDiffSource
 
 export type PersistedDiffSource =
   | { kind: 'working'; staged: boolean; scopePath?: string | null }
@@ -107,6 +128,7 @@ export type PersistedDiffSource =
   | StashDiffSource
   | RangeDiffSource
   | CompareDiffSource
+  | Omit<TurnDiffSource, 'revealNonce'>
 
 export interface DiffTab extends TabBase {
   kind: 'diff'

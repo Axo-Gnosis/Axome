@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatCommand } from '$lib/types/backend'
-import { commandArguments, parseCommandLine, type Builtin } from './document'
+import {
+  commandArguments,
+  documentParts,
+  documentText,
+  parseCommandLine,
+  partsDocument,
+  promptSchema,
+  type Builtin
+} from './document'
 
 const builtin = (name: string, properties: Record<string, unknown>, required: string[] = []): ChatCommand => ({
   kind: 'builtin',
@@ -54,4 +62,16 @@ test('a trailing free-text field takes the rest of the line', () => {
   assert.equal(line.extra, null)
   const values = Object.fromEntries(line.args.map((arg) => [arg.name, arg.text]))
   assert.deepEqual(commandArguments(commands[1] as Builtin, values).args, { level: 3, text: 'keep  this  verbatim' })
+})
+
+test('promptSchema preserves internal and trailing newlines across document round-trips', () => {
+  assert.equal(promptSchema.nodes.paragraph.whitespace, 'pre')
+  const parts = [
+    { type: 'text' as const, text: 'first line\nsecond line\n\n' },
+    { type: 'file' as const, path: 'src/lib/app.ts' },
+    { type: 'text' as const, text: '\ntrailing line\n' }
+  ]
+  const doc = partsDocument(parts)
+  assert.deepEqual(documentParts(doc), parts)
+  assert.equal(documentText(doc), 'first line\nsecond line\n\n\ufffc\ntrailing line\n')
 })

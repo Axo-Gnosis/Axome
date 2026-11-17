@@ -2,6 +2,7 @@
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import { Chip } from '$lib/components/ui/chip'
+  import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
   import * as Resizable from '$lib/components/ui/resizable'
   import { SidebarNote, SidebarRow } from '$lib/components/ui/sidebar-row'
   import { StatusDot } from '$lib/components/ui/status-dot'
@@ -9,6 +10,7 @@
   import { ChatController } from '$lib/features/chat/controller.svelte'
   import { Conversation } from '$lib/features/chat/elements/conversation'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
+  import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
   import { AgentBlock, UserBlock } from '$lib/features/chat/elements/transcript'
   import { isActiveJob, jobTone, pickJob } from '$lib/features/chat/jobs'
   import { getChatModels } from '$lib/features/chat/models.svelte'
@@ -17,11 +19,10 @@
   import { modelName } from '$lib/features/chat/format'
   import { openChatSession } from '$lib/features/sessions/service.svelte'
   import { notify } from '$lib/features/notifications/state.svelte'
-  import Icon from '$lib/icons/Icon.svelte'
   import type { ChatJob, ChatJobKind } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { cn } from '$lib/utils/cn'
-  import { ChevronRightIcon } from '@hugeicons/core-free-icons'
+  import { untrack } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import type { SessionSidebarState } from './state.svelte'
   import JobRow from './JobRow.svelte'
@@ -49,6 +50,7 @@
 
   const collapsedTeams = new SvelteSet<string>()
   let overrides = $state<Record<string, BlockView>>({})
+  let childComposer = $state<PromptInput>()
 
   const childJobs = $derived((controller.state?.live.jobs ?? []).filter((j): j is ChildJob => j.kind.kind === 'child'))
 
@@ -85,7 +87,8 @@
   $effect(() => {
     const ctrl = childController
     if (!ctrl) return
-    void ctrl.attach().catch(() => {})
+    // attach() reads ctrl.state; tracked, every snapshot would re-run this effect and reattach forever.
+    untrack(() => void ctrl.attach().catch(() => {}))
     return () => ctrl.release()
   })
 
@@ -130,11 +133,7 @@
               class="border-b border-edge/30 bg-surface"
               onclick={() => toggleTeam(group.id)}
             >
-              <Icon
-                icon={ChevronRightIcon}
-                size={12}
-                class={cn('duration-fast shrink-0 text-muted transition-transform', !collapsed && 'rotate-90')}
-              />
+              <DisclosureChevron open={!collapsed} size={12} class="duration-fast text-muted" />
               <span class="min-w-0 flex-1 truncate text-xs font-medium text-bright">{group.name}</span>
               <span class="shrink-0 font-mono text-2xs text-muted tabular-nums"
                 >{group.runningCount}/{group.members.length}</span
@@ -180,7 +179,7 @@
                   : 'Loading subagent transcript…'}
               </div>
             {/if}
-            {#each childTurns as turn (turn.id)}
+            {#each childTurns as turn, turnIndex (turn.id)}
               {#if turn.user}
                 <UserBlock
                   entry={turn.user}
@@ -194,6 +193,8 @@
               {#if turn.steps.length || turn.running || turn.end}
                 <AgentBlock
                   {turn}
+                  turns={childTurns}
+                  {turnIndex}
                   controller={childController}
                   {folderPath}
                   sessionId={selectedChild.kind.sessionId}
@@ -207,7 +208,13 @@
             {/each}
             {#snippet footer()}
               {#if !controller.readOnly && !childController.readOnly}
+                <QueuedMessages
+                  controller={childController}
+                  owner={{ folderPath, sessionId: selectedChild.kind.sessionId }}
+                  onEdited={() => childComposer?.focus()}
+                />
                 <PromptInput
+                  bind:this={childComposer}
                   bind:parts={childController.draft}
                   owner={{ folderPath, sessionId: selectedChild.kind.sessionId }}
                   models={available}
@@ -216,8 +223,8 @@
                   placeholder={childState?.live.running ? 'Steer subagent…' : 'Follow up with subagent…'}
                   commands={childState?.commands ?? []}
                   onCommand={(n, a) => childController.runCommand(n, a)}
-                  onSubmit={() => void childController.send()}
-                  onAltSubmit={() => void childController.followUp()}
+                  onSubmit={() => childController.send()}
+                  onFollowUp={() => childController.followUp()}
                   onCancel={stopChild}
                 />
               {/if}

@@ -1,31 +1,39 @@
 <script lang="ts">
   import './markdown.css'
-  import { onDestroy, tick } from 'svelte'
+  import { getAllContexts, mount, onDestroy, tick, unmount } from 'svelte'
   import { renderMarkdown } from './renderMarkdown'
   import { resolveMarkdownLocalPath, URL_SCHEME_RE } from '$lib/utils/mediaAssets'
   import { platform, type AssetHandle } from '$lib/platform'
   import { openLink } from '$lib/features/workbench/links/openLink'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { cn } from '$lib/utils/cn'
-  import { copyToClipboard } from '$lib/utils/clipboard'
 
   let {
     source,
     folderPath,
     sessionId,
     filePath,
+    depth = 0,
     class: className
   }: {
     source: string
     folderPath?: string
     sessionId?: string | null
     filePath?: string | null
+    depth?: number
     class?: string
   } = $props()
 
+  const componentContext = getAllContexts()
   let rendered = $state.raw<Awaited<ReturnType<typeof renderMarkdown>> | null>(null)
   let error = $state<string | null>(null)
   let root: HTMLDivElement
+  let mountedCodeBlocks: Record<string, unknown>[] = []
+
+  function unmountCodeBlocks() {
+    for (const instance of mountedCodeBlocks) void unmount(instance)
+    mountedCodeBlocks = []
+  }
 
   // Document-scoped stream-backed images keyed by resolved project path; entries outlive source edits.
   interface ImageEntry {
@@ -98,6 +106,7 @@
     renderMarkdown(source, folderPath, filePath, loadLocalImage).then(
       async (result) => {
         if (current !== generation) return
+        unmountCodeBlocks()
         rendered = result
         error = null
         await tick()
@@ -106,6 +115,27 @@
           if (used.has(path)) continue
           disposeImage(entry)
           images.delete(path)
+        }
+        if (result.codeBlocks.length > 0) {
+          const { default: CodeBlock } = await import('./CodeBlock.svelte')
+          if (current !== generation) return
+          for (const [index, block] of result.codeBlocks.entries()) {
+            const target = root.querySelector<HTMLElement>(`[data-axome-code="${index}"]`)
+            if (!target) continue
+            mountedCodeBlocks.push(
+              mount(CodeBlock, {
+                target,
+                props: {
+                  code: block.code,
+                  lang: block.lang,
+                  folderPath,
+                  sessionId,
+                  depth
+                },
+                context: componentContext
+              })
+            )
+          }
         }
         for (const [index, image] of result.images.entries()) {
           void image.then((url) => {
@@ -131,21 +161,12 @@
     )
   })
 
-  onDestroy(invalidateImages)
+  onDestroy(() => {
+    invalidateImages()
+    unmountCodeBlocks()
+  })
 
   async function handleClick(event: MouseEvent) {
-    const copy = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[data-axome-copy]') : null
-    if (copy && root.contains(copy)) {
-      event.preventDefault()
-      const text = copy.parentElement?.querySelector('pre')?.textContent ?? ''
-      await copyToClipboard(text, 'Copy code failed')
-      copy.textContent = 'Copied'
-      setTimeout(() => {
-        copy.textContent = 'Copy'
-      }, 1500)
-      return
-    }
-
     const anchor = event.target instanceof Element ? event.target.closest('a') : null
     const href = anchor?.getAttribute('href')
     if (!anchor || !root.contains(anchor) || !href) return

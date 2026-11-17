@@ -1,4 +1,4 @@
-import { parseDisplayDiff, patchRows, type DiffResult } from '$lib/features/chat/lineDiff'
+import { patchRows, type DiffResult } from '$lib/features/chat/lineDiff'
 
 export const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -32,18 +32,80 @@ export function truncation(value: unknown): Truncation | null {
 export const coversBody = (cut: Truncation, body: string): boolean =>
   encoder.encode(body).length === cut.outputBytes && (body === '' ? 0 : body.split('\n').length) === cut.outputLines
 
-// Headers and expanded bodies share the same immutable result. Weak keys release cached rows with the transcript.
-const editDiffCache = new WeakMap<object, { source: string; display: boolean; result: DiffResult }>()
+interface ToolSnapshotBlob {
+  sha256: string
+  bytes: number
+  binary: boolean
+  omitted?: 'tooLarge' | 'ioError'
+}
 
-/** axo's authoritative display diff wins (including empty); the unified patch is the fallback. */
-export function editDiff(details: unknown): DiffResult | null {
-  const fields = record(details)
-  const display = typeof fields.diff === 'string'
-  const source = display ? fields.diff : fields.patch
-  if (typeof source !== 'string') return null
-  const cached = editDiffCache.get(fields)
-  if (cached?.source === source && cached.display === display) return cached.result
-  const result = display ? parseDisplayDiff(source) : patchRows(source)
-  editDiffCache.set(fields, { source, display, result })
-  return result
+interface ToolLineDiff {
+  additions: number
+  deletions: number
+  firstChangedLine?: number
+  patch?: string
+  patchTruncated?: boolean
+}
+
+export interface ToolFileChange {
+  path: string
+  key: string
+  url?: string
+  created: boolean
+  before?: ToolSnapshotBlob
+  after: ToolSnapshotBlob
+  diff?: ToolLineDiff
+  raw: Record<string, unknown>
+}
+
+function snapshotBlob(value: unknown): ToolSnapshotBlob | null {
+  const fields = record(value)
+  if (typeof fields.sha256 !== 'string' || typeof fields.binary !== 'boolean' || !integer(fields.bytes)) return null
+  const omitted = fields.omitted === 'tooLarge' || fields.omitted === 'ioError' ? fields.omitted : undefined
+  return { sha256: fields.sha256, bytes: fields.bytes, binary: fields.binary, omitted }
+}
+
+function lineDiff(value: unknown): ToolLineDiff | undefined {
+  const fields = record(value)
+  if (!integer(fields.additions) || !integer(fields.deletions)) return undefined
+  return {
+    additions: fields.additions,
+    deletions: fields.deletions,
+    firstChangedLine:
+      integer(fields.firstChangedLine) && fields.firstChangedLine > 0 ? fields.firstChangedLine : undefined,
+    patch: typeof fields.patch === 'string' ? fields.patch : undefined,
+    patchTruncated: fields.patchTruncated === true
+  }
+}
+
+/** Parses `details.change` (`axo::FileChange`) from a `write` or `edit` result. */
+export function fileChange(details: unknown): ToolFileChange | null {
+  const raw = record(record(details).change)
+  if (!pathText(raw.path) || typeof raw.key !== 'string' || !raw.key || typeof raw.created !== 'boolean') {
+    return null
+  }
+  const after = snapshotBlob(raw.after)
+  if (!after) return null
+  const before = raw.created ? undefined : (snapshotBlob(raw.before) ?? undefined)
+  if (!raw.created && !before) return null
+  return {
+    path: raw.path,
+    key: raw.key,
+    url: typeof raw.url === 'string' && raw.url ? raw.url : undefined,
+    created: raw.created,
+    before,
+    after,
+    diff: raw.diff != null ? lineDiff(raw.diff) : undefined,
+    raw
+  }
+}
+
+/** Unified patch rows from a parsed file change; empty when unchanged, null when absent or truncated. */
+export function editDiff(change: ToolFileChange | null): DiffResult | null {
+  const diff = change?.diff
+  if (!diff) return null
+  if (typeof diff.patch === 'string') return patchRows(diff.patch)
+  return !change.created && !diff.patchTruncated && diff.additions === 0 && diff.deletions === 0
+    ? { rows: [], added: 0, removed: 0 }
+    : null
 }

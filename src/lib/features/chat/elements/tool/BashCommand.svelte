@@ -3,34 +3,20 @@
   import { CopyIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { copyToClipboard } from '$lib/utils/clipboard'
-  import { codeTokens } from '$lib/utils/syntaxHighlight'
+  import { highlightSpans, type HighlightSpan } from '$lib/utils/syntaxHighlight'
 
   let { command, inline = false }: { command: string; inline?: boolean } = $props()
   const renderedCommand = $derived(inline ? command.trim().split(/\r?\n/, 1)[0] : command)
 
-  type CommandToken = { text: string; color?: string }
-  let highlighted = $state.raw<{ command: string; tokens: CommandToken[] } | null>(null)
+  let highlighted = $state.raw<{ command: string; tokens: HighlightSpan[] } | null>(null)
 
   $effect(() => {
     const source = renderedCommand
     let cancelled = false
     async function highlight(): Promise<void> {
-      const lines = await codeTokens(source, 'shellscript')
-      if (cancelled || !lines) return
-      const tokens: CommandToken[] = []
-      let offset = 0
-      // Slice the original source, including gaps between tokens, so line endings
-      // and whitespace never depend on Shiki's line-oriented representation.
-      for (const line of lines) {
-        for (const token of line) {
-          if (token.offset > offset) tokens.push({ text: source.slice(offset, token.offset) })
-          const end = token.offset + token.content.length
-          tokens.push({ text: source.slice(token.offset, end), color: token.color })
-          offset = end
-        }
-      }
-      if (offset < source.length) tokens.push({ text: source.slice(offset) })
-      if (!cancelled) highlighted = { command: source, tokens }
+      const tokens = await highlightSpans(source, 'shellscript')
+      if (cancelled || !tokens) return
+      highlighted = { command: source, tokens }
     }
     void highlight().catch((cause) => console.warn('Bash syntax highlighting failed', cause))
     return () => {

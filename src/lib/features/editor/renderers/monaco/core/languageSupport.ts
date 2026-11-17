@@ -4,6 +4,7 @@ import { backend } from '$lib/api/backend'
 import { extensionHostKey, loadExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
 import { ensureLspLanguageProviders } from '$lib/features/editor/lsp/registry'
 import { ensureFormattingProviders } from '$lib/features/editor/renderers/monaco/core/formatters'
+import { registerFrontmatterSupport } from '$lib/features/editor/renderers/monaco/core/languages/frontmatter'
 import { registerNixLanguage } from '$lib/features/editor/renderers/monaco/core/languages/nix'
 import { registerAxomeTheme, AXOME_SHIKI_THEME } from '$lib/features/editor/renderers/monaco/core/monacoTheme'
 import { initProjectSchemas } from '$lib/features/project-config/bootstrap'
@@ -35,6 +36,7 @@ export function ensureFolderLanguageSupport(monaco: Monaco, folderPath: string |
 }
 
 async function loadFolderLanguageSupport(monaco: Monaco, folderPath: string | null): Promise<void> {
+  registerFrontmatterSupport(monaco)
   void initProjectSchemas(folderPath).catch((error) => console.warn('Config schema load failed', error))
   const [catalog, folderGrammars] = await Promise.all([
     loadExtensionCatalog(folderPath),

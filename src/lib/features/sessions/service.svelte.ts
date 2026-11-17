@@ -3,9 +3,10 @@ import { getHarnessListing, getLaunchOptions } from '$lib/features/sessions/harn
 import { notify } from '$lib/features/notifications/state.svelte'
 import { isProcessLive, type ChatTab, type SessionTab, type TabId } from '$lib/features/workbench/model'
 import { addChatTab, addSessionTab, getTabs, setActiveTab } from '$lib/features/workbench/state.svelte'
-import type { IndexedSession } from '$lib/types/backend'
+import type { ChatPart, IndexedSession } from '$lib/types/backend'
 import { getSessionIndex } from './state.svelte'
 import { getChatLiveSummary, isChatBusy } from '$lib/features/chat/summaries.svelte'
+import { getOrCreate } from '$lib/features/chat/registry'
 
 /** Open a dormant tab; the terminal surface starts it on activation. */
 export function startSession(folderPath: string, harnessId: string, preset: string | null): TabId {
@@ -84,8 +85,10 @@ export function openIndexedSession(folderPath: string, session: IndexedSession, 
   })
 }
 
-export function newChat(folderPath: string): TabId {
+/** Opens a new chat tab; a `seed` is sent as its first message once the session attaches. */
+export function newChat(folderPath: string, seed?: ChatPart[]): TabId {
   const tabId = addChatTab(folderPath, { sessionId: null, title: 'New Chat' })
+  if (seed) getOrCreate(tabId).seed = seed
   setActiveTab(tabId)
   return tabId
 }

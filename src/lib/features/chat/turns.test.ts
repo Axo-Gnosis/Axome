@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatEntry, ChatEntryBody, ChatLive } from '$lib/types/backend'
-import { transcriptTurns, turnDurationMs } from './turns'
+import { compactionTokensAfter, transcriptTurns, turnDurationMs } from './turns'
 
 const live: ChatLive = {
   title: null,
@@ -22,7 +22,11 @@ const live: ChatLive = {
     contextReserve: null,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 },
     tree: null
-  }
+  },
+  agent: null,
+  mode: null,
+  effectiveMode: null,
+  reviews: []
 }
 function entry(id: string, body: ChatEntryBody): ChatEntry {
   return { id, timestamp: '2026-01-01T00:00:00Z', body }
@@ -31,7 +35,9 @@ const user = entry('user:1', {
   kind: 'user',
   parts: [{ type: 'text', text: 'Do the work' }],
   anchor: null,
-  siblings: ['user:1']
+  siblings: ['user:1'],
+  from: null,
+  keywords: []
 })
 const thought = { type: 'thinking', text: 'Thinking', redacted: false } as const
 const message = entry('answer', {
@@ -252,6 +258,28 @@ test('later config and maintenance entries join the turn without extending its d
   assert.equal(turn.endedAt, endedAt)
   assert.equal(turnDurationMs(turn, Date.parse(endedAt) + 5000), 12_000)
   assert.ok(turn.steps.some((step) => step.kind === 'modelChange'))
+})
+
+test('compactionTokensAfter reads post-compaction assistant input tokens or falls back to live context for the latest checkpoint', () => {
+  const afterMsg = entry('a-after', {
+    kind: 'assistant',
+    blocks: [{ type: 'text', text: 'Continued' }],
+    model: 'test/m',
+    usage: { input: 1200, output: 100, cacheRead: 38_800, cacheWrite: 0, totalTokens: 40_100, cost: 0 },
+    stopReason: 'stop',
+    error: null,
+    durationMs: 10
+  })
+  const compact1 = entry('c1', { kind: 'compaction', summary: 'First', tokensBefore: 196_000 })
+  const compact2 = entry('c2', { kind: 'compaction', summary: 'Second', tokensBefore: 180_000 })
+  const turns = transcriptTurns(
+    [user, message, end, compact1, entry('u2', user.body), afterMsg, end, compact2],
+    null,
+    live
+  )
+  assert.equal(compactionTokensAfter(turns, 0, 'c1', 25_000), 40_000)
+  assert.equal(compactionTokensAfter(turns, 1, 'c2', 25_000), 25_000)
+  assert.equal(compactionTokensAfter(turns, 1, 'c2', 0), null)
 })
 
 test('call tool calls unwrap with explicit, running, then result name and args precedence', () => {

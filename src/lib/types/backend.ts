@@ -308,8 +308,21 @@ export type ChatNotice =
   | { kind: 'yieldNudge'; text: string }
   | { kind: 'host'; text: string }
 
+/** The agent session that routed a user entry; `name` is its display name when known. */
+export interface ChatSender {
+  name: string | null
+}
+
 export type ChatEntryBody =
-  | { kind: 'user'; parts: ChatPart[]; anchor: string | null; siblings: string[] }
+  | {
+      kind: 'user'
+      parts: ChatPart[]
+      anchor: string | null
+      siblings: string[]
+      from: ChatSender | null
+      /** Names of the keywords that fired for this submission, first occurrence first. */
+      keywords: string[]
+    }
   | {
       kind: 'assistant'
       blocks: ChatBlock[]
@@ -352,6 +365,7 @@ export interface ChatToolRun {
 export type ChatQueueKind = 'steer' | 'followUp'
 
 export interface ChatQueued {
+  submissionId: string
   kind: ChatQueueKind
   parts: ChatPart[]
 }
@@ -487,6 +501,23 @@ export interface ChatLive {
   autoPaused: boolean
   jobs: ChatJob[]
   stats: ChatStats
+  /** The selected persona; `null` = Default. */
+  agent: string | null
+  /** The selected mode. */
+  mode: string | null
+  /** The mode the current model request runs under; differs from `mode` until the next request. */
+  effectiveMode: string | null
+  /** Mode results awaiting review. */
+  reviews: ChatReview[]
+}
+
+/** A mode result awaiting review, mirroring `axo::PendingResult`. */
+export interface ChatReview {
+  callId: string
+  mode: string
+  result: unknown
+  /** The mode is marked `axome: { plan: true }`. */
+  plan: boolean
 }
 
 export type ChatCommandPolicy = 'alongside' | 'when_idle' | 'queued'
@@ -495,6 +526,7 @@ export type ChatCommandPolicy = 'alongside' | 'when_idle' | 'queued'
 export type ChatCommand = { name: string; description: string; policy: ChatCommandPolicy } & (
   | { kind: 'builtin'; /** Inlined JSON Schema object. */ parameters: Record<string, unknown> }
   | { kind: 'skill'; argumentHint: string | null }
+  | { kind: 'mode'; argumentHint: string | null }
 )
 
 export interface ChatSkillInfo {
@@ -530,9 +562,16 @@ export interface ChatModeInfo {
   toolsAllow: string[] | null
   toolsDeny: string[]
   bashReadOnly: boolean
+  /** Where `write` and `edit` may write; `null` = unrestricted. */
+  writes: string[] | null
   resultReviewed: boolean | null
   path: string | null
+  /** The mode is marked `axome: { plan: true }`. */
+  plan: boolean
 }
+
+/** What follows accepting a reviewed plan. */
+export type ChatPlanThen = 'save' | 'work' | 'compactWork'
 
 export interface ChatKeywordInfo {
   name: string
@@ -580,6 +619,13 @@ export interface ChatLocalFile {
   size: number
 }
 
+/** A keyword occurrence in a composer text; offsets are UTF-16 code units, end exclusive. */
+export interface ChatKeywordMatch {
+  name: string
+  start: number
+  end: number
+}
+
 export interface ChatState {
   sessionId: string
   readOnly: boolean
@@ -617,6 +663,21 @@ export interface ChatForkInfo {
 
 export type ChatLinkTarget =
   { kind: 'file'; path: string; isDir: boolean } | { kind: 'virtual'; text: string } | { kind: 'unhandled' }
+
+export interface ChatSquashedChange {
+  path: string
+  key: string
+  url: string | null
+  created: boolean
+  beforeSha: string | null
+  afterSha: string
+  binary: boolean
+  omitted: boolean
+  mutations: number
+  discontinuous: boolean
+  additions: number | null
+  deletions: number | null
+}
 
 /** Everything the backend needs to spawn a session tab's process under an ephemeral run id. */
 export interface SessionSpec {
@@ -879,6 +940,9 @@ export interface AxoKeywordSettings {
 
 export interface AxoSettings {
   defaultModel: string | null
+  defaultAgent: string | null
+  /** Where accepted plans are saved, relative to the folder or absolute. */
+  plansDir: string
   modelRoles: Record<string, string>
   defaultThinkingLevel: ChatThinking
   homeAgentsDir: boolean

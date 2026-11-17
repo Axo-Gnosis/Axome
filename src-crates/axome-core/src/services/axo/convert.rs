@@ -81,8 +81,8 @@ fn parts_text(parts: &[axo::PromptPart]) -> String {
     result
 }
 
-pub(super) fn command(value: axo::CommandInfo) -> Option<ChatCommand> {
-    Some(ChatCommand {
+pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
+    ChatCommand {
         name: value.name,
         description: value.description,
         policy: match value.policy {
@@ -93,9 +93,18 @@ pub(super) fn command(value: axo::CommandInfo) -> Option<ChatCommand> {
         kind: match value.kind {
             axo::CommandKind::Builtin { parameters } => ChatCommandKind::Builtin { parameters },
             axo::CommandKind::Skill { argument_hint } => ChatCommandKind::Skill { argument_hint },
-            axo::CommandKind::Mode { .. } => return None,
+            axo::CommandKind::Mode { argument_hint } => ChatCommandKind::Mode { argument_hint },
         },
-    })
+    }
+}
+
+/// A mode marked `axome: { plan: true }` in its frontmatter gets Axome's Plan view.
+pub(super) fn mode_is_plan(mode: &axo::ModeSpec) -> bool {
+    mode.extra
+        .get("axome")
+        .and_then(|value| value.get("plan"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub(super) fn thinking_to_wire(level: ThinkingLevel) -> ChatThinking {
@@ -361,6 +370,7 @@ fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&
             // Navigation leaves preserve their parent's position, not a new edit anchor.
             Entry::Leaf { .. }
             | Entry::Submission { .. }
+            | Entry::SubmissionWithdrawn { .. }
             | Entry::RunStart { .. }
             | Entry::RunResumed { .. }
             | Entry::AgentChange { .. }
@@ -445,6 +455,7 @@ fn moved_blocks(entries: &[SeqEntry], at: usize) -> u32 {
                 | Entry::RunEnd { .. }
                 | Entry::RunResumed { .. }
                 | Entry::Submission { .. }
+                | Entry::SubmissionWithdrawn { .. }
                 | Entry::AgentChange { .. }
                 | Entry::ModeChange { .. }
                 | Entry::JobStart { .. }
@@ -593,6 +604,17 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
                         .into_iter()
                         .filter_map(|seq| seq.entry.id().map(str::to_owned))
                         .collect(),
+                    from: match submitted {
+                        Some(Entry::Submission {
+                            provenance: Some(provenance),
+                            ..
+                        }) => Some(sender(provenance)),
+                        _ => None,
+                    },
+                    keywords: match submitted {
+                        Some(Entry::Submission { keywords, .. }) => keywords.clone(),
+                        _ => Vec::new(),
+                    },
                 }
             }
         }
@@ -708,6 +730,7 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
         | Entry::RunStart { .. }
         | Entry::RunResumed { .. }
         | Entry::Submission { .. }
+        | Entry::SubmissionWithdrawn { .. }
         | Entry::JobStart { .. }
         | Entry::ChildStart { .. }
         | Entry::JobEnd { .. }
@@ -718,6 +741,12 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
         timestamp: base.timestamp.clone(),
         body,
     })
+}
+
+fn sender(provenance: &axo::SubmissionProvenance) -> ChatSender {
+    ChatSender {
+        name: provenance.name.clone(),
+    }
 }
 
 pub(super) fn branch(entries: &[SeqEntry]) -> Vec<usize> {
@@ -816,69 +845,21 @@ pub(super) fn stats(
     stats
 }
 
-pub(super) fn queue_at_attach(
-    entries: &[SeqEntry],
-    snapshot: &LiveSnapshot,
-) -> Vec<(String, ChatQueued)> {
-    let matched: HashSet<_> = entries
+pub(super) fn queue_at_attach(snapshot: &LiveSnapshot) -> Vec<ChatQueued> {
+    snapshot
+        .queued
         .iter()
-        .filter_map(|seq| {
-            if let Entry::Message {
-                submission_id: Some(id),
-                ..
-            } = &seq.entry
-            {
-                Some(id.as_str())
-            } else {
-                None
-            }
-        })
-        .collect();
-    let mut steering = Vec::new();
-    let mut follow_up = Vec::new();
-    for seq in entries {
-        if let Entry::Submission {
-            submission_id,
-            kind,
-            parts,
-            ..
-        } = &seq.entry
-        {
-            if matched.contains(submission_id.as_str()) {
-                continue;
-            }
-            let (queue, kind) = match kind {
-                SubmissionKind::Steer => (&mut steering, ChatQueueKind::Steer),
-                SubmissionKind::FollowUp => (&mut follow_up, ChatQueueKind::FollowUp),
-                SubmissionKind::Prompt | SubmissionKind::Quiet | SubmissionKind::Mail => continue,
+        .filter_map(|item| {
+            let kind = match item.kind {
+                SubmissionKind::Prompt | SubmissionKind::Steer => ChatQueueKind::Steer,
+                SubmissionKind::FollowUp => ChatQueueKind::FollowUp,
+                SubmissionKind::Quiet | SubmissionKind::Mail => return None,
             };
-            queue.push((seq.seq, submission_id, kind, parts));
-        }
-    }
-    steering.sort_by_key(|item| item.0);
-    follow_up.sort_by_key(|item| item.0);
-    let steering_skip = steering
-        .len()
-        .saturating_sub(snapshot.queued_steering.len());
-    let follow_up_skip = follow_up
-        .len()
-        .saturating_sub(snapshot.queued_follow_up.len());
-    let mut queued: Vec<_> = steering
-        .into_iter()
-        .skip(steering_skip)
-        .chain(follow_up.into_iter().skip(follow_up_skip))
-        .collect();
-    queued.sort_by_key(|item| item.0);
-    queued
-        .into_iter()
-        .map(|(_, id, kind, parts)| {
-            (
-                id.clone(),
-                ChatQueued {
-                    kind,
-                    parts: parts_to_wire(parts),
-                },
-            )
+            Some(ChatQueued {
+                submission_id: item.submission_id.clone(),
+                kind,
+                parts: parts_to_wire(&item.parts),
+            })
         })
         .collect()
 }
@@ -1078,8 +1059,10 @@ pub(super) fn toolbox(session: &axo::Session, folder: &Path) -> ChatToolbox {
                 tools_allow: m.tools.allow.clone(),
                 tools_deny: m.tools.deny.clone(),
                 bash_read_only: m.bash == BashAccess::ReadOnly,
+                writes: m.writes.clone(),
                 result_reviewed: m.result.as_ref().map(|result| result.review),
                 path: m.path.as_deref().map(|path| display_path(path, folder)),
+                plan: mode_is_plan(m),
             })
             .collect(),
         keywords: session
@@ -1132,6 +1115,7 @@ mod tests {
             submission_id: id.into(),
             kind,
             parts: vec![axo::PromptPart::Text { text: id.into() }],
+            keywords: vec![],
             request_id: None,
             sender: None,
             provenance: None,
@@ -1711,28 +1695,36 @@ mod tests {
     }
 
     #[test]
-    fn queue_attach_keeps_unmatched_tail_in_sequence_order() {
-        let entries = log(vec![
-            submission("old-steer", None, SubmissionKind::Steer),
-            submission("consumed", None, SubmissionKind::Steer),
-            submission("old-follow", None, SubmissionKind::FollowUp),
-            submission("follow", None, SubmissionKind::FollowUp),
-            submission("steer", None, SubmissionKind::Steer),
-            user("delivered", None, "consumed"),
-            submission("prompt", None, SubmissionKind::Prompt),
-        ]);
-        let queued_message = AgentMessage::Llm(Message::User(UserMessage {
-            content: vec![],
-            timestamp: 0,
-        }));
+    fn queue_at_attach_maps_snapshot_queued_in_delivery_order() {
         let mut snapshot = LiveSnapshot {
             run_id: None,
             maintenance: None,
             running: false,
             streaming: None,
             pending_tool_calls: vec![],
-            queued_steering: vec![queued_message.clone()],
-            queued_follow_up: vec![queued_message],
+            queued: vec![
+                axo::QueuedInput {
+                    submission_id: "steer".into(),
+                    kind: SubmissionKind::Steer,
+                    parts: vec![axo::PromptPart::Text {
+                        text: "steer".into(),
+                    }],
+                },
+                axo::QueuedInput {
+                    submission_id: "reopened".into(),
+                    kind: SubmissionKind::Prompt,
+                    parts: vec![axo::PromptPart::Text {
+                        text: "reopened".into(),
+                    }],
+                },
+                axo::QueuedInput {
+                    submission_id: "follow".into(),
+                    kind: SubmissionKind::FollowUp,
+                    parts: vec![axo::PromptPart::Text {
+                        text: "follow".into(),
+                    }],
+                },
+            ],
             messages: vec![],
             pending_questions: vec![],
             pending_results: vec![],
@@ -1761,31 +1753,33 @@ mod tests {
             auto_paused: false,
         };
         assert_eq!(
-            queue_at_attach(&entries, &snapshot),
+            queue_at_attach(&snapshot),
             vec![
-                (
-                    "follow".into(),
-                    ChatQueued {
-                        kind: ChatQueueKind::FollowUp,
-                        parts: vec![ChatPart::Text {
-                            text: "follow".into()
-                        }]
-                    }
-                ),
-                (
-                    "steer".into(),
-                    ChatQueued {
-                        kind: ChatQueueKind::Steer,
-                        parts: vec![ChatPart::Text {
-                            text: "steer".into()
-                        }]
-                    }
-                ),
+                ChatQueued {
+                    submission_id: "steer".into(),
+                    kind: ChatQueueKind::Steer,
+                    parts: vec![ChatPart::Text {
+                        text: "steer".into()
+                    }]
+                },
+                ChatQueued {
+                    submission_id: "reopened".into(),
+                    kind: ChatQueueKind::Steer,
+                    parts: vec![ChatPart::Text {
+                        text: "reopened".into()
+                    }]
+                },
+                ChatQueued {
+                    submission_id: "follow".into(),
+                    kind: ChatQueueKind::FollowUp,
+                    parts: vec![ChatPart::Text {
+                        text: "follow".into()
+                    }]
+                },
             ]
         );
-        snapshot.queued_steering.clear();
-        snapshot.queued_follow_up.clear();
-        assert!(queue_at_attach(&entries, &snapshot).is_empty());
+        snapshot.queued.clear();
+        assert!(queue_at_attach(&snapshot).is_empty());
     }
 
     #[test]

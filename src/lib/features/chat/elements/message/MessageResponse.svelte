@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
   import type { HTMLAttributes } from 'svelte/elements'
+  import CodeBlock from '$lib/components/markdown/CodeBlock.svelte'
   import MarkdownRenderer from '$lib/components/markdown/MarkdownRenderer.svelte'
-  import { splitMarkdownBlocks } from '$lib/components/markdown/markdownBlocks'
+  import { splitMessageBlocks } from '$lib/components/markdown/markdownBlocks'
   import { cn } from '$lib/utils/cn'
 
   let {
@@ -22,7 +23,7 @@
   let sampled = $state(untrack(() => text))
   let timer: ReturnType<typeof setTimeout> | undefined
   const shown = $derived(streaming ? sampled : text)
-  const blocks = $derived(splitMarkdownBlocks(shown))
+  const blocks = $derived(splitMessageBlocks(shown))
 
   $effect(() => {
     const next = text
@@ -44,6 +45,10 @@
 
 <div data-slot="message-response" class={cn('flex flex-col gap-3', className)} {...rest}>
   {#each blocks as block, i (i)}
-    <MarkdownRenderer source={block} {folderPath} {sessionId} class="p-0" />
+    {#if block.kind === 'code'}
+      <CodeBlock code={block.code} lang={block.lang} {folderPath} {sessionId} />
+    {:else}
+      <MarkdownRenderer source={block.source} {folderPath} {sessionId} class="p-0" />
+    {/if}
   {/each}
 </div>

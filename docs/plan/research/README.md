@@ -3,7 +3,13 @@
 Surveys of axo as Axome sees it. Each was made by a read-only subagent against axo source code, not its docs (which were being rewritten at the time), and is kept verbatim as evidence. Each file names the axo revision it describes; re-check the code before relying on a claim if axo has moved since.
 
 - **Labels:** claims marked [INFERENCE] were not verified directly.
-- **Axome side:** every report also cites Axome at its HEAD of the day; Axome had not changed between the surveys.
+- **Axome side:** reports cite Axome at its HEAD of the day where they mention it. Axome had not changed between the `6cdaeb4` and `843cd73` surveys; later surveys follow Axome's own adoption work.
+
+## axo `b961066` (2026-11-15): Phase 3 batch survey
+
+| File | Question |
+|---|---|
+| [`axo-b961066/host-capability-handoff.md`](axo-b961066/host-capability-handoff.md) | Did the Phase 3 batch land as requested: fired keywords on `Entry::Submission` (K) and inherited `writes` scopes (W); their exact APIs and semantics, and the review and activity contracts Stage B re-checked at that revision |
 
 ## axo `cd12162` (2026-11-13): delta survey
 

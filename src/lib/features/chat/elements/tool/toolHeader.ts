@@ -5,7 +5,7 @@ import type { ToolStep } from '$lib/features/chat/turns'
 import { isPathWithin, splitRemotePath } from '$lib/utils/paths'
 import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
-import { editDiff, integer, record } from './payload'
+import { fileChange, record } from './payload'
 
 export type ToolHeader = {
   name: string
@@ -79,17 +79,17 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
       }
       break
     }
-    case 'edit': {
-      if (failed) break
-      const diff = editDiff(call.result?.details)
-      if (diff) lines = { added: diff.added, removed: diff.removed }
-      const firstChanged = record(call.result?.details).first_changed_line
-      if (integer(firstChanged) && firstChanged > 0) line = firstChanged
+    case 'edit':
+    case 'write': {
+      const diff = failed ? undefined : fileChange(call.result?.details)?.diff
+      if (diff) {
+        lines = { added: diff.additions, removed: diff.deletions }
+        if (diff.firstChangedLine) line = diff.firstChangedLine
+      }
+      if (call.name === 'write' && typeof args.content === 'string')
+        detail = `${contentLines(args.content).length} lines`
       break
     }
-    case 'write':
-      if (typeof args.content === 'string') detail = `${contentLines(args.content).length} lines`
-      break
     case 'grep':
     case 'find':
       summary = typeof args.pattern === 'string' ? JSON.stringify(args.pattern) : ''
@@ -100,6 +100,7 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
         question !== null && typeof question === 'object' && typeof question.question === 'string'
           ? question.question
           : ''
+      if (record(call.details).outcome === 'steered') detail = 'steered'
       break
     }
     default:

@@ -1,4 +1,4 @@
-import type { Root } from 'hast'
+import type { Element, ElementContent, Root } from 'hast'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
@@ -7,12 +7,38 @@ import remarkRehype from 'remark-rehype'
 import rehypeRaw from 'rehype-raw'
 import rehypeSlug from 'rehype-slug'
 import rehypeSanitize, { defaultSchema, type Options } from 'rehype-sanitize'
-import rehypeShikiFromHighlighter from '@shikijs/rehype/core'
 import rehypeStringify from 'rehype-stringify'
 import { SKIP, visit } from 'unist-util-visit'
 import { platform } from '$lib/platform'
 import { markdownImageSrc } from '$lib/utils/mediaAssets'
-import { getHighlighter, SHIKI_THEME_NAME } from '$lib/utils/syntaxHighlight'
+import { normalizeNestedMarkdownFences } from './markdownBlocks'
+
+export interface MarkdownCodeBlock {
+  lang: string
+  code: string
+}
+
+function collectText(nodes: ElementContent[]): string {
+  let out = ''
+  for (const node of nodes) {
+    if (node.type === 'text') out += node.value
+    else if (node.type === 'element') out += collectText(node.children)
+  }
+  return out
+}
+
+function codeLanguage(pre: Element): { lang: string; fromCodeElement: boolean } {
+  const first = pre.children[0]
+  if (first?.type !== 'element' || first.tagName !== 'code') {
+    return { lang: '', fromCodeElement: false }
+  }
+  const classes = Array.isArray(first.properties.className) ? first.properties.className : []
+  for (const name of classes) {
+    const value = String(name)
+    if (value.startsWith('language-')) return { lang: value.slice('language-'.length), fromCodeElement: true }
+  }
+  return { lang: '', fromCodeElement: true }
+}
 
 const markdownSchema: Options = {
   ...defaultSchema,
@@ -60,10 +86,11 @@ export async function renderMarkdown(
   folderPath?: string,
   filePath?: string | null,
   loadLocalImage?: (filePath: string) => Promise<string | null>
-): Promise<{ html: string; images: Promise<string | null>[] }> {
+): Promise<{ html: string; images: Promise<string | null>[]; codeBlocks: MarkdownCodeBlock[] }> {
   // Web admits file: image URLs only to replace them with text; desktop retains its original sanitizer.
   const schema = 'url' in platform.assets ? markdownSchema : webMarkdownSchema
   const images: Promise<string | null>[] = []
+  const codeBlocks: MarkdownCodeBlock[] = []
   const processor = unified()
     .use(remarkParse)
     .use(remarkGfm)
@@ -72,11 +99,10 @@ export async function renderMarkdown(
     .use(remarkRehype, { allowDangerousHtml: true, clobberPrefix: '' })
     .use(rehypeRaw)
     .use(rehypeSlug)
-    // Sanitize raw HTML and generated IDs before trusted asset/Shiki transforms.
+    // Sanitize raw HTML and generated IDs before trusted asset/code-slot transforms.
     .use(rehypeSanitize, schema)
-    .use(() => async (tree: Root, file) => {
-      let needsHighlighting = false
-      visit(tree, 'element', (node) => {
+    .use(() => (tree: Root) => {
+      visit(tree, 'element', (node, index, parent) => {
         if (node.tagName === 'img' && typeof node.properties.src === 'string') {
           const src = node.properties.src.trim()
           if (/^data:/i.test(src.replace(/[\t\n\r]/g, '')) && !/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(src)) {
@@ -88,60 +114,28 @@ export async function renderMarkdown(
             delete node.properties.src
             images.push(markdownImageSrc(src, folderPath, filePath, loadLocalImage).catch(() => null))
           }
+          return
         }
-        if (node.tagName === 'pre') {
-          const code = node.children[0]
-          if (
-            code?.type === 'element' &&
-            code.tagName === 'code' &&
-            Array.isArray(code.properties.className) &&
-            code.properties.className.some((name) => String(name).startsWith('language-'))
-          ) {
-            needsHighlighting = true
+        if (node.tagName === 'pre' && parent && index !== undefined) {
+          const { lang, fromCodeElement } = codeLanguage(node)
+          const raw = collectText(node.children)
+          const code = fromCodeElement ? raw.replace(/\n$/, '') : raw
+          const slotIndex = codeBlocks.length
+          codeBlocks.push({ lang, code })
+          parent.children[index] = {
+            type: 'element',
+            tagName: 'div',
+            properties: {
+              className: ['axome-code-slot'],
+              dataAxomeCode: String(slotIndex)
+            },
+            children: []
           }
+          return [SKIP, index + 1]
         }
-      })
-      // Highlighting is optional: retain sanitized plaintext if initialization or a grammar fails.
-      if (needsHighlighting) {
-        try {
-          const highlighter = await getHighlighter()
-          await unified()
-            .use(rehypeShikiFromHighlighter, highlighter, {
-              theme: SHIKI_THEME_NAME,
-              lazy: true,
-              fallbackLanguage: 'text',
-              onError: (cause) => console.warn('Markdown syntax highlighting failed', cause)
-            })
-            .run(tree, file)
-        } catch (cause) {
-          console.warn('Markdown syntax highlighting failed', cause)
-        }
-      }
-      visit(tree, 'element', (node, index, parent) => {
-        if (node.tagName !== 'pre' || !parent || index === undefined) return
-        parent.children[index] = {
-          type: 'element',
-          tagName: 'div',
-          properties: { className: ['markdown-code'] },
-          children: [
-            node,
-            {
-              type: 'element',
-              tagName: 'button',
-              properties: {
-                type: 'button',
-                className: ['markdown-copy'],
-                dataAxomeCopy: '',
-                ariaLabel: 'Copy code'
-              },
-              children: [{ type: 'text', value: 'Copy' }]
-            }
-          ]
-        }
-        return [SKIP, index + 1]
       })
     })
     .use(rehypeStringify)
 
-  return { html: String(await processor.process(source)), images }
+  return { html: String(await processor.process(normalizeNestedMarkdownFences(source))), images, codeBlocks }
 }

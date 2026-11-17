@@ -7,14 +7,15 @@
   import type { FileDiff } from '$lib/types/backend'
   import type { DiffModelStore } from '$lib/features/editor/renderers/monaco/diff/diffModels.svelte'
   import { openCommitSnapshot, openStashSnapshot } from '$lib/features/workbench/surfaces/diff/service.svelte'
+  import { openOwnedPath } from '$lib/features/workbench/links/openLink'
   import { openTextFile } from '$lib/features/workbench/surfaces/text/service.svelte'
   import MonacoDiffBody from '$lib/features/editor/renderers/monaco/diff/MonacoDiffBody.svelte'
   import FileIcon from '$lib/icons/FileIcon.svelte'
   import { Separator } from '$lib/components/ui/separator'
+  import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import {
     TriangleAlertIcon,
-    ChevronRightIcon,
     ChevronsDownUpIcon,
     UnfoldMoreIcon,
     SquareArrowOutUpRightIcon,
@@ -31,6 +32,7 @@
     store: DiffModelStore
     idPrefix?: string
     folderPath?: string
+    sessionId?: string | null
     workingStaged?: boolean | null
     commitHash?: string | null
     stashIndex?: number | null
@@ -45,6 +47,7 @@
     store,
     idPrefix = 'diff',
     folderPath,
+    sessionId = null,
     workingStaged = null,
     commitHash = null,
     stashIndex = null,
@@ -59,7 +62,8 @@
 
   function openInEditor(filePath: string) {
     if (!folderPath) return
-    openTextFile(folderPath, filePath)
+    if (sessionId) void openOwnedPath(filePath, undefined, { folderPath, sessionId })
+    else openTextFile(folderPath, filePath)
   }
 
   function viewAtCommit(filePath: string) {
@@ -126,11 +130,7 @@
       class="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left hover:bg-overlay focus-visible:shadow-focus-ring focus-visible:outline-none"
       onclick={() => onToggle(file.path)}
     >
-      <Icon
-        icon={ChevronRightIcon}
-        size={12}
-        class="shrink-0 text-muted transition-transform {expanded ? 'rotate-90' : ''}"
-      />
+      <DisclosureChevron open={expanded} size={12} class="text-muted" />
       <span class="text-2xs font-bold {status.color}" title={status.label}>{status.letter}</span>
       <FileIcon filename={file.path} size={13} />
       <span class="min-w-0 truncate font-mono text-sm text-fg">

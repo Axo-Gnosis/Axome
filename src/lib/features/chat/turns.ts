@@ -168,3 +168,54 @@ export function turnDurationMs(turn: Turn, now: number): number | null {
   const end = turn.running ? now : Date.parse(turn.endedAt!)
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null
 }
+
+function assistantPromptTokens(entry: AssistantEntry): number | null {
+  const usage = entry.body.usage
+  const prompt = usage.input + usage.cacheRead + usage.cacheWrite
+  const tokens = prompt > 0 ? prompt : usage.totalTokens
+  return tokens > 0 ? tokens : null
+}
+
+/**
+ * Estimates post-compaction context tokens for a compaction checkpoint from the first
+ * subsequent assistant request or, for the latest checkpoint, `liveContextTokens`.
+ */
+export function compactionTokensAfter(
+  turns: Turn[],
+  turnIndex: number,
+  stepId: string,
+  liveContextTokens: number | null | undefined
+): number | null {
+  const turn = turns[turnIndex]
+  if (!turn) return null
+  const stepIndex = turn.steps.findIndex((step) => step.id === stepId)
+  if (stepIndex === -1) return null
+
+  // Same-turn assistant entry after compaction.
+  const assistantById = new Map(turn.assistants.map((assistant) => [assistant.id, assistant]))
+  for (let i = stepIndex + 1; i < turn.steps.length; i++) {
+    const step = turn.steps[i]
+    if (step.kind === 'compaction') return null
+    if (step.entryId) {
+      const assistant = assistantById.get(step.entryId)
+      if (assistant) {
+        const tokens = assistantPromptTokens(assistant)
+        if (tokens !== null) return tokens
+      }
+    }
+  }
+
+  // First assistant response in any subsequent turn before another compaction.
+  for (let t = turnIndex + 1; t < turns.length; t++) {
+    const later = turns[t]
+    if (later.steps.some((step) => step.kind === 'compaction')) {
+      return later.assistants[0] ? assistantPromptTokens(later.assistants[0]) : null
+    }
+    if (later.assistants[0]) {
+      const tokens = assistantPromptTokens(later.assistants[0])
+      if (tokens !== null) return tokens
+    }
+  }
+
+  return liveContextTokens && liveContextTokens > 0 ? liveContextTokens : null
+}

@@ -5,6 +5,7 @@ mod engine;
 mod env;
 mod live;
 mod login;
+mod plan;
 mod providers;
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,7 @@ use axo::{Axo, NavigateOptions, ProjectAccess, RecoveryPolicy, SessionOptions};
 use axo_ai::{FileCredentialStore, ThinkingLevel};
 use axome_protocol::axo::AxoKeywordInfo;
 use axome_protocol::chat::*;
+use axome_protocol::git::DiffFileContent;
 use axome_protocol::server_config::Supervision;
 use axome_protocol::session::{IndexedChildSession, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -44,6 +46,29 @@ use crate::{
     },
 };
 use live::LiveSession;
+
+/// Where a session's stored data is read from: the live session, or its closed file.
+enum SessionTarget {
+    Live(Arc<LiveSession>),
+    Closed(Arc<Axo>, PathBuf),
+}
+
+/// Text contents for a snapshot diff; binary when either side has a NUL byte or is not UTF-8.
+fn diff_content(before: Option<Vec<u8>>, after: Vec<u8>) -> DiffFileContent {
+    let text = |bytes: Vec<u8>| (!bytes.contains(&0)).then(|| String::from_utf8(bytes).ok()).flatten();
+    match (before.map(text), text(after)) {
+        (Some(None), _) | (_, None) => DiffFileContent {
+            old_content: None,
+            new_content: None,
+            binary: true,
+        },
+        (old, new) => DiffFileContent {
+            old_content: old.flatten(),
+            new_content: new,
+            binary: false,
+        },
+    }
+}
 
 /// A session's scheme table, borrowed from the live session or built for a closed one.
 enum SessionSchemes {
@@ -130,7 +155,8 @@ pub(super) fn axo_error(error: axo::Error) -> ApiError {
         | axo::Error::ModeNotFound(_)
         | axo::Error::AgentNotFound(_)
         | axo::Error::SessionNotFound(_)
-        | axo::Error::NoPendingResult(_) => ApiError::NotFound(error.to_string()),
+        | axo::Error::NoPendingResult(_)
+        | axo::Error::NotQueued(_) => ApiError::NotFound(error.to_string()),
         axo::Error::Ai(_)
         | axo::Error::Agent(_)
         | axo::Error::Io { .. }
@@ -143,6 +169,30 @@ pub(super) fn axo_error(error: axo::Error) -> ApiError {
         | axo::Error::ContextChanged
         | axo::Error::InvalidHistory(_) => ApiError::Internal(format!("axo: {error}")),
     }
+}
+
+/// Converts axo's byte ranges into the UTF-16 offsets the composer indexes by.
+fn utf16_matches(text: &str, matches: Vec<axo::KeywordMatch>) -> Vec<ChatKeywordMatch> {
+    // axo returns matches in text order and never overlapping, so one forward walk
+    // converts every boundary.
+    let (mut byte, mut units) = (0usize, 0u32);
+    let mut utf16 = |to: usize| {
+        units += text[byte..to].encode_utf16().count() as u32;
+        byte = to;
+        units
+    };
+    matches
+        .into_iter()
+        .map(|found| {
+            let start = utf16(found.range.start);
+            let end = utf16(found.range.end);
+            ChatKeywordMatch {
+                start,
+                end,
+                name: found.name,
+            }
+        })
+        .collect()
 }
 
 /// How long a session with no file yet stays loaded while unattached: long enough for a
@@ -275,10 +325,16 @@ impl AxoService {
         model: Option<String>,
         thinking: Option<ThinkingLevel>,
     ) -> SessionOptions {
+        let plans_dir = config::plans_dir(&self.dirs, folder).unwrap_or_else(|error| {
+            tracing::warn!(%error, "could not read plansDir; using the default");
+            axome_protocol::axo_settings::DEFAULT_PLANS_DIR.to_owned()
+        });
         SessionOptions {
             cwd: folder.to_owned(),
             model,
             agents: bundled::agents().to_vec(),
+            modes: bundled::session_modes(&plans_dir),
+            keywords: bundled::keywords().to_vec(),
             thinking,
             ask_enabled: true,
             project_access: Some(ProjectAccess::Trust),
@@ -636,15 +692,7 @@ impl AxoService {
 
     pub(crate) async fn keywords(&self) -> Result<Vec<AxoKeywordInfo>, ApiError> {
         let engine = self.engine().await?;
-        Ok(engine
-            .axo
-            .catalog(
-                &self.dirs.config,
-                Some(ProjectAccess::Ignore),
-                bundled::agents(),
-                &[],
-                &[],
-            )
+        Ok(bundled::catalog(&engine.axo, &self.dirs.config, ProjectAccess::Ignore)
             .map_err(axo_error)?
             .keywords
             .iter()
@@ -658,16 +706,8 @@ impl AxoService {
     pub(crate) async fn catalog(&self, folder: &Path) -> Result<ChatModelCatalog, ApiError> {
         let engine = self.engine().await?;
         let models = Self::available_models(&engine).await;
-        let catalog = engine
-            .axo
-            .catalog(
-                folder,
-                Some(ProjectAccess::Trust),
-                bundled::agents(),
-                &[],
-                &[],
-            )
-            .map_err(axo_error)?;
+        let catalog =
+            bundled::catalog(&engine.axo, folder, ProjectAccess::Trust).map_err(axo_error)?;
         let settings = &catalog.config.settings;
         let choice = settings
             .resolve_model(
@@ -720,13 +760,15 @@ impl AxoService {
     ) -> Result<String, ApiError> {
         let _opening = self.opening.lock().await;
         let engine = self.engine().await?;
+        let mut options = self.options(
+            folder,
+            Some(model),
+            Some(convert::thinking_from_wire(thinking)),
+        );
+        options.agent = self.default_persona(&engine, folder)?;
         let session = engine
             .axo
-            .create_session(self.options(
-                folder,
-                Some(model),
-                Some(convert::thinking_from_wire(thinking)),
-            ))
+            .create_session(options)
             .await
             .map_err(axo_error)?;
         let id = self
@@ -735,6 +777,30 @@ impl AxoService {
             .id
             .clone();
         Ok(id)
+    }
+
+    /// `axo.defaultAgent` when it names a root persona in this folder's catalog.
+    fn default_persona(&self, engine: &Engine, folder: &Path) -> Result<Option<String>, ApiError> {
+        use axo::context::agents::AgentDef;
+
+        let Some(name) = config::host_setting(&self.dirs, folder, "defaultAgent")
+            .map_err(axo_error)?
+            .and_then(|value| value.as_str().map(str::to_owned))
+        else {
+            return Ok(None);
+        };
+        let catalog =
+            bundled::catalog(&engine.axo, folder, ProjectAccess::Trust).map_err(axo_error)?;
+        let persona = catalog.agents.iter().any(|def| {
+            matches!(def, AgentDef::Agent(spec)
+                if spec.name == name && matches!(spec.run_as, axo::RunAs::Root | axo::RunAs::Any))
+        });
+        if persona {
+            Ok(Some(name))
+        } else {
+            tracing::warn!("defaultAgent {name:?} is not a root persona; using Default");
+            Ok(None)
+        }
     }
 
     pub(crate) async fn attach(
@@ -910,6 +976,31 @@ impl AxoService {
             .await
             .map_err(axo_error)
     }
+    pub(crate) async fn withdraw(
+        &self,
+        folder: &Path,
+        id: &str,
+        submission_id: String,
+    ) -> Result<Vec<ChatPart>, ApiError> {
+        let parts = self
+            .live(folder, id)
+            .await?
+            .session
+            .withdraw(&submission_id)
+            .await
+            .map_err(axo_error)?;
+        Ok(convert::parts_to_wire(&parts))
+    }
+    /// Stops an active run, waits for it to settle idle, and immediately sends held input.
+    pub(crate) async fn send_now(&self, folder: &Path, id: &str) -> Result<(), ApiError> {
+        let held = self.live(folder, id).await?;
+        held.session.abort();
+        if !held.wait_idle().await {
+            return Ok(());
+        }
+        held.session.resume_wakes();
+        Ok(())
+    }
     pub(crate) async fn abort(&self, folder: &Path, id: &str) -> Result<(), ApiError> {
         self.live(folder, id).await?.session.abort();
         Ok(())
@@ -937,6 +1028,77 @@ impl AxoService {
             .await?
             .session
             .dismiss(&call_id)
+            .map_err(axo_error)
+    }
+    pub(crate) async fn set_agent(
+        &self,
+        folder: &Path,
+        id: &str,
+        agent: Option<String>,
+    ) -> Result<(), ApiError> {
+        self.live(folder, id)
+            .await?
+            .session
+            .set_agent(agent.as_deref())
+            .await
+            .map_err(axo_error)
+    }
+    /// Selects a mode, then steers any remaining parts so attachments and file chips survive.
+    pub(crate) async fn set_mode(
+        &self,
+        folder: &Path,
+        id: &str,
+        mode: Option<String>,
+        parts: Vec<ChatPart>,
+    ) -> Result<(), ApiError> {
+        let held = self.live(folder, id).await?;
+        held.session
+            .set_mode(mode.as_deref())
+            .await
+            .map_err(axo_error)?;
+        if parts.is_empty() {
+            return Ok(());
+        }
+        held.session
+            .steer(convert::parts_from_wire(parts)?)
+            .await
+            .map_err(axo_error)
+    }
+    pub(crate) async fn keyword_matches(
+        &self,
+        folder: &Path,
+        id: &str,
+        texts: Vec<String>,
+    ) -> Result<Vec<Vec<ChatKeywordMatch>>, ApiError> {
+        let held = self.live(folder, id).await?;
+        Ok(texts
+            .iter()
+            .map(|text| utf16_matches(text, held.session.keyword_matches(text)))
+            .collect())
+    }
+    pub(crate) async fn accept_result(
+        &self,
+        folder: &Path,
+        id: &str,
+        call_id: String,
+    ) -> Result<(), ApiError> {
+        self.live(folder, id)
+            .await?
+            .session
+            .accept_result(&call_id, axo::AcceptResultOptions::default())
+            .map_err(axo_error)
+    }
+    pub(crate) async fn revise_result(
+        &self,
+        folder: &Path,
+        id: &str,
+        call_id: String,
+        feedback: String,
+    ) -> Result<(), ApiError> {
+        self.live(folder, id)
+            .await?
+            .session
+            .revise_result(&call_id, feedback)
             .map_err(axo_error)
     }
     pub(crate) async fn background(
@@ -1081,19 +1243,98 @@ impl AxoService {
 
     /// The session's scheme table: the live session's, or a read-only one for a closed session.
     async fn schemes(&self, folder: &Path, id: &str) -> Result<SessionSchemes, ApiError> {
+        match self.target(folder, id).await? {
+            SessionTarget::Live(live) => Ok(SessionSchemes::Live(live)),
+            SessionTarget::Closed(axo, path) => Ok(SessionSchemes::Closed(
+                axo.schemes(&path, Some(ProjectAccess::Trust), &[])
+                    .await
+                    .map_err(axo_error)?,
+            )),
+        }
+    }
+
+    async fn target(&self, folder: &Path, id: &str) -> Result<SessionTarget, ApiError> {
         if let Some(live) = self.sessions.lock().get(id).cloned() {
             if live.folder != folder {
                 return Err(ApiError::NotFound(format!("axo session {id}")));
             }
-            return Ok(SessionSchemes::Live(live));
+            return Ok(SessionTarget::Live(live));
         }
         let axo = self.axo().await?;
         let info = self.closed_info(&axo, folder, id).await?;
-        Ok(SessionSchemes::Closed(
-            axo.schemes(&info.path, Some(ProjectAccess::Trust), &[])
-                .await
-                .map_err(axo_error)?,
-        ))
+        Ok(SessionTarget::Closed(axo, info.path))
+    }
+
+    pub(crate) async fn squash_changes(
+        &self,
+        folder: &Path,
+        id: &str,
+        changes: Vec<serde_json::Value>,
+    ) -> Result<Vec<ChatSquashedChange>, ApiError> {
+        let parsed: Vec<axo::FileChange> = changes
+            .into_iter()
+            .map(|value| {
+                serde_json::from_value(value).map_err(|error| {
+                    ApiError::InvalidArgument(format!("Invalid file change record: {error}"))
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let squashed = match self.target(folder, id).await? {
+            SessionTarget::Live(live) => live.session.squash_changes(&parsed).await,
+            SessionTarget::Closed(axo, path) => axo.squash_changes(&path, &parsed).await,
+        };
+        Ok(squashed
+            .into_iter()
+            .map(|file| ChatSquashedChange {
+                path: file.path,
+                key: file.key,
+                url: file.url,
+                created: file.created,
+                before_sha: file.before.as_ref().map(|blob| blob.sha256.clone()),
+                after_sha: file.after.sha256.clone(),
+                binary: file.before.as_ref().is_some_and(|blob| blob.binary) || file.after.binary,
+                omitted: file
+                    .before
+                    .as_ref()
+                    .is_some_and(|blob| blob.omitted.is_some())
+                    || file.after.omitted.is_some(),
+                mutations: file.mutations,
+                discontinuous: file.discontinuous,
+                additions: file.diff.as_ref().map(|diff| diff.additions),
+                deletions: file.diff.as_ref().map(|diff| diff.deletions),
+            })
+            .collect())
+    }
+
+    pub(crate) async fn turn_diff_file(
+        &self,
+        folder: &Path,
+        id: &str,
+        before_sha: Option<String>,
+        after_sha: String,
+    ) -> Result<DiffFileContent, ApiError> {
+        let target = self.target(folder, id).await?;
+        let read = |sha: String| {
+            let target = &target;
+            async move {
+                match target {
+                    SessionTarget::Live(live) => {
+                        live.session.read_snapshot(&sha).await.map_err(axo_error)
+                    }
+                    SessionTarget::Closed(axo, path) => {
+                        axo.read_snapshot(path, &sha).await.map_err(axo_error)
+                    }
+                }
+            }
+        };
+        let (before_res, after_res) = match before_sha {
+            Some(before) => {
+                let (b, a) = tokio::join!(read(before), read(after_sha));
+                (Some(b?), a?)
+            }
+            None => (None, read(after_sha).await?),
+        };
+        Ok(diff_content(before_res, after_res))
     }
 
     pub(crate) async fn watch_job(
@@ -1617,6 +1858,10 @@ async fn build_readonly_state(
             stats,
             auto_paused: false,
             jobs,
+            agent: None,
+            mode: None,
+            effective_mode: None,
+            reviews: Vec::new(),
         },
         toolbox: ChatToolbox::default(),
         commands: Vec::new(),
@@ -1712,6 +1957,7 @@ fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<History
                 | Entry::RunStart { .. }
                 | Entry::RunEnd { .. }
                 | Entry::RunResumed { .. }
+                | Entry::SubmissionWithdrawn { .. }
                 | Entry::Unknown(_) => {}
             }
             ControlFlow::Continue(())

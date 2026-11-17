@@ -1,5 +1,28 @@
 import type { ChatCommand, ChatPart } from '$lib/types/backend'
-import { mediaMimeType } from '$lib/features/editor/languageMap'
+
+/** Whether a message has something to send: non-blank text or any chip. */
+export function hasContent(parts: ChatPart[]): boolean {
+  return parts.some((part) => (part.type === 'text' || part.type === 'paste' ? part.text.trim() !== '' : true))
+}
+
+/**
+ * Prepends withdrawn queued parts ahead of an existing composer draft with a newline
+ * separator when the draft already contains content (omitting empty drafts).
+ */
+export function prependQueuedParts(queued: ChatPart[], draft: ChatPart[]): ChatPart[] {
+  if (!hasContent(draft)) return [...queued]
+  const combined: ChatPart[] = [...queued, { type: 'text', text: '\n' }, ...draft]
+  const normalized: ChatPart[] = []
+  for (const part of combined) {
+    const prev = normalized.at(-1)
+    if (part.type === 'text' && prev?.type === 'text') {
+      normalized[normalized.length - 1] = { type: 'text', text: prev.text + part.text }
+    } else if (part.type !== 'text' || part.text.length > 0) {
+      normalized.push(part)
+    }
+  }
+  return normalized
+}
 
 export function contentBytes(parts: ChatPart[]): number {
   return parts.reduce(
@@ -15,20 +38,16 @@ export function contentBytes(parts: ChatPart[]): number {
 export const CONTENT_LIMIT = 20 * 1024 * 1024
 export const CONTENT_LIMIT_MESSAGE = 'A message can contain at most 20 MiB of content.'
 
-/** Whether a message has something to send: non-blank text or any chip. */
-export function hasContent(parts: ChatPart[]): boolean {
-  return parts.some((part) => (part.type === 'text' || part.type === 'paste' ? part.text.trim() !== '' : true))
-}
-
-/** The skill a message invokes: its first text part starts with `/<skill>` followed by whitespace or the end. */
-export function invokedSkill(
+/** The catalog command of `kind` a message invokes: its first text part starts with `/<name>` followed by whitespace or the end. */
+export function invokedCommand<K extends ChatCommand['kind']>(
   parts: ChatPart[],
-  commands: ChatCommand[]
-): Extract<ChatCommand, { kind: 'skill' }> | null {
+  commands: ChatCommand[],
+  kind: K
+): Extract<ChatCommand, { kind: K }> | null {
   const first = parts[0]
   const name = first?.type === 'text' ? /^\/(\S+)(?=\s|$)/.exec(first.text)?.[1] : undefined
   const command = name ? commands.find((item) => item.name === name) : undefined
-  return command?.kind === 'skill' ? command : null
+  return command?.kind === kind ? (command as Extract<ChatCommand, { kind: K }>) : null
 }
 
 function reference(path: string): string {
@@ -65,29 +84,4 @@ export function partLabel(part: ChatPart): string {
     case 'content':
       return part.name
   }
-}
-
-export function imageMime(part: ChatPart): string | null {
-  const name = part.type === 'content' ? part.name : part.type === 'saved' ? part.url : ''
-  const mime = mediaMimeType(name)
-  if (mime.startsWith('image/')) return mime
-  if (part.type !== 'content') return null
-  // Clipboard files may have no extension. Only decode the signature, not the image.
-  let signature: string
-  try {
-    signature = atob(part.bytes.slice(0, 48))
-  } catch {
-    return null
-  }
-  if (signature.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png'
-  if (signature.startsWith('\xff\xd8\xff')) return 'image/jpeg'
-  if (signature.startsWith('GIF87a') || signature.startsWith('GIF89a')) return 'image/gif'
-  if (signature.startsWith('RIFF') && signature.slice(8, 12) === 'WEBP') return 'image/webp'
-  if (signature.startsWith('BM')) return 'image/bmp'
-  if (signature.slice(4, 8) === 'ftyp' && ['avif', 'avis'].includes(signature.slice(8, 12))) return 'image/avif'
-  return null
-}
-
-export function isImagePart(part: ChatPart): boolean {
-  return part.type === 'saved' ? part.image : part.type === 'content' && imageMime(part) !== null
 }

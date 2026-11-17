@@ -17,12 +17,14 @@ import type {
   ChatEvent,
   ChatJobOutput,
   ChatPart,
+  ChatPlanThen,
+  ChatQueued,
   ChatState
 } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
 import { getOrCreate } from './registry'
 import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
-import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent } from './parts/parts'
+import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent, prependQueuedParts } from './parts/parts'
 
 export type ChatTarget = { kind: 'tab'; tabId: TabId } | { kind: 'session'; folderPath: string; sessionId: string }
 
@@ -66,6 +68,8 @@ export class ChatController {
   draft = $state<ChatPart[]>([])
   editing = $state<{ entryId: string; anchor: string | null; parts: ChatPart[] } | null>(null)
   jobOutputs = $state<Record<string, ChatJobOutput>>({})
+  /** Parts sent as the first message once the first attach succeeds; `newChat` sets it. */
+  seed: ChatPart[] | null = null
   #handle: StreamHandle<void> | null = null
   #generation = 0
   #closing = false
@@ -142,6 +146,13 @@ export class ChatController {
       )
       this.#handle = handle
       await handle.ready
+      const seed = this.seed
+      if (seed && generation === this.#generation) {
+        // Taken before sending so a reattach never repeats it; `send` keeps the draft when it fails.
+        this.seed = null
+        this.draft = seed
+        await this.send()
+      }
     } catch (error) {
       if (generation !== this.#generation) return
       this.#attachId = null
@@ -272,14 +283,18 @@ export class ChatController {
   }
 
   async send(): Promise<void> {
-    const parts = this.draft
-    if (!this.#validateParts(parts)) return
-    const generation = this.#generation
-    const succeeded = await this.#withSession((folder, id) =>
+    return this.#submitDraft((folder, id, parts) =>
       this.state?.live.running
         ? backend.chat.steer(folder, id, parts)
         : backend.chat.prompt(folder, id, crypto.randomUUID(), parts)
     )
+  }
+
+  async #submitDraft(operation: (folder: string, id: string, parts: ChatPart[]) => Promise<unknown>): Promise<void> {
+    const parts = this.draft
+    if (!this.#validateParts(parts)) return
+    const generation = this.#generation
+    const succeeded = await this.#withSession((folder, id) => operation(folder, id, parts))
     if (succeeded && generation === this.#generation && this.draft === parts) this.draft = []
   }
 
@@ -293,12 +308,46 @@ export class ChatController {
   }
 
   /** Runs a catalog command; resolves to its error message, or null once it ran or began. */
-  async runCommand(name: string, args: Record<string, unknown>): Promise<string | null> {
+  runCommand(name: string, args: Record<string, unknown>): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.runCommand(folder, id, name, args))
+  }
+
+  /** Switches the persona; null selects Default. Resolves to the error message, or null. */
+  setAgent(agent: string | null): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.setAgent(folder, id, agent))
+  }
+
+  /** Enters a mode (null exits) and submits `parts` when non-empty. Resolves to the error message, or null. */
+  setMode(mode: string | null, parts: ChatPart[] = []): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.setMode(folder, id, mode, parts))
+  }
+
+  /** Accepts a reviewed mode result. Resolves to the error message, or null. */
+  acceptResult(callId: string): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.acceptResult(folder, id, callId))
+  }
+
+  /** Sends a reviewed mode result back with feedback. Resolves to the error message, or null. */
+  reviseResult(callId: string, feedback: string): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.reviseResult(folder, id, callId, feedback))
+  }
+
+  /** Saves a reviewed plan under the plans directory and accepts it; resolves to the saved path or the error message. */
+  async acceptPlan(callId: string, saveAs: string, then: ChatPlanThen): Promise<{ path: string } | { error: string }> {
+    let path = ''
+    const error = await this.#attempt(async (folder, id) => {
+      path = await backend.chat.acceptPlan(folder, id, callId, saveAs, then)
+    })
+    return error === null ? { path } : { error }
+  }
+
+  /** Like `#withSession`, but requires a live connection and hands the error message to the caller. */
+  async #attempt(operation: (folderPath: string, sessionId: string) => Promise<unknown>): Promise<string | null> {
     const folderPath = this.folderPath
     const sessionId = this.sessionId
     if (!folderPath || !sessionId || this.connection !== 'live') return 'The chat is not connected.'
     try {
-      await backend.chat.runCommand(folderPath, sessionId, name, args)
+      await operation(folderPath, sessionId)
       return null
     } catch (error) {
       return getErrorMessage(error)
@@ -319,12 +368,42 @@ export class ChatController {
   }
 
   async followUp(): Promise<void> {
-    const parts = this.draft
-    if (!this.#validateParts(parts)) return
-    const generation = this.#generation
-    if (await this.#withSession((folder, id) => backend.chat.followUp(folder, id, parts))) {
-      if (generation === this.#generation && this.draft === parts) this.draft = []
+    return this.#submitDraft((folder, id, parts) => backend.chat.followUp(folder, id, parts))
+  }
+
+  /** Cancels one queued steer or follow-up; returns its parts, or null if already delivered or failed. */
+  async withdraw(submissionId: string): Promise<ChatPart[] | null> {
+    const folderPath = this.folderPath
+    const sessionId = this.sessionId
+    if (!folderPath || !sessionId) return null
+    try {
+      return await backend.chat.withdraw(folderPath, sessionId, submissionId)
+    } catch (error) {
+      if ((error as { kind?: unknown } | null)?.kind === 'not_found') return null
+      notify.error('axo', getErrorMessage(error))
+      return null
     }
+  }
+
+  /** Withdraws a queued message and prepends it above the current composer draft. */
+  async editQueued(item: ChatQueued): Promise<boolean> {
+    const generation = this.#generation
+    const parts = await this.withdraw(item.submissionId)
+    if (!parts || generation !== this.#generation) return false
+    this.draft = prependQueuedParts(parts, this.draft)
+    return true
+  }
+
+  /** Promotes a follow-up to a steer, interrupts to send a steer now, or resumes held items. */
+  async sendQueuedNow(item: ChatQueued): Promise<void> {
+    if (item.kind === 'followUp') {
+      const parts = await this.withdraw(item.submissionId)
+      if (parts) await this.#withSession((folder, id) => backend.chat.steer(folder, id, parts))
+      return
+    }
+    const live = this.state?.live
+    if (live?.autoPaused && !live.running) return this.resumeWakes()
+    await this.#withSession((folder, id) => backend.chat.sendNow(folder, id))
   }
 
   async stop(): Promise<void> {
@@ -436,8 +515,7 @@ export class ChatController {
     await this.#withSession(async (folderPath, sessionId) => {
       const fork = await backend.chat.fork(folderPath, sessionId, entryId)
       const tabId = addChatTab(folderPath, { sessionId: fork.sessionId, title: this.state?.live.title ?? 'New Chat' })
-      const tab = getTabs().find((candidate) => candidate.id === tabId)
-      if (tab?.kind === 'chat') getOrCreate(tab).draft = fork.editable ?? []
+      getOrCreate(tabId).draft = fork.editable ?? []
       requestFocusTab(tabId)
     })
   }

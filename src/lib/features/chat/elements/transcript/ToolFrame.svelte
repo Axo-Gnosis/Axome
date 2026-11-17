@@ -20,6 +20,7 @@
   import type { ToolHeader } from '../tool/toolHeader'
   import BashCommand from '../tool/BashCommand.svelte'
   import { openOwnedPath } from '$lib/features/workbench/links/openLink'
+  import { disclose } from './disclose'
 
   let {
     header,
@@ -74,7 +75,7 @@
 <div
   data-slot="tool-frame"
   class={cn(
-    'flex min-w-0 cursor-pointer flex-col gap-1.5 font-mono text-xs',
+    'flex min-w-0 cursor-pointer flex-col font-mono text-xs',
     nested ? 'px-2 py-1.5' : 'px-3 py-2',
     failed ? 'bg-danger-bg' : nested ? '' : 'bg-surface',
     // Only the innermost hovered frame tints, so a batch stays still while a nested call is hovered.
@@ -145,7 +146,7 @@
     </div>
   </div>
   {#if view !== 'collapsed' && children}
-    <div class="min-w-0">
+    <div data-disclose transition:disclose class="min-w-0 pt-1.5">
       {@render children()}
     </div>
   {/if}

@@ -730,6 +730,10 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatFollowUp => chat_follow_up(folder_path: String, session_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
+            ChatWithdraw => chat_withdraw(folder_path: String, session_id: String, submission_id: String) -> Vec<$crate::chat::ChatPart>;
+            #[route(folder_path)]
+            ChatSendNow => chat_send_now(folder_path: String, session_id: String) -> ();
+            #[route(folder_path)]
             ChatAbort => chat_abort(folder_path: String, session_id: String) -> ();
             #[route(folder_path)]
             ChatClose => chat_close(folder_path: String, session_id: String) -> ();
@@ -763,6 +767,22 @@ macro_rules! axome_rpc_ops {
             ChatContextDetails => chat_context_details(folder_path: String, session_id: String) -> $crate::chat::ChatContextDetails;
             #[route(folder_path)]
             ChatLocalFiles => chat_local_files(folder_path: String, session_id: String) -> $crate::chat::ChatLocalFiles;
+            #[route(folder_path)]
+            ChatSetAgent => chat_set_agent(folder_path: String, session_id: String, agent: Option<String>) -> ();
+            #[route(folder_path)]
+            ChatSetMode => chat_set_mode(folder_path: String, session_id: String, mode: Option<String>, parts: Vec<$crate::chat::ChatPart>) -> ();
+            #[route(folder_path)]
+            ChatKeywordMatches => chat_keyword_matches(folder_path: String, session_id: String, texts: Vec<String>) -> Vec<Vec<$crate::chat::ChatKeywordMatch>>;
+            #[route(folder_path)]
+            ChatAcceptResult => chat_accept_result(folder_path: String, session_id: String, call_id: String) -> ();
+            #[route(folder_path)]
+            ChatReviseResult => chat_revise_result(folder_path: String, session_id: String, call_id: String, feedback: String) -> ();
+            #[route(folder_path)]
+            ChatAcceptPlan => chat_accept_plan(folder_path: String, session_id: String, call_id: String, save_as: String, then: $crate::chat::ChatPlanThen) -> String;
+            #[route(folder_path)]
+            ChatSquashChanges => chat_squash_changes(folder_path: String, session_id: String, changes: Vec<serde_json::Value>) -> Vec<$crate::chat::ChatSquashedChange>;
+            #[route(folder_path)]
+            ChatTurnDiffFile => chat_turn_diff_file(folder_path: String, session_id: String, before_sha: Option<String>, after_sha: String) -> $crate::git::DiffFileContent;
             #[route(folder_path)]
             ShellStart => shell_start(
                 run_id: String,

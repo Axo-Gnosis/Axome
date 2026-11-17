@@ -75,7 +75,15 @@ export function tabToPersisted(tab: Tab): PersistedTab | null {
         source:
           tab.source.kind === 'working'
             ? { kind: 'working', staged: tab.source.staged, scopePath: tab.source.scopePath }
-            : tab.source,
+            : tab.source.kind === 'turn'
+              ? {
+                  kind: 'turn',
+                  sessionId: tab.source.sessionId,
+                  turnId: tab.source.turnId,
+                  label: tab.source.label,
+                  files: tab.source.files
+                }
+              : tab.source,
         initialFile: tab.initialFile,
         temporary: tab.temporary,
         locked: tab.locked
@@ -242,6 +250,16 @@ export function persistedToTab(persisted: PersistedTab, id: string): Tab {
           break
         case 'compare':
           source = { kind: 'compare', left: persisted.source.left, right: persisted.source.right }
+          break
+        case 'turn':
+          source = {
+            kind: 'turn',
+            sessionId: persisted.source.sessionId,
+            turnId: persisted.source.turnId,
+            label: persisted.source.label,
+            files: persisted.source.files,
+            revealNonce: 0
+          }
           break
       }
       return {

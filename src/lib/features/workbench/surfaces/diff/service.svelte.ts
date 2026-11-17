@@ -1,12 +1,13 @@
 import { backend } from '$lib/api/backend'
 import { notify } from '$lib/features/notifications/state.svelte'
-import type { CompareFileSide, CompareSide, DiffTab, TabId } from '$lib/features/workbench/model'
+import type { CompareFileSide, CompareSide, DiffTab, TabId, TurnDiffFile } from '$lib/features/workbench/model'
 import {
   addChangesTab,
   addCommitTab,
   addCompareTab,
   addRangeTab,
-  addStashTab
+  addStashTab,
+  addTurnDiffTab
 } from '$lib/features/workbench/state.svelte'
 import { openTextSnapshot } from '$lib/features/workbench/surfaces/text/service.svelte'
 import { getErrorMessage } from '$lib/utils/client-error'
@@ -80,6 +81,18 @@ export function openCompareDiff(folderPath: string, left: CompareSide, right: Co
   return addCompareTab(folderPath, left, right)
 }
 
+export function openTurnDiff(
+  folderPath: string,
+  sessionId: string,
+  turnId: string,
+  label: string,
+  files: TurnDiffFile[],
+  initialFile: string | null = null,
+  options: OpenDiffOptions = {}
+): TabId {
+  return addTurnDiffTab(folderPath, sessionId, turnId, label, files, initialFile, options.temporary ?? true)
+}
+
 export function compareSideLabel(side: CompareSide): string {
   return side.kind === 'clipboard' ? 'Clipboard' : basename(side.path)
 }
@@ -114,6 +127,8 @@ export function getDiffTabTitle(tab: DiffTab): string {
       return `${tab.source.baseLabel} ↔ ${tab.source.targetLabel}`
     case 'compare':
       return `${compareSideLabel(tab.source.left)} ↔ ${compareSideLabel(tab.source.right)}`
+    case 'turn':
+      return tab.source.label || 'Turn Changes'
     default: {
       const _exhaustive: never = tab.source
       return _exhaustive

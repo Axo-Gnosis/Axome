@@ -3,7 +3,7 @@
   import type { ToolStep } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
   import { wordHighlights } from './diffHighlight'
-  import { editDiff, record } from './payload'
+  import { editDiff, fileChange, record } from './payload'
   import ToolCode from './ToolCode.svelte'
   import ToolOutput from './ToolOutput.svelte'
 
@@ -22,17 +22,20 @@
   const limit = $derived(view === 'preview' ? 40 : null)
   const isEdit = $derived(call.name === 'edit')
   const args = $derived(record(call.arguments))
+  const change = $derived(fileChange(call.result?.details))
+  const patchRowsResult = $derived(editDiff(change))
+  const showDiff = $derived(isEdit || (change !== null && !change.created && !!patchRowsResult))
   const rows = $derived(
-    isEdit
-      ? (editDiff(call.result?.details)?.rows ?? null)
+    showDiff
+      ? (patchRowsResult?.rows ?? null)
       : typeof args.content === 'string'
         ? sourceRows(contentLines(args.content), 1)
         : null
   )
   // Hunk budgeting only applies to changes; written content is plain source that ToolCode slices.
-  const preview = $derived(isEdit && limit !== null ? previewDiff(rows ?? [], limit, 8) : undefined)
+  const preview = $derived(showDiff && limit !== null ? previewDiff(rows ?? [], limit, 8) : undefined)
   const emphasis = $derived(
-    isEdit ? wordHighlights(rows ?? [], preview ? new Set(preview.rows) : undefined) : undefined
+    showDiff ? wordHighlights(rows ?? [], preview ? new Set(preview.rows) : undefined) : undefined
   )
 </script>
 
@@ -47,11 +50,15 @@
         {onExpand}
         {preview}
         {emphasis}
-        neutral={!isEdit}
+        neutral={!showDiff}
       />
     {:else}
       <div class="text-subtle">No changes</div>
     {/if}
+  {:else if change?.diff?.patchTruncated}
+    <div class="text-subtle">Diff too large to preview inline (+{change.diff.additions} -{change.diff.deletions})</div>
+  {:else if call.result && !change && call.name === 'write'}
+    <div class="text-subtle">No changes</div>
   {:else if call.output.some((part) => part.type === 'image' || part.text.trim())}
     <ToolOutput parts={call.output} {view} {onExpand} />
   {:else}

@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { Chip } from '$lib/components/ui/chip'
+  import { Button } from '$lib/components/ui/button'
+  import { Chip, chipVariants } from '$lib/components/ui/chip'
   import { Spinner } from '$lib/components/ui/progress'
   import type { ToolStep } from '$lib/features/chat/turns'
-  import type { ChatContent } from '$lib/types/backend'
+  import { openOwnedPath } from '$lib/features/workbench/links/openLink'
+  import type { ChatContent, ChatReview } from '$lib/types/backend'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
   import { CircleXIcon, TerminalIcon } from '@hugeicons/core-free-icons'
@@ -14,14 +16,19 @@
 
   let {
     call,
+    review,
     folderPath,
     sessionId,
-    onOpenJob
+    onOpenJob,
+    onOpenPlan
   }: {
     call: ToolStep
+    /** The live review this `yield` is awaiting, if any. */
+    review?: ChatReview
     folderPath: string
     sessionId: string | null
     onOpenJob?: (ref?: string) => void
+    onOpenPlan?: () => void
   } = $props()
 
   const args = $derived(record(call.arguments))
@@ -123,12 +130,30 @@
         <span class="min-w-0 truncate">{message}</span>
       {/if}
     {:else if call.name === 'yield'}
-      {#if typeof details.mode === 'string'}
+      <!-- A pending yield has no details yet (axo journals them with the outcome); the live review names the mode. -->
+      {#if review?.plan}
+        <span class="truncate">Plan ready for review</span>
+        {#if onOpenPlan}
+          <Button type="button" size="xs" onclick={onOpenPlan}>Open Plan</Button>
+        {/if}
+      {:else if review}
+        <span class="truncate">Awaiting review · {review.mode}</span>
+      {:else if typeof details.mode === 'string'}
+        {@const saved = details.outcome === 'accepted' ? record(details.result).file : undefined}
         <span class="truncate"
-          >{call.status === 'running'
-            ? `Awaiting review · ${details.mode}`
-            : `${details.mode} result${typeof details.outcome === 'string' ? ` · ${details.outcome}` : ''}`}</span
+          >{`${details.mode} result${typeof details.outcome === 'string' ? ` · ${details.outcome}` : ''}`}</span
         >
+        {#if typeof saved === 'string' && saved}
+          <button
+            type="button"
+            class={cn(
+              chipVariants(),
+              'min-w-0 cursor-pointer truncate font-mono text-xs hover:text-bright focus-visible:shadow-focus-ring focus-visible:outline-none'
+            )}
+            title={saved}
+            onclick={() => void openOwnedPath(saved, undefined, { folderPath, sessionId })}>{saved}</button
+          >
+        {/if}
       {:else}
         <span class="truncate">Yielded result</span>
       {/if}

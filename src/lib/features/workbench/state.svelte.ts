@@ -21,6 +21,8 @@ import type {
   CompareSide,
   DiffSource,
   DiffTab,
+  TurnDiffFile,
+  TurnDiffSource,
   EpicTab,
   IssueTab,
   NewTab,
@@ -136,6 +138,10 @@ function diffSourcesEqual(a: DiffSource, b: DiffSource): boolean {
       return b.kind === 'range' && a.base === b.base && a.target === b.target
     case 'compare':
       return b.kind === 'compare' && compareSidesEqual(a.left, b.left) && compareSidesEqual(a.right, b.right)
+    case 'turn':
+      return (
+        b.kind === 'turn' && a.sessionId === b.sessionId && a.turnId === b.turnId && a.revealNonce === b.revealNonce
+      )
     default: {
       const _exhaustive: never = a
       return _exhaustive
@@ -935,6 +941,53 @@ export function addCompareTab(folderPath: string, left: CompareSide, right: Comp
   )
 }
 
+export function addTurnDiffTab(
+  folderPath: string,
+  sessionId: string,
+  turnId: string,
+  label: string,
+  files: TurnDiffFile[],
+  initialFile: string | null = null,
+  temporary = true
+): TabId {
+  const source: TurnDiffSource = {
+    kind: 'turn',
+    sessionId,
+    turnId,
+    label,
+    files,
+    revealNonce: generateRevealNonce()
+  }
+  return addContentTab(
+    'diff',
+    (id): DiffTab => ({
+      kind: 'diff',
+      id,
+      folderPath,
+      source,
+      initialFile,
+      temporary,
+      locked: false
+    }),
+    temporary,
+    (t) =>
+      t.kind === 'diff' &&
+      t.folderPath === folderPath &&
+      t.source.kind === 'turn' &&
+      t.source.sessionId === sessionId &&
+      t.source.turnId === turnId &&
+      !t.temporary,
+    (t) =>
+      t.kind === 'diff' && t.source.kind === 'turn'
+        ? {
+            ...t,
+            source,
+            initialFile
+          }
+        : t
+  )
+}
+
 export function addTextTab(folderPath: string, filePath: string, temporary = true, tabId?: TabId): TabId {
   return addContentTab(
     'text',
@@ -1176,6 +1229,16 @@ export async function reopenClosedTab(snapshot: PersistedTab): Promise<TabId | n
             )
           case 'compare':
             return addCompareTab(snapshot.folderPath, snapshot.source.left, snapshot.source.right)
+          case 'turn':
+            return addTurnDiffTab(
+              snapshot.folderPath,
+              snapshot.source.sessionId,
+              snapshot.source.turnId,
+              snapshot.source.label,
+              snapshot.source.files,
+              snapshot.initialFile,
+              false
+            )
           default: {
             const _exhaustive: never = snapshot.source
             return _exhaustive

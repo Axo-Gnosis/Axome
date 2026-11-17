@@ -85,6 +85,39 @@ pub(super) fn read_settings(
     .and_then(|mut layer| layer.get_mut("axo").map(serde_json::Value::take)))
 }
 
+/// An Axome-owned key of the "axo" settings object: the folder layer, else the global one.
+pub(super) fn host_setting(
+    dirs: &HostDirs,
+    folder: &Path,
+    key: &str,
+) -> Result<Option<serde_json::Value>, axo::Error> {
+    for (path, kind) in [
+        (
+            crate::dirs::folder_settings_path(folder),
+            SettingsLayerKind::Folder,
+        ),
+        (dirs.settings_path(), SettingsLayerKind::Global),
+    ] {
+        let value = read_settings(&path, kind)?
+            .and_then(|mut settings| settings.get_mut(key).map(serde_json::Value::take))
+            .filter(|value| !value.is_null());
+        if value.is_some() {
+            return Ok(value);
+        }
+    }
+    Ok(None)
+}
+
+/// The folder's `plansDir` as configured (relative to the folder, or absolute), else the default.
+pub(super) fn plans_dir(dirs: &HostDirs, folder: &Path) -> Result<String, axo::Error> {
+    Ok(host_setting(dirs, folder, "plansDir")?
+        .as_ref()
+        .and_then(serde_json::Value::as_str)
+        .filter(|dir| !dir.is_empty())
+        .unwrap_or(axome_protocol::axo_settings::DEFAULT_PLANS_DIR)
+        .to_owned())
+}
+
 fn fill_roles(settings: &mut Option<serde_json::Value>, last_model: Option<&str>) {
     let fallback = settings
         .as_ref()

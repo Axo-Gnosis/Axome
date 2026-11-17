@@ -1,4 +1,4 @@
-export type SessionSidebarView = 'jobs' | 'agents' | 'toolbox' | 'context' | 'files'
+export type SessionSidebarView = 'jobs' | 'agents' | 'toolbox' | 'context' | 'files' | 'plan'
 
 export class SessionSidebarState {
   view = $state<SessionSidebarView | null>(null)

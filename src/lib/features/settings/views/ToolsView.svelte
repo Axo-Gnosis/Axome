@@ -7,6 +7,7 @@
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
   import AxoNumberRow from './AxoNumberRow.svelte'
+  import AxoTextRow from './AxoTextRow.svelte'
   import AxoToggleRow from './AxoToggleRow.svelte'
   import AxoChoiceRow from './AxoChoiceRow.svelte'
   import { createAxoFields } from './axoFields.svelte'
@@ -27,17 +28,6 @@
     agentSelector = ''
   }
 </script>
-
-{#snippet text(path: string[], label: string, value: string | null, placeholder: string)}
-  <SettingRow {label} stacked>
-    <Input
-      value={fields.value(path, value)}
-      {placeholder}
-      disabled={!settings}
-      oninput={(event) => fields.save(path, event.currentTarget.value.trim() || null, event.currentTarget.value)}
-    />
-  </SettingRow>
-{/snippet}
 
 <!-- Selectors here may carry an effort suffix (`provider/model:high`); the pair edits both parts. -->
 {#snippet selectorPicker(path: string[], saved: string, label: string, none?: string)}
@@ -61,7 +51,13 @@
     value={settings?.bash.devShell ?? 'off'}
     choices={['off', 'direnv', 'nix']}
   />
-  {@render text(['bash', 'devShellRef'], 'Shell reference', settings?.bash.devShellRef ?? null, '.#default')}
+  <AxoTextRow
+    {fields}
+    path={['bash', 'devShellRef']}
+    label="Shell reference"
+    value={settings?.bash.devShellRef ?? null}
+    placeholder=".#default"
+  />
   <SettingRow label="Watch files (one per line)" stacked>
     <Textarea
       value={String(fields.value(['bash', 'devShellWatch'], settings?.bash.devShellWatch.join('\n') ?? ''))}

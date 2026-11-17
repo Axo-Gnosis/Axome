@@ -161,10 +161,6 @@
     url = "https://registry.npmjs.org/@shikijs/primitive/-/primitive-4.4.3.tgz";
     hash = "sha512-m0wBeLDQDeIxRdUmrCPdQqfuUamDwRL5isCfYbguKD6NiaKpVbsv+3J81DyIKgNW5h4WAIIr8T4EkgQrBBxvaQ==";
   };
-  "@shikijs/rehype@4.4.3" = fetchurl {
-    url = "https://registry.npmjs.org/@shikijs/rehype/-/rehype-4.4.3.tgz";
-    hash = "sha512-vkG9jG1aRnrx05R31uAOKQHE8qpY7r1cBXE2sAZgFK2IaPnQHwaP4L1C6amQixmZ8thBsKwfbSsYxMDoo46UWQ==";
-  };
   "@shikijs/themes@4.4.3" = fetchurl {
     url = "https://registry.npmjs.org/@shikijs/themes/-/themes-4.4.3.tgz";
     hash = "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw==";

@@ -531,11 +531,9 @@ async fn write_control(
             outgoing = rx.recv() => outgoing,
         };
         let Some(outgoing) = outgoing else { break };
-        let result = tokio::select! {
-            biased;
-            _ = stop.changed() => break,
-            result = timeout(IO_TIMEOUT, sink.send(outgoing.message)) => result,
-        };
+        // Free the id before its reply becomes observable: a client may reuse an
+        // answered id at once. A still-executing duplicate stays refused, and the
+        // single FIFO writer keeps a reused id's reply behind this one.
         if let Some(id) = outgoing.id {
             control
                 .live_ids
@@ -543,6 +541,11 @@ async fn write_control(
                 .expect("request IDs poisoned")
                 .remove(&id);
         }
+        let result = tokio::select! {
+            biased;
+            _ = stop.changed() => break,
+            result = timeout(IO_TIMEOUT, sink.send(outgoing.message)) => result,
+        };
         if !matches!(result, Ok(Ok(()))) {
             break;
         }

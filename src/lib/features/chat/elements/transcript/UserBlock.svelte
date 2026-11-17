@@ -1,8 +1,10 @@
 <script lang="ts">
   import { Button, IconButton } from '$lib/components/ui/button'
+  import { Chip } from '$lib/components/ui/chip'
+  import * as Tooltip from '$lib/components/ui/tooltip'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
-  import { hasContent, invokedSkill, partsText } from '$lib/features/chat/parts/parts'
+  import { hasContent, invokedCommand, partsText } from '$lib/features/chat/parts/parts'
   import type { ChatCommand, ChatModel } from '$lib/types/backend'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import type { UserEntry } from '$lib/features/chat/turns'
@@ -36,7 +38,13 @@
   } = $props()
 
   let input = $state<PromptInput>()
-  const skill = $derived(invokedSkill(entry.body.parts, commands))
+  const skill = $derived(invokedCommand(entry.body.parts, commands, 'skill'))
+  const keywords = $derived(
+    entry.body.keywords.map((name) => ({
+      name,
+      description: controller.state?.toolbox.keywords.find((keyword) => keyword.name === name)?.description || null
+    }))
+  )
   const editing = $derived(controller.editing?.entryId === entry.id)
   const branchIndex = $derived(entry.body.siblings.indexOf(entry.id))
   const time = $derived(
@@ -66,7 +74,6 @@
         disabled={!canBranch}
         placeholder="Edit message"
         onSubmit={() => void controller.submitEdit()}
-        onAltSubmit={() => void controller.submitEdit()}
         onCancel={() => controller.cancelEdit()}
       />
       <div class="flex justify-end gap-2">
@@ -92,9 +99,35 @@
               interactive
             />{/if}{/each}
       </div>
+      {#if keywords.length}
+        <div class="mt-2 flex flex-wrap gap-1.5">
+          {#each keywords as keyword (keyword.name)}
+            {#if keyword.description}
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Chip
+                      {...props}
+                      tone="accent"
+                      tabindex={0}
+                      class="font-mono focus-visible:shadow-focus-ring focus-visible:outline-none">{keyword.name}</Chip
+                    >
+                  {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="top">{keyword.description}</Tooltip.Content>
+              </Tooltip.Root>
+            {:else}
+              <Chip tone="accent" class="font-mono">{keyword.name}</Chip>
+            {/if}
+          {/each}
+        </div>
+      {/if}
     {/if}
   </div>
   <div class="flex min-h-5 flex-wrap items-center justify-end gap-2 text-xs text-subtle">
+    {#if entry.body.from}
+      <span class="text-muted">From {entry.body.from.name ?? 'parent agent'}</span>
+    {/if}
     <time datetime={entry.timestamp} class="font-mono tabular-nums">{time}</time>
     {#if entry.body.siblings.length > 1}
       <div class="flex items-center gap-1 font-mono" aria-label="Message branches">

@@ -100,6 +100,7 @@
             { label: 'Allowed tools', value: item.toolsAllow?.length === 0 ? 'None' : item.toolsAllow },
             { label: 'Denied tools', value: item.toolsDeny },
             { label: 'Bash', value: item.bashReadOnly ? 'Read-only' : null },
+            { label: 'Writes', value: item.writes?.length === 0 ? 'None' : item.writes },
             {
               label: 'Result',
               value: item.resultReviewed === null ? null : item.resultReviewed ? 'Reviewed' : 'Not reviewed'

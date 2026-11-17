@@ -9,6 +9,7 @@
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
   import AxoNumberRow from './AxoNumberRow.svelte'
+  import AxoTextRow from './AxoTextRow.svelte'
   import AxoToggleRow from './AxoToggleRow.svelte'
   import AxoChoiceRow from './AxoChoiceRow.svelte'
   import { createAxoFields } from './axoFields.svelte'
@@ -50,12 +51,34 @@
   }
 </script>
 
+<SettingsSection title="Persona">
+  <AxoTextRow
+    {fields}
+    path={['defaultAgent']}
+    label="Default Persona"
+    description="Root persona for new chats. Empty uses Default."
+    value={settings?.defaultAgent ?? null}
+    placeholder="Default"
+  />
+</SettingsSection>
+
+<SettingsSection title="Plans">
+  <AxoTextRow
+    {fields}
+    path={['plansDir']}
+    label="Plans Directory"
+    description="Where accepted plans are saved. Relative paths start at the project folder."
+    value={settings?.plansDir ?? null}
+    placeholder=".axome/plans"
+  />
+</SettingsSection>
+
 <SettingsSection title="Queue">
   <AxoChoiceRow
     {fields}
     path={['steeringMode']}
     label={'Steering mode'}
-    value={settings?.steeringMode ?? 'one-at-a-time'}
+    value={settings?.steeringMode ?? 'all'}
     choices={['all', 'one-at-a-time']}
   />
   <AxoChoiceRow

@@ -12,12 +12,16 @@
   import { isActiveJob } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
-  import { UserBlock, AgentBlock } from '$lib/features/chat/elements/transcript'
+  import { UserBlock, AgentBlock, MaintenanceLine } from '$lib/features/chat/elements/transcript'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
+  import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
   import { fileReference } from '$lib/features/chat/elements/prompt-input/attachments'
   import { ModelPicker, EffortPicker } from '$lib/features/chat/elements/model-picker'
-  import PartChip from '$lib/features/chat/parts/PartChip.svelte'
-  import { hasContent, isImagePart, partsText } from '$lib/features/chat/parts/parts'
+  import { PersonaPicker } from '$lib/features/chat/elements/persona-picker'
+  import { ModePill } from '$lib/features/chat/elements/mode-pill'
+  import { backend } from '$lib/api/backend'
+  import { hasContent } from '$lib/features/chat/parts/parts'
+  import { isImagePart } from '$lib/features/chat/parts/image'
   import { selectFile } from '$lib/features/browser/state.svelte'
   import { notify } from '$lib/features/notifications/state.svelte'
   import type { ChatTab } from '$lib/features/workbench/model'
@@ -29,7 +33,7 @@
   import { SessionSidebarState } from '$lib/features/chat/sidebar/state.svelte'
 
   let { tab }: { tab: ChatTab } = $props()
-  const controller = $derived(chats.getOrCreate(tab))
+  const controller = $derived(chats.getOrCreate(tab.id))
   const chat = $derived(controller.state)
   const models = $derived(getChatModels(tab.folderPath))
   const catalog = $derived(models.catalog)
@@ -46,6 +50,17 @@
   const imageWarning = $derived(current?.images === false && controller.draft.some(isImagePart))
   const owner = $derived({ folderPath: tab.folderPath, sessionId: tab.sessionId })
   const canBranch = $derived(controller.connection === 'live' && !controller.busy)
+  // Personas and keywords belong to the root session; a child transcript offers neither.
+  const root = $derived(!!chat && !chat.isChild)
+  const personas = $derived(
+    root ? (chat?.toolbox.agents ?? []).filter((a) => !a.team && (a.runAs === 'root' || a.runAs === 'any')) : []
+  )
+  const keywordNames = $derived(root ? (chat?.toolbox.keywords ?? []).map((k) => k.name) : [])
+  const keywordMatches = $derived.by(() => {
+    const { folderPath, sessionId } = tab
+    if (!root || !sessionId) return undefined
+    return (texts: string[]) => backend.chat.keywordMatches(folderPath, sessionId, texts)
+  })
   const catalogMessage = $derived(
     models.error
       ? `${models.error} ${MODELS_HINT}`
@@ -88,19 +103,18 @@
   }
 
   function onSubmit() {
-    if (canSend) void controller.send().then(() => conversation?.scrollToBottom())
+    if (canSend) return controller.send().then(() => conversation?.scrollToBottom())
   }
 
-  function onAltSubmit() {
-    if (!canSend) return
-    if (running) void controller.followUp()
-    else onSubmit()
+  // Operations resolve to an error message; show it like any other axo failure.
+  function report(operation: Promise<string | null>) {
+    void operation.then((error) => {
+      if (error) notify.error('axo', error)
+    })
   }
 
   function configure(name: string, args: Record<string, unknown>) {
-    void controller.runCommand(name, args).then((error) => {
-      if (error) notify.error('axo', error)
-    })
+    report(controller.runCommand(name, args))
   }
 
   async function stop() {
@@ -183,7 +197,7 @@
     <!-- isolate scopes the background's negative z-index so it paints above this bg but under the transcript. -->
     <div class="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
       <TidalStipple class="-z-10" params={turns.length ? ACTIVE_STIPPLE : undefined} transitionMs={900} />
-      <Conversation bind:this={conversation}>
+      <Conversation bind:this={conversation} {turns}>
         {#if !turns.length}
           <div class="flex flex-1 flex-col items-center justify-center gap-6 py-10">
             <FolderHero folderPath={tab.folderPath}>
@@ -200,30 +214,36 @@
             {/if}
           </div>
         {/if}
-        {#each turns as turn (turn.id)}
-          {#if turn.user}<UserBlock
-              entry={turn.user}
-              {controller}
-              {canBranch}
-              {owner}
-              commands={chat?.commands ?? []}
-              models={available}
-            />{/if}
-          {#if turn.steps.length || turn.running || turn.end}
-            <AgentBlock
-              {turn}
-              {controller}
-              folderPath={tab.folderPath}
-              sessionId={tab.sessionId}
-              {canBranch}
-              now={turn.running ? now : 0}
-              {expansion}
-              {overrides}
-              {onView}
-              onOpenJob={(ref) => sidebar.openJob(ref)}
-            />
-          {/if}
+        {#each turns as turn, turnIndex (turn.id)}
+          <div data-turn-id={turn.id} class="flex min-w-0 flex-col gap-4">
+            {#if turn.user}<UserBlock
+                entry={turn.user}
+                {controller}
+                {canBranch}
+                {owner}
+                commands={chat?.commands ?? []}
+                models={available}
+              />{/if}
+            {#if turn.steps.length || turn.running || turn.end}
+              <AgentBlock
+                {turn}
+                {turns}
+                {turnIndex}
+                {controller}
+                folderPath={tab.folderPath}
+                sessionId={tab.sessionId}
+                {canBranch}
+                now={turn.running ? now : 0}
+                {expansion}
+                {overrides}
+                {onView}
+                onOpenJob={(ref) => sidebar.openJob(ref)}
+                onOpenPlan={() => (sidebar.view = 'plan')}
+              />
+            {/if}
+          </div>
         {/each}
+        {#if chat}<MaintenanceLine live={chat.live} turnRunning={turns.at(-1)?.running ?? false} />{/if}
         {#snippet footer()}
           {#if controller.readOnly}
             <div
@@ -240,29 +260,7 @@
               <Button size="xs" onclick={() => void reconnect()}>Reconnect</Button>
             </Alert.Root>
           {:else}
-            {#if chat?.live.autoPaused}
-              <Alert.Root variant="warning" class="mb-2 flex items-center justify-between gap-3">
-                <Alert.Description>Background wakes paused after an error or stop.</Alert.Description>
-                <Button variant="outline" size="xs" onclick={() => void controller.resumeWakes()}>Resume</Button>
-              </Alert.Root>
-            {/if}
-            {#if chat?.live.queue.length}
-              <ul aria-label="Queued messages" class="flex flex-col gap-1 pb-2">
-                {#each chat.live.queue as item}
-                  <li class="flex gap-2 text-xs text-subtle">
-                    <span class="shrink-0 font-mono">{item.kind === 'steer' ? 'steer:' : 'follow-up:'}</span>
-                    <span
-                      class="flex min-w-0 flex-wrap items-center gap-1 break-words whitespace-pre-wrap"
-                      aria-label={partsText(item.parts)}
-                    >
-                      {#each item.parts as part}
-                        {#if part.type === 'text'}{part.text}{:else}<PartChip {part} {owner} />{/if}
-                      {/each}
-                    </span>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
+            <QueuedMessages {controller} {owner} onEdited={() => composer?.focus()} />
             <PromptInput
               bind:this={composer}
               bind:parts={controller.draft}
@@ -270,12 +268,17 @@
               models={available}
               {running}
               onCommand={(name, args) => controller.runCommand(name, args)}
+              onMode={(name, parts) => controller.setMode(name, parts)}
+              keywords={keywordNames}
+              {keywordMatches}
               onCancel={running ? () => void stop() : undefined}
               {disabled}
               placeholder={running ? 'Steer axo…' : 'Ask axo…'}
               commands={chat?.commands ?? []}
               {onSubmit}
-              {onAltSubmit}
+              onFollowUp={() => {
+                if (canSend) return controller.followUp()
+              }}
             >
               {#snippet start()}
                 <IconButton
@@ -288,8 +291,21 @@
                 >
                   <Icon icon={PaperclipIcon} size={14} />
                 </IconButton>
+                <ModePill
+                  mode={chat?.live.mode ?? null}
+                  effectiveMode={chat?.live.effectiveMode ?? null}
+                  onExit={() => report(controller.setMode(null))}
+                />
               {/snippet}
               {#snippet end()}
+                {#if personas.length}
+                  <PersonaPicker
+                    agents={personas}
+                    value={chat?.live.agent ?? null}
+                    disabled={controller.connection !== 'live' || controller.readOnly}
+                    onSelect={(agent) => report(controller.setAgent(agent))}
+                  />
+                {/if}
                 <ModelPicker
                   variant="ghost"
                   label="Model (Alt+M)"

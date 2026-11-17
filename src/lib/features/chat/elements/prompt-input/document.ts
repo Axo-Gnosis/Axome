@@ -7,7 +7,7 @@ export const chipOrigin = crypto.randomUUID()
 export const promptSchema = new Schema({
   nodes: {
     doc: { content: 'paragraph' },
-    paragraph: { content: 'inline*', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
+    paragraph: { content: 'inline*', whitespace: 'pre', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
     text: { group: 'inline' },
     // One atomic inline node per chip: it moves, deletes and copies as a single character.
     // Not selectable, so a click places the caret beside it rather than selecting it.

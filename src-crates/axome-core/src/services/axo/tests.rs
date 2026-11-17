@@ -716,6 +716,8 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
             thinking: Some(axo_ai::ThinkingLevel::Off),
             ask_enabled: true,
             agents: super::bundled::agents().to_vec(),
+            modes: super::bundled::modes().to_vec(),
+            keywords: super::bundled::keywords().to_vec(),
             ..Default::default()
         })
         .await
@@ -1078,11 +1080,14 @@ async fn maintenance_command_returns_once_started() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unwritten_sessions_are_reclaimed_after_grace() {
     let fixture = Fixture::new(vec![]).await;
-    let _orphan = fixture.create().await;
+    let orphan = fixture.create().await;
+    // Each grace runs from that session's own unload check; asserting both together would
+    // also require the second create and attach to finish within the orphan's grace.
+    assert!(fixture.service.sessions.lock().contains_key(&orphan));
     let id = fixture.create().await;
     fixture.attach(&id, "a").await;
     fixture.service.detach(&id, "a");
-    assert_eq!(fixture.service.loaded(), 2);
+    assert!(fixture.service.sessions.lock().contains_key(&id));
     fixture.attach(&id, "b").await;
     fixture.service.detach(&id, "b");
     wait_until(|| fixture.service.loaded() == 0).await;
@@ -1634,7 +1639,7 @@ async fn summaries_follow_activity() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn project_agents_override_bundled() {
+async fn bundled_definitions_load_and_project_agents_override() {
     let fixture = Fixture::new(vec![]).await;
     let agents_dir = fixture.folder.join(".axome").join("agents");
     std::fs::create_dir_all(&agents_dir).unwrap();
@@ -1645,16 +1650,8 @@ async fn project_agents_override_bundled() {
     .unwrap();
 
     let engine = fixture.service.engine().await.unwrap();
-    let catalog = engine
-        .axo
-        .catalog(
-            &fixture.folder,
-            Some(axo::ProjectAccess::Trust),
-            super::bundled::agents(),
-            &[],
-            &[],
-        )
-        .unwrap();
+    let catalog =
+        super::bundled::catalog(&engine.axo, &fixture.folder, axo::ProjectAccess::Trust).unwrap();
     let catalog_scout = catalog
         .agents
         .iter()
@@ -1676,6 +1673,59 @@ async fn project_agents_override_bundled() {
         .expect("catalog task");
     assert_eq!(catalog_task.run_as, axo::RunAs::Subagent);
     assert_eq!(catalog_task.model.as_deref(), Some("@work"));
+
+    // Programmatic definitions that fail validation are dropped with a diagnostic.
+    let keywords: Vec<_> = catalog.keywords.iter().map(|k| k.name.as_str()).collect();
+    assert_eq!(keywords, ["orchestrate"]);
+    let modes: Vec<_> = catalog.modes.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(modes, ["plan", "plan:roadmap", "plan:step", "research"]);
+    for mode in &catalog.modes {
+        assert!(mode.disable_model_invocation, "{}", mode.name);
+        assert_eq!(mode.model.as_deref(), Some("@reason"), "{}", mode.name);
+        assert_eq!(mode.bash, axo::BashAccess::ReadOnly, "{}", mode.name);
+        let plan = mode.extra.get("axome").and_then(|axome| axome.get("plan"));
+        let save_as = mode.result.as_ref().map(|result| {
+            (
+                result.review,
+                &result.schema["properties"]["saveAs"]["pattern"],
+            )
+        });
+        if mode.name == "research" {
+            assert_eq!(plan, None);
+            assert_eq!(save_as, None);
+            assert_eq!(
+                mode.writes.as_deref(),
+                Some(&["local://".to_owned(), ".axome/research/".to_owned()][..])
+            );
+        } else {
+            assert_eq!(plan, Some(&json!(true)), "{}", mode.name);
+            assert_eq!(mode.writes.as_deref(), Some(&["local://".to_owned()][..]));
+            let pattern = match mode.name.as_str() {
+                "plan" => r"^[a-z0-9][a-z0-9-]*\.md$",
+                "plan:roadmap" => r"^[a-z0-9][a-z0-9-]*/roadmap\.md$",
+                _ => r"^[a-z0-9][a-z0-9-]*/[0-9]{2}-[a-z0-9][a-z0-9-]*\.md$",
+            };
+            assert_eq!(save_as, Some((true, &json!(pattern))), "{}", mode.name);
+        }
+    }
+}
+
+#[test]
+fn keyword_matches_count_utf16_units_after_multibyte_text() {
+    // "é" is 2 bytes / 1 unit, U+1F33F 4 bytes / 2 units: bytes 7..18 are units 4..15, and
+    // the second match, after one more "é", bytes 22..33 are units 18..29.
+    let text = "é\u{1F33F} orchestrate é orchestrate";
+    let found = |range| axo::KeywordMatch {
+        name: "orchestrate".into(),
+        range,
+    };
+    let matches = super::utf16_matches(text, vec![found(7..18), found(22..33)]);
+    let expected = |start, end| axome_protocol::chat::ChatKeywordMatch {
+        name: "orchestrate".into(),
+        start,
+        end,
+    };
+    assert_eq!(matches, [expected(4, 15), expected(18, 29)]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1814,4 +1864,278 @@ async fn child_readonly_resume_pinning_and_close_lifecycle() {
         .iter()
         .any(|event| matches!(event, ChatEvent::Closed { .. })));
     assert_eq!(fixture.service.loaded(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_snapshots_and_squash_work_across_live_and_closed_sessions() {
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[("r1", "read", json!({"path": "notes.txt"}))])),
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "e1",
+            "edit",
+            json!({
+                "path": "notes.txt",
+                "edits": [{"oldText": "greeting.", "newText": "updated greeting."}]
+            }),
+        )])),
+        ScriptedTurn::Reply(reply_tool_calls(&[
+            (
+                "e2",
+                "edit",
+                json!({
+                    "path": "notes.txt",
+                    "edits": [{"oldText": "updated greeting.", "newText": "final greeting.\nextra line"}]
+                }),
+            ),
+            (
+                "w1",
+                "write",
+                json!({
+                    "path": "local://scratch.md",
+                    "content": "# Scratch\nLine 2\n"
+                }),
+            ),
+        ])),
+        ScriptedTurn::Reply(reply_text("done")),
+    ])
+    .await;
+
+    let session_id = fixture.create().await;
+    let events = fixture.attach(&session_id, "a1").await;
+    fixture.prompt(&session_id, "update files", &events, 1).await;
+
+    let changes: Vec<Value> = {
+        let log = events.lock();
+        log.iter()
+            .filter_map(|event| match event {
+                ChatEvent::Entry {
+                    entry: ChatEntry {
+                        body: ChatEntryBody::ToolResult {
+                            details: Some(details),
+                            is_error: false,
+                            ..
+                        },
+                        ..
+                    },
+                } => details.get("change").cloned(),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(changes.len(), 3);
+
+    // Live session squash & snapshot diff read
+    let squashed_live = fixture
+        .service
+        .squash_changes(&fixture.folder, &session_id, changes.clone())
+        .await
+        .unwrap();
+    assert_eq!(squashed_live.len(), 2);
+    let notes = &squashed_live[0];
+    assert_eq!(notes.mutations, 2);
+    assert!(!notes.created);
+    assert!(!notes.discontinuous);
+    assert_eq!(
+        (notes.additions, notes.deletions),
+        (Some(2), Some(1)),
+        "re-diffed multi-mutation diff"
+    );
+    let notes_content = fixture
+        .service
+        .turn_diff_file(
+            &fixture.folder,
+            &session_id,
+            notes.before_sha.clone(),
+            notes.after_sha.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(!notes_content.binary);
+    assert_eq!(notes_content.old_content.as_deref(), Some("Remember the greeting.\n"));
+    assert_eq!(
+        notes_content.new_content.as_deref(),
+        Some("Remember the final greeting.\nextra line\n")
+    );
+
+    let local = &squashed_live[1];
+    assert_eq!(local.url.as_deref(), Some("local://scratch.md"));
+    assert!(local.created);
+    assert_eq!(local.before_sha, None);
+    let local_content = fixture
+        .service
+        .turn_diff_file(&fixture.folder, &session_id, None, local.after_sha.clone())
+        .await
+        .unwrap();
+    assert_eq!(local_content.old_content, None);
+    assert_eq!(local_content.new_content.as_deref(), Some("# Scratch\nLine 2\n"));
+
+    // Closed session squash & snapshot diff read (lock-free Axo path)
+    fixture.service.close(&session_id).await.unwrap();
+    let squashed_closed = fixture
+        .service
+        .squash_changes(&fixture.folder, &session_id, changes)
+        .await
+        .unwrap();
+    assert_eq!(squashed_closed, squashed_live);
+    let notes_closed = fixture
+        .service
+        .turn_diff_file(
+            &fixture.folder,
+            &session_id,
+            notes.before_sha.clone(),
+            notes.after_sha.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(notes_closed.old_content, notes_content.old_content);
+    assert_eq!(notes_closed.new_content, notes_content.new_content);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn queue_orders_steers_first_withdraws_and_send_now_releases_held_input() {
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::HangUntilCancel,
+        ScriptedTurn::Reply(reply_text("delivered after send_now")),
+    ])
+    .await;
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+
+    fixture
+        .service
+        .prompt(
+            &fixture.folder,
+            &id,
+            "p1".into(),
+            vec![ChatPart::Text {
+                text: "start".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    wait_until(|| {
+        events
+            .lock()
+            .iter()
+            .any(|event| matches!(event, ChatEvent::Delta { .. }))
+    })
+    .await;
+
+    // Queue a follow-up first, then a steer: live.queue keeps steers before follow-ups.
+    fixture
+        .service
+        .follow_up(
+            &fixture.folder,
+            &id,
+            vec![ChatPart::Text {
+                text: "later".into(),
+            }],
+        )
+        .await
+        .unwrap();
+    fixture
+        .service
+        .steer(
+            &fixture.folder,
+            &id,
+            vec![ChatPart::Text {
+                text: "sooner".into(),
+            }],
+        )
+        .await
+        .unwrap();
+
+    let latest_queue = || {
+        events
+            .lock()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                ChatEvent::Live { live } => Some(live.queue.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    wait_until(|| latest_queue().len() == 2).await;
+    let queue = latest_queue();
+    assert_eq!(queue[0].kind, axome_protocol::chat::ChatQueueKind::Steer);
+    assert_eq!(
+        queue[0].parts,
+        vec![ChatPart::Text {
+            text: "sooner".into()
+        }]
+    );
+    assert_eq!(queue[1].kind, axome_protocol::chat::ChatQueueKind::FollowUp);
+    assert_eq!(
+        queue[1].parts,
+        vec![ChatPart::Text {
+            text: "later".into()
+        }]
+    );
+
+    // Withdraw the follow-up; re-withdrawing fails with NotFound.
+    let withdrawn = fixture
+        .service
+        .withdraw(&fixture.folder, &id, queue[1].submission_id.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        withdrawn,
+        vec![ChatPart::Text {
+            text: "later".into()
+        }]
+    );
+    assert!(matches!(
+        fixture
+            .service
+            .withdraw(&fixture.folder, &id, queue[1].submission_id.clone())
+            .await,
+        Err(crate::errors::ApiError::NotFound(_))
+    ));
+    wait_until(|| latest_queue().len() == 1).await;
+
+    // Interrupt and send now aborts the active run and delivers the held steer immediately.
+    fixture.service.send_now(&fixture.folder, &id).await.unwrap();
+    wait_settled(&events, 1).await;
+    assert!(latest_queue().is_empty());
+    let texts: Vec<_> = events
+        .lock()
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::Entry {
+                entry:
+                    ChatEntry {
+                        body: ChatEntryBody::Assistant { blocks, .. },
+                        ..
+                    },
+            } => blocks.iter().find_map(|b| match b {
+                axome_protocol::chat::ChatBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.iter().any(|text| text == "delivered after send_now"));
+}
+
+#[test]
+fn diff_content_marks_binary_sides() {
+    let text = super::diff_content(Some(b"a".to_vec()), b"b".to_vec());
+    assert_eq!(text.old_content.as_deref(), Some("a"));
+    assert_eq!(text.new_content.as_deref(), Some("b"));
+    assert!(!text.binary);
+
+    let created = super::diff_content(None, b"b".to_vec());
+    assert_eq!(created.old_content, None);
+    assert_eq!(created.new_content.as_deref(), Some("b"));
+    assert!(!created.binary);
+
+    for content in [
+        super::diff_content(Some(vec![0]), b"b".to_vec()),
+        super::diff_content(Some(b"a".to_vec()), vec![0xff]),
+    ] {
+        assert!(content.binary);
+        assert_eq!(content.old_content, None);
+        assert_eq!(content.new_content, None);
+    }
 }
