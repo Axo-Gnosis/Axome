@@ -25,6 +25,8 @@
     || (lib.hasSuffix "tauri.conf.json" path)
     || (lib.hasSuffix "axome.desktop" path)
     || (lib.hasInfix "src-crates/axome-core/extensions" path)
+    # bundled.rs embeds these Markdown definitions with include_str! in both binaries.
+    || (lib.hasInfix "/src-crates/axome-core/src/services/axo/bundled/" path)
     || (lib.hasInfix "src-tauri/capabilities" path)
     || (lib.hasInfix "src-tauri/icons" path)
     || (lib.hasInfix "src-crates/axome-core/migrations" path);
