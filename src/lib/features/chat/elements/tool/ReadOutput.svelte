@@ -24,7 +24,7 @@
   const rows = $derived(source && source.lineCount > 0 ? sourceRows(source.body.split('\n'), source.startLine) : [])
 </script>
 
-<div data-slot="read-output" class="min-w-0 font-mono text-xs">
+<div data-slot="read-output" class="min-w-0 px-3 py-2 font-mono text-xs">
   {#if source}
     {#if rows.length}
       <ToolCode {rows} path={source.path} {folderPath} {limit} {onExpand} neutral />

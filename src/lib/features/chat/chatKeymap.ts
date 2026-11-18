@@ -1,11 +1,11 @@
 import { logicalKey } from '../../utils/keyboardEvent'
 
 export type ChatKeyAction =
-  'stop' | 'cycleThinking' | 'openModel' | 'cycleExpansion' | 'pageUp' | 'pageDown' | 'focusComposer' | null
+  'stop' | 'cycleThinking' | 'openModel' | 'cycleExpansion' | 'answer' | 'pageUp' | 'pageDown' | 'focusComposer' | null
 
 export function resolveChatKey(
   event: KeyboardEvent,
-  ctx: { inComposer: boolean; inEditable: boolean; running: boolean }
+  ctx: { inComposer: boolean; inEditable: boolean; running: boolean; asking: boolean }
 ): ChatKeyAction {
   if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey) return null
   const key = logicalKey(event)
@@ -16,6 +16,8 @@ export function resolveChatKey(
         return 'openModel'
       case 'o':
         return event.repeat ? null : 'cycleExpansion'
+      case 'a':
+        return ctx.asking && !event.repeat ? 'answer' : null
       default:
         return null
     }

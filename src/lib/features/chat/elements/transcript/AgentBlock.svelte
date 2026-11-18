@@ -3,23 +3,25 @@
   import * as Tooltip from '$lib/components/ui/tooltip'
   import { StatusDot } from '$lib/components/ui/status-dot'
   import { Separator } from '$lib/components/ui/separator'
+  import * as Alert from '$lib/components/ui/alert'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import * as Message from '$lib/features/chat/elements/message'
   import {
     cacheHitPercent,
     formatCost,
     formatDuration,
+    formatList,
     formatRetry,
     formatTokens,
     modelName
   } from '$lib/features/chat/format'
-  import { compactionTokensAfter, turnDurationMs, type Step, type Turn } from '$lib/features/chat/turns'
+  import { compactionTokensAfter, turnDurationMs, turnEndNotice, type Step, type Turn } from '$lib/features/chat/turns'
+  import { isActiveJob, type TranscriptJob } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { notify } from '$lib/features/notifications/state.svelte'
   import {
     ArrowDown02Icon,
     ArrowUp02Icon,
-    CircleXIcon,
     Clock01Icon,
     CopyIcon,
     DatabaseExportIcon,
@@ -38,7 +40,10 @@
   import ThinkingBlock from './ThinkingBlock.svelte'
   import NoticeBlock from './NoticeBlock.svelte'
   import ToolBlock from './ToolBlock.svelte'
-  import ToolReceipt from './ToolReceipt.svelte'
+  import YieldReceipt from './YieldReceipt.svelte'
+  import ReceiptRow from './ReceiptRow.svelte'
+  import JobCard from './JobCard.svelte'
+  import CommandJobRow from './CommandJobRow.svelte'
   import SummaryBlock from './SummaryBlock.svelte'
   import ReviewCard from './ReviewCard.svelte'
   import TurnChangesCard from './TurnChangesCard.svelte'
@@ -50,6 +55,7 @@
   let {
     turn,
     turns,
+    jobs,
     turnIndex,
     controller,
     folderPath,
@@ -60,10 +66,13 @@
     overrides,
     onView,
     onOpenJob,
-    onOpenPlan
+    onOpenPlan,
+    onAnswer
   }: {
     turn: Turn
     turns: Turn[]
+    /** The session's job index (`transcriptJobs`). */
+    jobs: ReadonlyMap<string, TranscriptJob>
     turnIndex: number
     controller: ChatController
     folderPath: string
@@ -75,6 +84,8 @@
     onView: (stepId: string, view: BlockView) => void
     onOpenJob?: (ref?: string) => void
     onOpenPlan?: () => void
+    /** Opens the docked ask panel from a pending question's row. */
+    onAnswer?: () => void
   } = $props()
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
@@ -82,7 +93,8 @@
   const compactionSteps = $derived(
     turn.steps.filter((step): step is Extract<Step, { kind: 'compaction' }> => step.kind === 'compaction')
   )
-  const segments = $derived(segmentSteps(groupSteps(turn.steps.filter((step) => step.kind !== 'compaction'))))
+  const segments = $derived(segmentSteps(groupSteps(turn.steps.filter((step) => step.kind !== 'compaction')), jobs))
+  const liveJobs = $derived(controller.state?.live.jobs ?? [])
   const asking = $derived(new Set(controller.state?.live.questions.map((questions) => questions.callId)))
   const reviews = $derived(controller.state?.live.reviews ?? [])
   const canReview = $derived(controller.connection === 'live' && !controller.readOnly)
@@ -113,25 +125,13 @@
       sum.output > 0 && rateMs !== null && rateMs > 0 ? Math.round(sum.output / (rateMs / 1000)) : null
     return { ...sum, totalTokens, cacheHitPercent: cacheHitPercent(sum), tokensPerSec }
   })
-  const notices = $derived.by(() => {
-    const rows: { text: string; danger: boolean }[] = []
-    for (const entry of turn.assistants) {
-      const body = entry.body
-      if (body.stopReason === 'error') rows.push({ text: body.error || 'The response failed.', danger: true })
-      else if (body.stopReason === 'length') rows.push({ text: 'Stopped at the output token limit.', danger: false })
-      else if (body.stopReason === 'aborted') rows.push({ text: 'The response was aborted.', danger: false })
-    }
-    const end = turn.end
-    if (end && end.outcome !== 'done') {
-      const fallback = {
-        aborted: 'The turn was aborted.',
-        failed: 'The turn failed.',
-        interrupted: 'The turn was interrupted.'
-      }
-      const text = end.reason || fallback[end.outcome]
-      if (!rows.some((row) => row.text === text)) rows.push({ text, danger: end.outcome === 'failed' })
-    }
-    return rows
+  const endNotice = $derived(turnEndNotice(turn))
+  // Jobs this turn started that outlive a stopped turn.
+  const stillRunning = $derived.by(() => {
+    const ids = liveJobs
+      .filter((job) => isActiveJob(job.status) && jobs.get(job.id)?.turnId === turn.id)
+      .map((job) => job.id)
+    return ids.length ? ` ${formatList(ids)} ${ids.length === 1 ? 'is' : 'are'} still running.` : ''
   })
 
   async function stop() {
@@ -180,7 +180,9 @@
       {folderPath}
       {sessionId}
       {controller}
+      {now}
       {onOpenJob}
+      {onAnswer}
     />
   {:else if step.kind === 'tool'}
     <ToolBlock
@@ -191,30 +193,53 @@
       {folderPath}
       {sessionId}
       {controller}
+      {now}
       {onOpenJob}
+      {onAnswer}
     />
-  {:else if step.kind === 'receipt'}
-    {@const review =
-      step.call.name === 'yield' ? reviews.find((review) => review.callId === step.call.callId) : undefined}
-    <!-- Match `callId` (axo's tool call id), never `id` (the transcript step id). -->
-    <ToolReceipt call={step.call} {review} {folderPath} {sessionId} {onOpenJob} {onOpenPlan} />
-    {#if review && !review.plan}
-      <ReviewCard
-        {review}
+  {:else if step.kind === 'job'}
+    {#if step.target === 'command'}
+      <CommandJobRow {step} {jobs} {liveJobs} {now} view={overrides[step.id] ?? detailView} {onView} {onOpenJob} />
+    {:else}
+      <JobCard
+        {step}
+        turnId={turn.id}
+        {jobs}
+        {liveJobs}
+        {now}
+        view={overrides[step.id] ?? detailView}
+        {overrides}
+        {onView}
         {folderPath}
         {sessionId}
-        disabled={!canReview}
-        onAccept={() => controller.acceptResult(review.callId)}
-        onRevise={(feedback) => controller.reviseResult(review.callId, feedback)}
-        onDismiss={async () => {
-          // dismiss reports its own failure as a notification.
-          await controller.dismiss(review.callId)
-          return null
-        }}
+        {onOpenJob}
       />
     {/if}
-  {:else if step.kind === 'notice'}
-    <NoticeBlock notice={step.notice} {folderPath} {sessionId} {onOpenJob} />
+  {:else if step.kind === 'receipt'}
+    {#if step.call.name === 'yield'}
+      {@const review = reviews.find((review) => review.callId === step.call.callId)}
+      <!-- Match `callId` (axo's tool call id), never `id` (the transcript step id). -->
+      <YieldReceipt call={step.call} {review} {folderPath} {sessionId} {onOpenPlan} />
+      {#if review && !review.plan}
+        <ReviewCard
+          {review}
+          {folderPath}
+          {sessionId}
+          disabled={!canReview}
+          onAccept={() => controller.acceptResult(review.callId)}
+          onRevise={(feedback) => controller.reviseResult(review.callId, feedback)}
+          onDismiss={async () => {
+            // dismiss reports its own failure as a notification.
+            await controller.dismiss(review.callId)
+            return null
+          }}
+        />
+      {/if}
+    {:else}
+      <ReceiptRow call={step.call} {onOpenJob} />
+    {/if}
+  {:else if step.kind === 'notice' && step.notice.kind !== 'jobWake'}
+    <NoticeBlock notice={step.notice} {folderPath} {sessionId} />
   {:else if step.kind === 'branchSummary'}
     <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
   {:else if step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
@@ -240,6 +265,7 @@
         {segment}
         running={turn.running && index === segments.length - 1}
         {duration}
+        {liveJobs}
         {expansion}
         {overrides}
         {asking}
@@ -266,12 +292,22 @@
       {/if}
     </div>
   {/if}
-  {#each notices as notice}
-    <div class={cn('flex items-start gap-2 text-sm', notice.danger ? 'text-danger' : 'text-warning')}>
-      <Icon icon={notice.danger ? CircleXIcon : TriangleAlertIcon} size={14} class="shrink-0" />
-      <span class="whitespace-pre-wrap">{notice.text}</span>
+  {#if endNotice?.kind === 'stopped'}
+    <div class="flex items-center gap-2 text-sm text-muted">
+      <span class="size-2 shrink-0 rounded-xs bg-muted"></span>
+      <span>Stopped.{stillRunning}</span>
     </div>
-  {/each}
+  {:else if endNotice?.kind === 'failed'}
+    <Alert.Root variant="danger">
+      <Alert.Title>Turn Failed</Alert.Title>
+      <Alert.Description class="whitespace-pre-wrap">{endNotice.text}</Alert.Description>
+    </Alert.Root>
+  {:else if endNotice?.kind === 'note'}
+    <div class="flex items-start gap-2 text-sm text-muted">
+      <Icon icon={TriangleAlertIcon} size={14} class="shrink-0" />
+      <span class="whitespace-pre-wrap">{endNotice.text}</span>
+    </div>
+  {/if}
   {#if !turn.running}
     <TurnChangesCard {turn} {folderPath} {sessionId} />
     <div class="flex min-h-5 max-w-full items-center gap-1 self-start text-subtle">

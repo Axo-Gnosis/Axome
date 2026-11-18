@@ -1,3 +1,5 @@
+import { jobKind } from '../jobs'
+
 export type SessionSidebarView = 'jobs' | 'agents' | 'toolbox' | 'context' | 'files' | 'plan'
 
 export class SessionSidebarState {
@@ -12,7 +14,7 @@ export class SessionSidebarState {
   openJob(ref?: string): void {
     if (!ref) {
       this.view = 'jobs'
-    } else if (ref.startsWith('bg_')) {
+    } else if (jobKind(ref) === 'command') {
       this.view = 'jobs'
       this.selectedJob = ref
     } else {

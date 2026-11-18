@@ -374,6 +374,9 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     "/axo/modelRoles",
     "/axo/subagents",
     "/axo/extendedContext",
+    "/axo/webSearch",
+    "/axo/docs/ttlHours",
+    "/axo/docs/retentionDays",
 ];
 
 fn is_global_only_pointer(pointer: &str) -> bool {
@@ -625,6 +628,12 @@ mod tests {
                         "modelRoles": { "work": "provider/model" },
                         "subagents": { "maxDepth": 9 },
                         "extendedContext": true,
+                        "webSearch": { "enabled": false },
+                        "docs": {
+                            "ttlHours": 1,
+                            "retentionDays": 2,
+                            "sources": ["https://example.com/docs"]
+                        },
                         "bash": { "ci": false }
                     },
                     "window": { "tabBeamPosition": "top" },
@@ -656,6 +665,13 @@ mod tests {
         assert!(resolved.settings.axo.model_roles.is_empty());
         assert_eq!(resolved.settings.axo.subagents.max_depth, 1);
         assert!(!resolved.settings.axo.extended_context);
+        assert!(resolved.settings.axo.web_search.enabled);
+        assert_eq!(resolved.settings.axo.docs.ttl_hours, 24);
+        assert_eq!(resolved.settings.axo.docs.retention_days, 30);
+        assert_eq!(
+            resolved.settings.axo.docs.sources,
+            vec!["https://example.com/docs".to_owned()]
+        );
         assert_eq!(resolved.diagnostics.len(), GLOBAL_ONLY_POINTERS.len());
         for pointer in GLOBAL_ONLY_POINTERS {
             assert!(resolved.diagnostics.iter().any(|diagnostic| {

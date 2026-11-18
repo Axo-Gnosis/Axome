@@ -220,6 +220,29 @@ export interface AxoKeywordInfo {
   description: string
 }
 
+export interface AxoSearchProviderStatus {
+  id: string
+  label: string
+  requiresKey: boolean
+  env: string[]
+  configured: boolean
+  source: AxoCredentialSource
+}
+
+export interface AxoDocsSourceInfo {
+  key: string
+  kind: string
+  docPath: string
+  sections: number
+  stale: boolean
+}
+
+export interface AxoWebToolsStatusPayload {
+  searchProviders: AxoSearchProviderStatus[]
+  docsSources: AxoDocsSourceInfo[]
+  cacheBytes: number
+}
+
 export interface ChatModelRole {
   name: string
   model: string | null
@@ -938,6 +961,20 @@ export interface AxoKeywordSettings {
   disabled: string[]
 }
 
+export interface AxoWebSearchSettings {
+  enabled: boolean
+  providers: string[]
+  searxngUrl: string | null
+  groundedModel: string | null
+}
+
+export interface AxoDocsSettings {
+  enabled: boolean
+  ttlHours: number
+  retentionDays: number
+  sources: string[]
+}
+
 export interface AxoSettings {
   defaultModel: string | null
   defaultAgent: string | null
@@ -958,6 +995,8 @@ export interface AxoSettings {
   retry: AxoRetrySettings
   subagents: AxoSubagentSettings
   keywords: AxoKeywordSettings
+  webSearch: AxoWebSearchSettings
+  docs: AxoDocsSettings
 }
 
 export interface EffectiveSettings {

@@ -246,7 +246,9 @@ impl RelayState {
             reviews: snapshot
                 .pending_results
                 .into_iter()
-                .map(|result| chat_review(session.modes(), result.call_id, result.mode, result.result))
+                .map(|result| {
+                    chat_review(session.modes(), result.call_id, result.mode, result.result)
+                })
                 .collect(),
         };
         let submitted = entries

@@ -29,6 +29,8 @@ pub struct AxoSettings {
     pub retry: AxoRetrySettings,
     pub subagents: AxoSubagentSettings,
     pub keywords: AxoKeywordSettings,
+    pub web_search: AxoWebSearchSettings,
+    pub docs: AxoDocsSettings,
 }
 
 impl Default for AxoSettings {
@@ -61,6 +63,8 @@ impl Default for AxoSettings {
             retry: AxoRetrySettings::default(),
             subagents: AxoSubagentSettings::default(),
             keywords: AxoKeywordSettings::default(),
+            web_search: AxoWebSearchSettings::default(),
+            docs: AxoDocsSettings::default(),
         }
     }
 }
@@ -242,6 +246,46 @@ impl Default for AxoKeywordSettings {
         Self {
             enabled: true,
             disabled: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoWebSearchSettings {
+    pub enabled: bool,
+    pub providers: Vec<String>,
+    pub searxng_url: Option<String>,
+    pub grounded_model: Option<String>,
+}
+
+impl Default for AxoWebSearchSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            providers: Vec::new(),
+            searxng_url: None,
+            grounded_model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoDocsSettings {
+    pub enabled: bool,
+    pub ttl_hours: u32,
+    pub retention_days: u32,
+    pub sources: Vec<String>,
+}
+
+impl Default for AxoDocsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ttl_hours: 24,
+            retention_days: 30,
+            sources: Vec::new(),
         }
     }
 }

@@ -9,12 +9,13 @@
   import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
   import { resolveChatKey } from '$lib/features/chat/chatKeymap'
   import { transcriptTurns } from '$lib/features/chat/turns'
-  import { isActiveJob } from '$lib/features/chat/jobs'
+  import { isActiveJob, transcriptJobs } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
   import { UserBlock, AgentBlock, MaintenanceLine } from '$lib/features/chat/elements/transcript'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
+  import { AskPanel } from '$lib/features/chat/elements/ask'
   import { fileReference } from '$lib/features/chat/elements/prompt-input/attachments'
   import { ModelPicker, EffortPicker } from '$lib/features/chat/elements/model-picker'
   import { PersonaPicker } from '$lib/features/chat/elements/persona-picker'
@@ -39,6 +40,7 @@
   const catalog = $derived(models.catalog)
   const available = $derived(catalog?.models ?? [])
   const turns = $derived(chat ? transcriptTurns(chat.entries, chat.streaming, chat.live) : [])
+  const jobIndex = $derived(transcriptJobs(turns))
   const running = $derived(chat?.live.running ?? false)
   const model = $derived(chat?.live.model ?? null)
   const current = $derived(available.find((item) => item.selector === model))
@@ -72,6 +74,7 @@
   let overrides = $state<Record<string, BlockView>>({})
   let conversation = $state<Conversation>()
   let composer = $state<PromptInput>()
+  let askPanel = $state<AskPanel>()
   let modelOpen = $state(false)
   let now = $state(Date.now())
   const sidebar = new SessionSidebarState()
@@ -145,7 +148,7 @@
     const inEditable = !!target?.closest(
       'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"]'
     )
-    const action = resolveChatKey(event, { inComposer, inEditable, running })
+    const action = resolveChatKey(event, { inComposer, inEditable, running, asking: !!chat?.live.questions.length })
     if (!action) return
     event.preventDefault()
     event.stopPropagation()
@@ -178,6 +181,9 @@
         break
       case 'focusComposer':
         composer?.focus(logicalKey(event))
+        break
+      case 'answer':
+        askPanel?.open()
         break
     }
   }
@@ -228,6 +234,7 @@
               <AgentBlock
                 {turn}
                 {turns}
+                jobs={jobIndex}
                 {turnIndex}
                 {controller}
                 folderPath={tab.folderPath}
@@ -239,6 +246,7 @@
                 {onView}
                 onOpenJob={(ref) => sidebar.openJob(ref)}
                 onOpenPlan={() => (sidebar.view = 'plan')}
+                onAnswer={() => askPanel?.open()}
               />
             {/if}
           </div>
@@ -261,6 +269,19 @@
             </Alert.Root>
           {:else}
             <QueuedMessages {controller} {owner} onEdited={() => composer?.focus()} />
+            {#if chat?.live.questions[0]}
+              {@const questions = chat.live.questions[0]}
+              {#key questions.callId}
+                <AskPanel
+                  bind:this={askPanel}
+                  {questions}
+                  queued={chat.live.questions.length - 1}
+                  typing={hasContent(controller.draft)}
+                  onAnswer={(callId, answers) => void controller.answer(callId, answers)}
+                  onDismiss={(callId) => void controller.dismiss(callId)}
+                />
+              {/key}
+            {/if}
             <PromptInput
               bind:this={composer}
               bind:parts={controller.draft}
@@ -274,6 +295,9 @@
               onCancel={running ? () => void stop() : undefined}
               {disabled}
               placeholder={running ? 'Steer axo…' : 'Ask axo…'}
+              hint={chat?.live.questions.length
+                ? { title: 'Steer', text: 'Sending this answers in your own words and closes the question' }
+                : null}
               commands={chat?.commands ?? []}
               {onSubmit}
               onFollowUp={() => {

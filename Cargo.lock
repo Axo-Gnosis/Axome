@@ -474,6 +474,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "globset",
+ "html5ever",
  "ignore",
  "jsonc-parser 0.32.4",
  "jsonschema 0.55.0",
@@ -482,6 +483,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "refinery",
+ "reqwest",
  "rusqlite",
  "schemars 0.8.22",
  "serde",
@@ -492,6 +494,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "trash",
+ "url",
  "uuid",
  "which",
 ]

@@ -12,6 +12,8 @@ function call(args: Record<string, unknown>, output: string | ChatContent[], det
   return {
     id: 'tool',
     entryId: 'entry',
+    timestamp: null,
+    endedAt: null,
     kind: 'tool',
     callId: 'call',
     name: 'read',

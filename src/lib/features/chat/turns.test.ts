@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatEntry, ChatEntryBody, ChatLive } from '$lib/types/backend'
-import { compactionTokensAfter, transcriptTurns, turnDurationMs } from './turns'
+import { compactionTokensAfter, transcriptTurns, turnDurationMs, turnEndNotice } from './turns'
 
 const live: ChatLive = {
   title: null,
@@ -108,7 +108,8 @@ test('only the last turn runs and streaming and live output belong to it', () =>
     id: 'streaming:0',
     kind: 'text',
     text: 'Continuing',
-    entryId: null
+    entryId: null,
+    timestamp: null
   })
   const call = turns[1].steps[2]
   assert.equal(call.kind, 'tool')
@@ -394,4 +395,37 @@ test('incoming mail notice starts its own userless turn even mid-session with un
     turns[2].steps.map((s) => s.kind),
     ['notice']
   )
+})
+
+test('a tool call ends when its result entry was written', () => {
+  const at = (item: ChatEntry, timestamp: string): ChatEntry => ({ ...item, timestamp })
+  const [turn] = transcriptTurns(
+    [at(user, '2026-01-01T00:00:00Z'), at(work, '2026-01-01T00:00:04Z'), at(result, '2026-01-01T00:00:06Z')],
+    null,
+    live
+  )
+  const call = turn.steps[2]
+  assert.equal(call.timestamp, '2026-01-01T00:00:04Z')
+  assert.equal(call.kind === 'tool' && call.endedAt, '2026-01-01T00:00:06Z')
+})
+
+test('turnEndNotice gives one line per ended turn', () => {
+  const aborted = entry('aborted', {
+    ...(message.body as Extract<ChatEntryBody, { kind: 'assistant' }>),
+    stopReason: 'aborted'
+  })
+  const [stopped] = transcriptTurns(
+    [user, aborted, entry('end', { kind: 'runEnd', outcome: 'aborted', reason: null })],
+    null,
+    live
+  )
+  assert.deepEqual(turnEndNotice(stopped), { kind: 'stopped' })
+  const [failed] = transcriptTurns(
+    [user, message, entry('end', { kind: 'runEnd', outcome: 'failed', reason: 'Provider refused' })],
+    null,
+    live
+  )
+  assert.deepEqual(turnEndNotice(failed), { kind: 'failed', text: 'Provider refused' })
+  const [done] = transcriptTurns([user, message, end], null, live)
+  assert.equal(turnEndNotice(done), null)
 })

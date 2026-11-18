@@ -1,12 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import type { Step, ToolStep } from '../../turns'
-import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep } from './groupSteps'
+import type { ChatDeliverable, ChatNotice } from '$lib/types/backend'
+import { transcriptJobs } from '../../jobs'
+import type { Step, ToolStep, Turn } from '../../turns'
+import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep, type TranscriptStep } from './groupSteps'
+
+const none = new Map()
 
 function tool(id: string, name = 'read', entryId: string | null = id, details: unknown = null): ToolStep {
   return {
     id,
     entryId,
+    timestamp: null,
+    endedAt: null,
     kind: 'tool',
     callId: id,
     name,
@@ -18,16 +24,20 @@ function tool(id: string, name = 'read', entryId: string | null = id, details: u
   }
 }
 function thinking(id: string, text: string, redacted = false, entryId: string | null = id): Step {
-  return { id, entryId, kind: 'thinking', text, redacted }
+  return { id, entryId, timestamp: null, kind: 'thinking', text, redacted }
 }
 function thought(id: string, text: string, streaming = false): ThoughtStep {
   return { kind: 'thinking', id, text, streaming }
 }
+function work(id: string, steps: TranscriptStep[]) {
+  return { kind: 'work', id, steps }
+}
+const times = { timestamp: null }
 const boundaries: Step[] = [
-  { id: 'text', entryId: 'text', kind: 'text', text: 'Between calls' },
-  { id: 'notice', entryId: 'notice', kind: 'notice', notice: { kind: 'host', text: 'Notice' } },
-  { id: 'compaction', entryId: 'compaction', kind: 'compaction', summary: 'Summary', tokensBefore: 10 },
-  { id: 'branch', entryId: 'branch', kind: 'branchSummary', summary: 'Branch' }
+  { id: 'text', entryId: 'text', ...times, kind: 'text', text: 'Between calls' },
+  { id: 'notice', entryId: 'notice', ...times, kind: 'notice', notice: { kind: 'host', text: 'Notice' } },
+  { id: 'compaction', entryId: 'compaction', ...times, kind: 'compaction', summary: 'Summary', tokensBefore: 10 },
+  { id: 'branch', entryId: 'branch', ...times, kind: 'branchSummary', summary: 'Branch' }
 ]
 
 test('only adjacent same-name tools and adjacent thinking merge, preserving boundaries and order', () => {
@@ -62,29 +72,29 @@ test('only adjacent same-name tools and adjacent thinking merge, preserving boun
 })
 
 test('visible messages end each work fold, preserving the entire turn sequence', () => {
-  const intro: Step = { id: 'intro', entryId: 'intro', kind: 'text', text: 'Looking into it' }
-  const update: Step = { id: 'update', entryId: 'update', kind: 'text', text: 'Found it' }
-  const answer: Step = { id: 'answer', entryId: null, kind: 'text', text: 'Done' }
+  const intro: Step = { id: 'intro', entryId: 'intro', ...times, kind: 'text', text: 'Looking into it' }
+  const update: Step = { id: 'update', entryId: 'update', ...times, kind: 'text', text: 'Found it' }
+  const answer: Step = { id: 'answer', entryId: null, ...times, kind: 'text', text: 'Done' }
   const steps = groupSteps([intro, thinking('thought', 'Thinking'), tool('a'), tool('b'), update, tool('c'), answer])
-  assert.deepEqual(segmentSteps(steps), [
+  assert.deepEqual(segmentSteps(steps, none), [
     intro,
-    { kind: 'work', id: 'work:thought', steps: steps.slice(1, 3) },
+    work('work:thought', steps.slice(1, 3)),
     update,
-    { kind: 'work', id: 'work:c', steps: steps.slice(4, 5) },
+    work('work:c', steps.slice(4, 5)),
     answer
   ])
-  assert.deepEqual(segmentSteps([]), [])
-  assert.deepEqual(segmentSteps([intro, answer]), [intro, answer])
+  assert.deepEqual(segmentSteps([], none), [])
+  assert.deepEqual(segmentSteps([intro, answer], none), [intro, answer])
 })
 
 test('notices and summaries stay visible at their original positions', () => {
   for (const boundary of boundaries) {
     const first = tool('a')
     const last = tool('b')
-    assert.deepEqual(segmentSteps(groupSteps([first, boundary, last])), [
-      { kind: 'work', id: 'work:a', steps: [first] },
+    assert.deepEqual(segmentSteps(groupSteps([first, boundary, last]), none), [
+      work('work:a', [first]),
       boundary,
-      { kind: 'work', id: 'work:b', steps: [last] }
+      work('work:b', [last])
     ])
   }
 })
@@ -134,14 +144,12 @@ test('merged thinking preserves visible text in order without exposing redacted 
   ])
 })
 
-test('receipt tools never merge into toolGroup and stay outside folded work segments', () => {
+test('receipt tools never merge into toolGroup', () => {
   const spawnA = tool('s1', 'spawn')
   const spawnB = tool('s2', 'spawn')
   const waitCall = tool('w1', 'wait')
   const bgBash = tool('b1', 'bash', 'b1', { job: 'bg_1' })
   const fgBash = tool('b2', 'bash')
-  const readA = tool('r1', 'read')
-  const readB = tool('r2', 'read')
 
   const receipt = (call: ToolStep) => ({ kind: 'receipt', id: call.id, call })
   assert.deepEqual(groupSteps([spawnA, spawnB, waitCall, bgBash, fgBash]), [
@@ -152,13 +160,109 @@ test('receipt tools never merge into toolGroup and stay outside folded work segm
     fgBash
   ])
   assert.deepEqual(groupSteps([fgBash, bgBash]), [fgBash, receipt(bgBash)])
+})
 
-  const steps = groupSteps([readA, spawnA, waitCall, bgBash, readB])
-  assert.deepEqual(segmentSteps(steps), [
-    { kind: 'work', id: 'work:r1', steps: [readA] },
-    receipt(spawnA),
-    receipt(waitCall),
-    receipt(bgBash),
-    { kind: 'work', id: 'work:r2', steps: [readB] }
+function done(id: string, name: string, args: unknown, details: unknown, deliverables: ChatDeliverable[] = []) {
+  const call = tool(id, name, id, details)
+  call.arguments = args
+  call.status = 'done'
+  call.result = {
+    kind: 'toolResult',
+    callId: id,
+    toolName: name,
+    content: [],
+    details,
+    isError: false,
+    deliverables,
+    durationMs: 1
+  }
+  return call
+}
+const text = (id: string): Step => ({ id, entryId: id, ...times, kind: 'text', text: id })
+const notice = (id: string, value: ChatNotice): Step => ({ id, entryId: id, ...times, kind: 'notice', notice: value })
+const child = (jobId: string, note: boolean): ChatDeliverable => ({
+  kind: 'child',
+  jobId,
+  agent: null,
+  team: null,
+  note,
+  partial: false,
+  isError: false,
+  text: note ? 'Note' : 'Result',
+  value: null
+})
+function turnOf(steps: Step[]): Turn {
+  return {
+    id: 'turn:0',
+    user: null,
+    config: { model: null, thinking: null },
+    steps,
+    assistants: [],
+    end: null,
+    running: false,
+    startedAt: null,
+    endedAt: null
+  }
+}
+
+test('job receipts and wakes fold into one job step per work segment', () => {
+  const turn = turnOf([
+    tool('read'),
+    done('spawn', 'spawn', { task: 'Audit', agent: 'scout' }, { job: 'agent_7' }),
+    text('intro'),
+    done('send', 'send', { to: 'agent_7', message: 'Also' }, { to: 'agent_7', kind: 'followUp', sessionId: 's' }),
+    done('wait', 'wait', {}, { reason: 'results', jobs: ['agent_7/1'] }, [child('agent_7', true)]),
+    notice('wake2', { kind: 'jobWake', jobs: ['agent_7/2'], deliverables: [child('agent_7', true)] }),
+    notice('wake3', { kind: 'jobWake', jobs: ['agent_7/3'], deliverables: [child('agent_7', false)] }),
+    done('bash', 'bash', { command: 'make test' }, { job: 'bg_31' }),
+    notice('wake4', {
+      kind: 'jobWake',
+      jobs: ['bg_31'],
+      deliverables: [
+        { kind: 'command', jobId: 'bg_31', command: 'make test', exit: { type: 'exited', code: 1 }, isError: true }
+      ]
+    }),
+    done('kill', 'kill', { id: 'bg_30' }, { id: 'bg_30', stopping: true }),
+    text('answer')
   ])
+  const segments = segmentSteps(groupSteps(turn.steps), transcriptJobs([turn]))
+  assert.deepEqual(
+    segments.map((segment) => segment.kind),
+    ['work', 'text', 'work', 'text']
+  )
+  const summary = (index: number) => {
+    const segment = segments[index]
+    if (segment.kind !== 'work') throw new Error('Expected work segment')
+    return segment.steps.map((step) =>
+      step.kind === 'job'
+        ? [step.id, step.target, step.events.map((event) => event.kind), step.continues]
+        : [step.id, step.kind]
+    )
+  }
+  assert.deepEqual(summary(0), [
+    ['read', 'tool'],
+    ['job:work:read:agent_7', 'child', ['spawn'], true]
+  ])
+  assert.deepEqual(summary(2), [
+    ['job:work:send:agent_7', 'child', ['send', 'wait', 'deliverable', 'deliverable', 'deliverable'], false],
+    ['job:work:send:bg_31', 'command', ['spawn', 'deliverable'], false],
+    ['job:work:send:bg_30', 'command', ['kill'], false]
+  ])
+  const work = segments[2]
+  if (work.kind !== 'work' || work.steps[0].kind !== 'job') throw new Error('Expected job step')
+  assert.deepEqual(work.steps[0].events[0], { kind: 'send', member: null, call: turn.steps[3], send: 'followUp' })
+})
+
+test('a yield receipt ends work, and a note to the parent stays a receipt row inside it', () => {
+  const yieldCall = done('yield', 'yield', {}, null)
+  const steps = groupSteps([tool('a'), yieldCall, tool('b', 'grep')])
+  assert.deepEqual(
+    segmentSteps(steps, none).map((segment) => segment.kind),
+    ['work', 'receipt', 'work']
+  )
+  const note = done('note', 'send', { to: 'parent', message: 'Hi' }, { to: 'parent', kind: 'note', sessionId: 's' })
+  const [segment] = segmentSteps(groupSteps([tool('c'), note]), none)
+  assert.equal(segment.kind, 'work')
+  if (segment.kind !== 'work') throw new Error('Expected work segment')
+  assert.deepEqual(segment.steps[1], { kind: 'receipt', id: 'note', call: note })
 })

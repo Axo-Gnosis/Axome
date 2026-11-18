@@ -718,6 +718,8 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
             agents: super::bundled::agents().to_vec(),
             modes: super::bundled::modes().to_vec(),
             keywords: super::bundled::keywords().to_vec(),
+            tools: direct.service.web.host_tools(&direct.folder),
+            schemes: direct.service.web.host_schemes(),
             ..Default::default()
         })
         .await
@@ -1902,21 +1904,25 @@ async fn turn_snapshots_and_squash_work_across_live_and_closed_sessions() {
 
     let session_id = fixture.create().await;
     let events = fixture.attach(&session_id, "a1").await;
-    fixture.prompt(&session_id, "update files", &events, 1).await;
+    fixture
+        .prompt(&session_id, "update files", &events, 1)
+        .await;
 
     let changes: Vec<Value> = {
         let log = events.lock();
         log.iter()
             .filter_map(|event| match event {
                 ChatEvent::Entry {
-                    entry: ChatEntry {
-                        body: ChatEntryBody::ToolResult {
-                            details: Some(details),
-                            is_error: false,
+                    entry:
+                        ChatEntry {
+                            body:
+                                ChatEntryBody::ToolResult {
+                                    details: Some(details),
+                                    is_error: false,
+                                    ..
+                                },
                             ..
                         },
-                        ..
-                    },
                 } => details.get("change").cloned(),
                 _ => None,
             })
@@ -1951,7 +1957,10 @@ async fn turn_snapshots_and_squash_work_across_live_and_closed_sessions() {
         .await
         .unwrap();
     assert!(!notes_content.binary);
-    assert_eq!(notes_content.old_content.as_deref(), Some("Remember the greeting.\n"));
+    assert_eq!(
+        notes_content.old_content.as_deref(),
+        Some("Remember the greeting.\n")
+    );
     assert_eq!(
         notes_content.new_content.as_deref(),
         Some("Remember the final greeting.\nextra line\n")
@@ -1967,7 +1976,10 @@ async fn turn_snapshots_and_squash_work_across_live_and_closed_sessions() {
         .await
         .unwrap();
     assert_eq!(local_content.old_content, None);
-    assert_eq!(local_content.new_content.as_deref(), Some("# Scratch\nLine 2\n"));
+    assert_eq!(
+        local_content.new_content.as_deref(),
+        Some("# Scratch\nLine 2\n")
+    );
 
     // Closed session squash & snapshot diff read (lock-free Axo path)
     fixture.service.close(&session_id).await.unwrap();
@@ -2095,7 +2107,11 @@ async fn queue_orders_steers_first_withdraws_and_send_now_releases_held_input() 
     wait_until(|| latest_queue().len() == 1).await;
 
     // Interrupt and send now aborts the active run and delivers the held steer immediately.
-    fixture.service.send_now(&fixture.folder, &id).await.unwrap();
+    fixture
+        .service
+        .send_now(&fixture.folder, &id)
+        .await
+        .unwrap();
     wait_settled(&events, 1).await;
     assert!(latest_queue().is_empty());
     let texts: Vec<_> = events
@@ -2138,4 +2154,179 @@ fn diff_content_marks_binary_sides() {
         assert_eq!(content.old_content, None);
         assert_eq!(content.new_content, None);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_docs_indexes_llms_txt_and_doc_scheme_resolves_live_and_closed() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        for _ in 0..4 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, ctype, body) = match path {
+                    "/llms.txt" => (
+                        "200 OK",
+                        "text/plain",
+                        "# Docs\n- [Client](/guide.md): HTTP client guide\n",
+                    ),
+                    "/guide.md" => (
+                        "200 OK",
+                        "text/markdown",
+                        "# Client {#client}\n\nUse `ClientBuilder::timeout` to set timeouts.\n",
+                    ),
+                    _ => ("404 Not Found", "text/plain", "missing"),
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let llms_url = format!("http://{addr}/llms.txt");
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "docs_1",
+            "search_docs",
+            json!({"query": "ClientBuilder timeout", "source": llms_url}),
+        )])),
+        ScriptedTurn::Reply(reply_text("found timeout docs")),
+    ])
+    .await;
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+    fixture
+        .prompt(&id, "look up ClientBuilder timeout", &events, 1)
+        .await;
+
+    let doc_url = entries(&events.lock())
+        .into_iter()
+        .find_map(|entry| match &entry.body {
+            axome_protocol::chat::ChatEntryBody::ToolResult {
+                tool_name, details, ..
+            } if tool_name == "search_docs" => details
+                .as_ref()
+                .and_then(|d| d["hits"][0]["docUrl"].as_str())
+                .map(str::to_owned),
+            _ => None,
+        })
+        .expect("search_docs tool result with docUrl");
+    assert!(doc_url.starts_with("doc://"), "{doc_url}");
+
+    // Live resolve_link works for doc://
+    let live_target = fixture
+        .service
+        .resolve_link(&fixture.folder, &id, doc_url.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        live_target,
+        ChatLinkTarget::File { is_dir: false, .. }
+    ));
+
+    // Closed session resolve_link also resolves doc://
+    fixture.service.detach(&id, "a");
+    wait_until(|| fixture.service.loaded() == 0).await;
+    let closed_target = fixture
+        .service
+        .resolve_link(&fixture.folder, &id, doc_url)
+        .await
+        .unwrap();
+    assert!(matches!(
+        closed_target,
+        ChatLinkTarget::File { is_dir: false, .. }
+    ));
+
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn web_search_tool_uses_configured_searxng_backend() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+            let body = json!({
+                "results": [{
+                    "title": "Axome Docs",
+                    "url": "https://example.com/axome",
+                    "content": "SearXNG mock snippet"
+                }]
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    let fixture = Fixture::new(vec![
+        ScriptedTurn::Reply(reply_tool_calls(&[(
+            "ws_1",
+            "web_search",
+            json!({"query": "axome docs"}),
+        )])),
+        ScriptedTurn::Reply(reply_text("done")),
+    ])
+    .await;
+    std::fs::create_dir_all(&fixture.service.dirs.config).unwrap();
+    std::fs::write(
+        fixture.service.dirs.settings_path(),
+        json!({
+            "axo": {
+                "webSearch": {
+                    "enabled": true,
+                    "providers": ["searxng"],
+                    "searxngUrl": format!("http://{addr}")
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "a").await;
+    fixture.prompt(&id, "search axome docs", &events, 1).await;
+
+    let provider = entries(&events.lock())
+        .into_iter()
+        .find_map(|entry| match &entry.body {
+            axome_protocol::chat::ChatEntryBody::ToolResult {
+                tool_name,
+                is_error,
+                details,
+                ..
+            } if tool_name == "web_search" => {
+                assert!(!is_error);
+                details
+                    .as_ref()
+                    .and_then(|d| d["provider"].as_str())
+                    .map(str::to_owned)
+            }
+            _ => None,
+        })
+        .expect("web_search tool result");
+    assert_eq!(provider, "searxng");
+
+    server.abort();
 }

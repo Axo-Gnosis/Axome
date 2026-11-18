@@ -13,6 +13,7 @@
   import type { AxoLoginStarted, AxoProvider, AxoProvidersPayload } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { onMount, onDestroy } from 'svelte'
+  import ApiKeyDialog from './ApiKeyDialog.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
 
   const host = getSettingsHost()
@@ -314,42 +315,18 @@
   {/if}
 </div>
 
-<Dialog.Root
+<ApiKeyDialog
   open={keyProvider !== null}
-  onOpenChange={(open) => {
-    if (!open) {
-      keyProvider = null
-      key = ''
-    }
+  title={`Set Key · ${keyProvider}`}
+  bind:key
+  {busy}
+  {error}
+  onSave={() => void run(saveKey)}
+  onClose={() => {
+    keyProvider = null
+    key = ''
   }}
->
-  <Dialog.Content>
-    <Dialog.Header><Dialog.Title>Set Key · {keyProvider}</Dialog.Title></Dialog.Header>
-    <form
-      class="flex flex-col gap-3"
-      onsubmit={(event) => {
-        event.preventDefault()
-        void run(saveKey)
-      }}
-    >
-      <label class="flex flex-col gap-2 text-sm text-muted"
-        >API key<Input type="password" bind:value={key} autocomplete="off" disabled={busy} /></label
-      >
-      {#if error}<p role="alert" class="text-sm text-danger">{error}</p>{/if}
-      <Dialog.Footer>
-        <Button
-          type="button"
-          disabled={busy}
-          onclick={() => {
-            keyProvider = null
-            key = ''
-          }}>Cancel</Button
-        >
-        <Button type="submit" variant="accent" disabled={busy || !key.trim()}>Save Key</Button>
-      </Dialog.Footer>
-    </form>
-  </Dialog.Content>
-</Dialog.Root>
+/>
 
 <Dialog.Root
   open={loginOpen}

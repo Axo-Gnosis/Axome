@@ -4,7 +4,7 @@ import { resolveChatKey, type ChatKeyAction } from './chatKeymap'
 
 test('surface keys respect composer, editable and component ownership', () => {
   type Context = Parameters<typeof resolveChatKey>[1]
-  const composer: Context = { inComposer: true, inEditable: true, running: true }
+  const composer: Context = { inComposer: true, inEditable: true, running: true, asking: false }
   const transcript: Context = { ...composer, inComposer: false, inEditable: false }
   const cases: {
     name: string
@@ -40,6 +40,14 @@ test('surface keys respect composer, editable and component ownership', () => {
       ctx: transcript,
       action: 'openModel'
     },
+    {
+      name: 'Alt+A opens the ask panel while asking',
+      key: 'a',
+      modifiers: { altKey: true },
+      ctx: { asking: true },
+      action: 'answer'
+    },
+    { name: 'Alt+A does nothing without a question', key: 'a', modifiers: { altKey: true }, action: null },
     { name: 'Alt+O cycles work details in composer', key: 'o', modifiers: { altKey: true }, action: 'cycleExpansion' },
     {
       name: 'Alt+O cycles work details in transcript',

@@ -9,6 +9,7 @@
   import * as Message from '$lib/features/chat/elements/message'
   import type { BlockView } from '$lib/features/chat/view'
   import type { ThoughtStep } from './groupSteps'
+  import RailItem from './RailItem.svelte'
 
   let {
     thought,
@@ -47,41 +48,42 @@
 </script>
 
 <!-- Collapsed line and expanded markdown share line height and padding so expanding never shifts a line that fit. -->
-<div
-  data-slot="thinking-block"
-  data-view-id={thought.id}
-  data-collapsed={view === 'collapsed'}
-  class="min-w-0 font-mono text-xs leading-normal text-muted italic"
->
-  {#if view === 'collapsed'}
-    <button
-      type="button"
-      disabled={!expandable}
-      aria-expanded="false"
-      aria-label={expandable ? 'Show thinking' : undefined}
-      title={expandable ? 'Show thinking' : undefined}
-      class="block w-full truncate py-0.5 text-left focus-visible:shadow-focus-ring focus-visible:outline-none enabled:cursor-pointer enabled:hover:text-fg"
-      {@attach measure}
-      onclick={() => onView(thought.id, 'preview')}>{line}</button
-    >
-  {:else}
-    <button
-      type="button"
-      aria-expanded="true"
-      class="sr-only focus-visible:not-sr-only focus-visible:shadow-focus-ring focus-visible:outline-none"
-      onclick={() => onView(thought.id, 'collapsed')}>Hide thinking</button
-    >
-    <!-- The click target folds for the mouse; the button before it is the keyboard fold. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-    <div class="cursor-pointer py-0.5" onclick={fold}>
-      <!-- Markdown's unlayered defaults otherwise win over these utilities. -->
-      <Message.Response
-        {text}
-        streaming={thought.streaming}
-        {folderPath}
-        {sessionId}
-        class="gap-1.5 [&_.markdown-body]:font-mono! [&_.markdown-body]:text-xs! [&_.markdown-body]:leading-normal! [&_.markdown-body]:text-muted! [&_.markdown-body]:italic! [&_.markdown-body>:first-child]:mt-0! [&_.markdown-body>:last-child]:mb-0!"
-      />
-    </div>
-  {/if}
-</div>
+<RailItem viewId={thought.id}>
+  <div
+    data-slot="thinking-block"
+    data-collapsed={view === 'collapsed'}
+    class="min-w-0 font-mono text-xs leading-normal text-muted italic"
+  >
+    {#if view === 'collapsed'}
+      <button
+        type="button"
+        disabled={!expandable}
+        aria-expanded="false"
+        aria-label={expandable ? 'Show thinking' : undefined}
+        title={expandable ? 'Show thinking' : undefined}
+        class="block w-full truncate py-0.5 text-left focus-visible:shadow-focus-ring focus-visible:outline-none enabled:cursor-pointer enabled:hover:text-fg"
+        {@attach measure}
+        onclick={() => onView(thought.id, 'preview')}>{line}</button
+      >
+    {:else}
+      <button
+        type="button"
+        aria-expanded="true"
+        class="sr-only focus-visible:not-sr-only focus-visible:shadow-focus-ring focus-visible:outline-none"
+        onclick={() => onView(thought.id, 'collapsed')}>Hide thinking</button
+      >
+      <!-- The click target folds for the mouse; the button before it is the keyboard fold. -->
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="cursor-pointer py-0.5" onclick={fold}>
+        <!-- Markdown's unlayered defaults otherwise win over these utilities. -->
+        <Message.Response
+          {text}
+          streaming={thought.streaming}
+          {folderPath}
+          {sessionId}
+          class="gap-1.5 [&_.markdown-body]:font-mono! [&_.markdown-body]:text-xs! [&_.markdown-body]:leading-normal! [&_.markdown-body]:text-muted! [&_.markdown-body]:italic! [&_.markdown-body>:first-child]:mt-0! [&_.markdown-body>:last-child]:mb-0!"
+        />
+      </div>
+    {/if}
+  </div>
+</RailItem>

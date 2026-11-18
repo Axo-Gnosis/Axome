@@ -147,7 +147,7 @@ All sizes ship as Tailwind utilities (`text-2xs` … `text-5xl`). Use the named 
 | `text-base` | 13.1px · 0.82rem | 1.4         | 400            | **Default UI body.** Buttons, inputs, labels.     |
 | `text-md`   | 13.6px · 0.85rem | 1.4         | 600            | Card titles, provider labels, emphasized rows.    |
 | `text-lg`   | 14.4px · 0.9rem  | 1.4         | 600            | Section headers inside dialogs.                   |
-| `text-xl`   | 16px · 1rem      | 1.35        | 700            | Dialog titles, view headers.                      |
+| `text-xl`   | 16px · 1rem      | 1.35        | 700            | Settings section headings, view headers.          |
 | `text-2xl`  | 17.6px · 1.1rem  | 1.3         | 700            | Card titles in hero contexts.                     |
 | `text-3xl`  | 20px · 1.25rem   | 1.2         | 700            | Empty-state headings, section hero.               |
 | `text-4xl`  | 24px · 1.5rem    | 1.15        | 500            | Settings H2, page titles.                         |
@@ -206,15 +206,18 @@ Never. No unicode-character-as-icon either. If you need a glyph, use Hugeicons o
 
 Axome is flat by default. Rounding exists only where a surface visibly _floats_ or a chip explicitly wants to read as a pill.
 
+Values are Tailwind v4's: `rounded-sm` and bare `rounded` are both 4px (v3's 2px `rounded-sm` is now `rounded-xs`, unused).
+
 | Utility        | Size   | Use                                                                                                             |
 | -------------- | ------ | --------------------------------------------------------------------------------------------------------------- |
 | `rounded-none` | 0      | Title bar chrome, tabs, activity bar icons, window controls, panel headers. The default for chrome.             |
-| `rounded-sm`   | 2px    | Tiny chips, kbd shadows at low resolution.                                                                      |
-| `rounded`      | 4px    | Inputs, small buttons. The lightest rounding that reads as "this element is a control."                       |
-| `rounded-md`   | 6px    | Kbd chips, code blocks, secondary buttons.                                                                      |
-| `rounded-lg`   | 8px    | Default buttons, primary CTAs, dialog content, dropdown content, context menu content. Floating surfaces.       |
-| `rounded-xl`   | 12px   | Command palette, markdown-rendered `kbd`. The largest used anywhere in chrome.                                  |
-| `rounded-full` | 9999px | Status dots, avatars.                                                                                           |
+| `rounded`      | 4px    | Inputs, select triggers, the segmented `TabsList`. The lightest rounding that reads as "this element is a control." |
+| `rounded-sm`   | 4px    | Checkbox, menu items, `Chip`, `ProgressBar`.                                                                    |
+| `rounded-md`   | 6px    | Kbd chips, `ToggleChip`, code blocks.                                                                           |
+| `rounded-lg`   | 8px    | Buttons, icon buttons, dropdown and context menu content, tooltips, card alerts, palette items. Floating surfaces. |
+| `rounded-xl`   | 12px   | Command palette, `WindowDialog`, markdown-rendered `kbd`.                                                       |
+| `rounded-2xl`  | 16px   | `Dialog.Content` only. The largest radius in the app.                                                           |
+| `rounded-full` | 9999px | Status dots, badges, switch, slider, avatars.                                                                   |
 
 **Rule.** Chrome (title bar, sidebars, tabs) is square. Only things that _detach from_ the chrome — buttons, dialogs, menus, tooltips, the command palette — carry rounding. Status dots are circles because they are dots.
 
@@ -505,7 +508,7 @@ Close affordance: hidden until hover, `text-muted hover:bg-edge hover:text-brigh
 
 ### 11.9 Dialog
 
-`Dialog.Content` = `bg-raised border border-edge rounded-2xl shadow-popover p-5`. Inside it, cards step to `bg-overlay`; inputs step to `bg-surface`. Dialog title uses `text-xl font-semibold text-bright`.
+`Dialog.Content` = `w-full max-w-[480px] bg-raised border border-edge rounded-2xl shadow-popover p-5`. Inside it, cards step to `bg-overlay`; inputs step to `bg-surface`. `Dialog.Title` is `text-base font-semibold text-bright`; `Dialog.Description` is `leading-relaxed whitespace-pre-line text-muted`; `Dialog.Header` is `mb-2.5`; `Dialog.Footer` is `mt-5 flex justify-end gap-2.5`.
 
 Overlay: `fixed inset-0 bg-ground/70 backdrop-blur-sm`. The one place blur is used.
 

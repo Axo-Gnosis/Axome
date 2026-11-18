@@ -56,3 +56,32 @@ pub struct AxoKeywordInfo {
     pub name: String,
     pub description: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AxoSearchProviderStatus {
+    pub id: String,
+    pub label: String,
+    pub requires_key: bool,
+    pub env: Vec<String>,
+    pub configured: bool,
+    pub source: AxoCredentialSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AxoDocsSourceInfo {
+    pub key: String,
+    pub kind: String,
+    pub doc_path: String,
+    pub sections: u32,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AxoWebToolsStatusPayload {
+    pub search_providers: Vec<AxoSearchProviderStatus>,
+    pub docs_sources: Vec<AxoDocsSourceInfo>,
+    pub cache_bytes: u64,
+}

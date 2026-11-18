@@ -9,6 +9,7 @@ mod plan;
 mod providers;
 #[cfg(test)]
 mod tests;
+mod web;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -55,7 +56,11 @@ enum SessionTarget {
 
 /// Text contents for a snapshot diff; binary when either side has a NUL byte or is not UTF-8.
 fn diff_content(before: Option<Vec<u8>>, after: Vec<u8>) -> DiffFileContent {
-    let text = |bytes: Vec<u8>| (!bytes.contains(&0)).then(|| String::from_utf8(bytes).ok()).flatten();
+    let text = |bytes: Vec<u8>| {
+        (!bytes.contains(&0))
+            .then(|| String::from_utf8(bytes).ok())
+            .flatten()
+    };
     match (before.map(text), text(after)) {
         (Some(None), _) | (_, None) => DiffFileContent {
             old_content: None,
@@ -94,6 +99,7 @@ pub(crate) struct AxoService {
     events: EventSink<HostEvent>,
     engine: tokio::sync::Mutex<EngineSlot>,
     credentials: Arc<FileCredentialStore>,
+    web: Arc<web::WebTools>,
     login: tokio::sync::Mutex<Option<login::Login>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     // Attachments to closed child sessions, by session id: (attach id, sink).
@@ -210,24 +216,40 @@ impl AxoService {
         supervision: Supervision,
         events: EventSink<HostEvent>,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|this| Self {
-            this: this.clone(),
-            db,
-            runtime: OnceLock::new(),
-            credentials: Arc::new(FileCredentialStore::new(
+        Arc::new_cyclic(|this: &Weak<Self>| {
+            let credentials = Arc::new(FileCredentialStore::new(
                 dirs.data.join("axo").join("auth.json"),
-            )),
-            dirs,
-            supervision,
-            events,
-            engine: tokio::sync::Mutex::new(EngineSlot::default()),
-            login: tokio::sync::Mutex::new(None),
-            sessions: Mutex::new(HashMap::new()),
-            readonly_subscribers: Mutex::new(HashMap::new()),
-            retiring: Mutex::new(HashMap::new()),
-            opening: tokio::sync::Mutex::new(()),
-            index: OnceLock::new(),
-            closed: AtomicBool::new(false),
+            ));
+            let weak_self = this.clone();
+            let web = web::WebTools::new(
+                dirs.clone(),
+                Arc::clone(&credentials),
+                Arc::new(move |session_id: &str| {
+                    let svc = weak_self.upgrade()?;
+                    let sessions = svc.sessions.lock();
+                    sessions
+                        .get(session_id)
+                        .map(|live| live.session.model().provider)
+                }),
+            );
+            Self {
+                this: this.clone(),
+                db,
+                runtime: OnceLock::new(),
+                credentials,
+                web,
+                dirs,
+                supervision,
+                events,
+                engine: tokio::sync::Mutex::new(EngineSlot::default()),
+                login: tokio::sync::Mutex::new(None),
+                sessions: Mutex::new(HashMap::new()),
+                readonly_subscribers: Mutex::new(HashMap::new()),
+                retiring: Mutex::new(HashMap::new()),
+                opening: tokio::sync::Mutex::new(()),
+                index: OnceLock::new(),
+                closed: AtomicBool::new(false),
+            }
         })
     }
 
@@ -343,6 +365,8 @@ impl AxoService {
                 folder.to_owned(),
             ))),
             sections: Vec::new(),
+            tools: self.web.host_tools(folder),
+            schemes: self.web.host_schemes(),
             recovery: RecoveryPolicy::Resume,
             ..Default::default()
         }
@@ -692,15 +716,17 @@ impl AxoService {
 
     pub(crate) async fn keywords(&self) -> Result<Vec<AxoKeywordInfo>, ApiError> {
         let engine = self.engine().await?;
-        Ok(bundled::catalog(&engine.axo, &self.dirs.config, ProjectAccess::Ignore)
-            .map_err(axo_error)?
-            .keywords
-            .iter()
-            .map(|keyword| AxoKeywordInfo {
-                name: keyword.name.clone(),
-                description: keyword.description.clone(),
-            })
-            .collect())
+        Ok(
+            bundled::catalog(&engine.axo, &self.dirs.config, ProjectAccess::Ignore)
+                .map_err(axo_error)?
+                .keywords
+                .iter()
+                .map(|keyword| AxoKeywordInfo {
+                    name: keyword.name.clone(),
+                    description: keyword.description.clone(),
+                })
+                .collect(),
+        )
     }
 
     pub(crate) async fn catalog(&self, folder: &Path) -> Result<ChatModelCatalog, ApiError> {
@@ -1245,11 +1271,14 @@ impl AxoService {
     async fn schemes(&self, folder: &Path, id: &str) -> Result<SessionSchemes, ApiError> {
         match self.target(folder, id).await? {
             SessionTarget::Live(live) => Ok(SessionSchemes::Live(live)),
-            SessionTarget::Closed(axo, path) => Ok(SessionSchemes::Closed(
-                axo.schemes(&path, Some(ProjectAccess::Trust), &[])
-                    .await
-                    .map_err(axo_error)?,
-            )),
+            SessionTarget::Closed(axo, path) => {
+                let host_schemes = self.web.host_schemes();
+                Ok(SessionSchemes::Closed(
+                    axo.schemes(&path, Some(ProjectAccess::Trust), &host_schemes)
+                        .await
+                        .map_err(axo_error)?,
+                ))
+            }
         }
     }
 

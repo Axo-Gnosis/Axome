@@ -66,11 +66,7 @@ impl Host {
             .block_on(self.axo.withdraw(&folder, &session_id, submission_id))?
     }
 
-    pub fn chat_send_now(
-        &self,
-        folder_path: String,
-        session_id: String,
-    ) -> Result<(), ApiError> {
+    pub fn chat_send_now(&self, folder_path: String, session_id: String) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
         self.axo.block_on(self.axo.send_now(&folder, &session_id))?
     }
@@ -176,8 +172,10 @@ impl Host {
         feedback: String,
     ) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
-        self.axo
-            .block_on(self.axo.revise_result(&folder, &session_id, call_id, feedback))?
+        self.axo.block_on(
+            self.axo
+                .revise_result(&folder, &session_id, call_id, feedback),
+        )?
     }
 
     pub fn chat_accept_plan(
@@ -334,12 +332,10 @@ impl Host {
         after_sha: String,
     ) -> Result<axome_protocol::git::DiffFileContent, ApiError> {
         let folder = resolve_folder(&folder_path)?;
-        self.axo.block_on(self.axo.turn_diff_file(
-            &folder,
-            &session_id,
-            before_sha,
-            after_sha,
-        ))?
+        self.axo.block_on(
+            self.axo
+                .turn_diff_file(&folder, &session_id, before_sha, after_sha),
+        )?
     }
 
     pub fn chat_live_summaries(

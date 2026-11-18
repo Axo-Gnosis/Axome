@@ -12,7 +12,7 @@
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
   import { AgentBlock, UserBlock } from '$lib/features/chat/elements/transcript'
-  import { isActiveJob, jobTone, pickJob } from '$lib/features/chat/jobs'
+  import { isActiveJob, jobTone, pickJob, transcriptJobs } from '$lib/features/chat/jobs'
   import { getChatModels } from '$lib/features/chat/models.svelte'
   import { transcriptTurns } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
@@ -98,6 +98,7 @@
   const childTurns = $derived(
     childState ? transcriptTurns(childState.entries, childState.streaming, childState.live) : []
   )
+  const jobIndex = $derived(transcriptJobs(childTurns))
 
   // Consume Esc here even while idle, so a child's composer never stops the root chat.
   function stopChild(): void {
@@ -194,6 +195,7 @@
                 <AgentBlock
                   {turn}
                   turns={childTurns}
+                  jobs={jobIndex}
                   {turnIndex}
                   controller={childController}
                   {folderPath}

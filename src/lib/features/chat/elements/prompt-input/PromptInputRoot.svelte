@@ -69,7 +69,8 @@
     keywords = [],
     keywordMatches,
     start,
-    end
+    end,
+    hint = null
   }: {
     parts?: ChatPart[]
     disabled?: boolean
@@ -89,6 +90,8 @@
     keywordMatches?: (texts: string[]) => Promise<ChatKeywordMatch[][]>
     start?: Snippet
     end?: Snippet
+    /** Shown above the input as the last fallback while the draft has content. */
+    hint?: { title: string; text: string } | null
   } = $props()
   const id = $props.id()
   let host: HTMLDivElement
@@ -234,6 +237,7 @@
     const invoked = skill ?? mode
     if (invoked)
       return { title: '/' + invoked.name, note: invoked.argumentHint ?? undefined, text: invoked.description }
+    if (hint && hasContent(parts)) return { title: hint.title, note: undefined, text: hint.text }
     return null
   })
   function getParts(): ChatPart[] {

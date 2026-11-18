@@ -1,5 +1,9 @@
 import type { ChatRetry, ChatStats, ChatUsage } from '$lib/types/backend'
 
+export function firstLine(text: unknown): string {
+  return typeof text === 'string' ? text.trim().split('\n', 1)[0] : ''
+}
+
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n)
   if (n < 1e6) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
@@ -24,6 +28,13 @@ export function formatRetry(retry: ChatRetry): string {
 
 export function formatCount(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+const listFormat = new Intl.ListFormat('en', { type: 'conjunction' })
+
+/** "a", "a and b", "a, b, and c". */
+export function formatList(items: string[]): string {
+  return listFormat.format(items)
 }
 
 // "anthropic/claude-opus-5-5" → "claude-opus-5-5"; a trailing build date goes too.

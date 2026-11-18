@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cn } from '$lib/utils/cn'
   import { Button } from '$lib/components/ui/button'
   import { formatCount } from '$lib/features/chat/format'
   import type { ToolStep } from '$lib/features/chat/turns'
@@ -12,12 +13,14 @@
   let {
     call,
     view,
+    failed = false,
     onExpand,
     folderPath,
     sessionId
   }: {
     call: ToolStep
     view: BlockView
+    failed?: boolean
     onExpand: () => void
     folderPath: string
     sessionId: string | null
@@ -34,7 +37,7 @@
       <MoreButton label={formatCount(output.hidden, 'earlier line')} {onExpand} />
     {/if}
     {#if hasContent}
-      <div class="min-w-0 font-mono text-xs text-fg">
+      <div class={cn('min-w-0 font-mono text-xs', failed ? 'text-danger-bright' : 'text-fg')}>
         {#each output.parts as part}
           {#if part.type === 'text' && part.text}
             <pre class="m-0 font-mono text-xs wrap-anywhere whitespace-pre-wrap">{part.text}</pre>

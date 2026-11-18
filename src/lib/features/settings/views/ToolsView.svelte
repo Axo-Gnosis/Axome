@@ -1,9 +1,18 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { backend } from '$lib/api/backend'
+  import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
+  import ApiKeyDialog from './ApiKeyDialog.svelte'
   import { Input, Textarea } from '$lib/components/ui/input'
   import { Select } from '$lib/components/ui/select'
+  import { StatusDot } from '$lib/components/ui/status-dot'
   import { SelectorPicker } from '$lib/features/chat/elements/model-picker'
+  import { formatCount } from '$lib/features/chat/format'
+  import { notify } from '$lib/features/notifications/state.svelte'
   import { axoModels, settingsRoles } from '$lib/features/settings/state/axo.svelte'
+  import type { AxoSearchProviderStatus, AxoWebToolsStatusPayload } from '$lib/types/backend'
+  import { getErrorMessage } from '$lib/utils/client-error'
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
   import AxoNumberRow from './AxoNumberRow.svelte'
@@ -18,6 +27,79 @@
   let roles = $derived(settingsRoles(settings?.modelRoles))
   let agentName = $state('')
   let agentSelector = $state('')
+
+  let webStatus = $state<AxoWebToolsStatusPayload | null>(null)
+  let webBusy = $state(false)
+  let keyTarget = $state<AxoSearchProviderStatus | null>(null)
+  let keyValue = $state('')
+
+  async function refreshWebStatus() {
+    try {
+      webStatus = await backend.axo.webToolsStatus(fields.host)
+    } catch (error) {
+      notify.error('Load web tools status failed', getErrorMessage(error))
+    }
+  }
+
+  onMount(() => {
+    void refreshWebStatus()
+  })
+
+  async function runWebAction(action: () => Promise<void>) {
+    webBusy = true
+    try {
+      await action()
+      await refreshWebStatus()
+    } catch (error) {
+      notify.error('Web tools action failed', getErrorMessage(error))
+    } finally {
+      webBusy = false
+    }
+  }
+
+  function saveSearchKey() {
+    if (!keyTarget || !keyValue.trim()) return
+    const id = keyTarget.id
+    const key = keyValue.trim()
+    void runWebAction(async () => {
+      await backend.axo.setSearchKey(id, key, fields.host)
+      keyTarget = null
+      keyValue = ''
+    })
+  }
+
+  function removeSearchKey(id: string) {
+    void runWebAction(() => backend.axo.removeSearchKey(id, fields.host))
+  }
+
+  function refreshDocs(source: string | null) {
+    void runWebAction(() => backend.axo.refreshDocs(source, fields.host))
+  }
+
+  function removeDocs(source: string | null) {
+    void runWebAction(() => backend.axo.removeDocs(source, fields.host))
+  }
+
+  function searchSourceLabel(provider: AxoSearchProviderStatus): string {
+    switch (provider.source.kind) {
+      case 'config':
+        return 'Configured'
+      case 'apiKey':
+        return 'Stored key'
+      case 'oauth':
+        return 'Logged in'
+      case 'env':
+        return `Env: ${provider.source.name}`
+      case 'none':
+        return provider.requiresKey ? 'Not configured' : 'Keyless default'
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
 
   function addModel() {
     const name = agentName.trim()
@@ -170,3 +252,167 @@
     </div>
   </SettingRow>
 </SettingsSection>
+
+<SettingsSection title="Web Search">
+  <AxoToggleRow
+    {fields}
+    path={['webSearch', 'enabled']}
+    label="Enable web search and fetch"
+    checked={settings?.webSearch.enabled ?? true}
+  />
+  <SettingRow
+    label="Provider chain"
+    description="Comma-separated order (searxng, tavily, exa, brave, perplexity, parallel, openai-codex, anthropic, openai, google). Leave blank for default."
+    stacked
+  >
+    <Input
+      value={String(fields.value(['webSearch', 'providers'], settings?.webSearch.providers.join(', ') ?? ''))}
+      placeholder="Default (keyed engines → parallel → grounded LLM)"
+      disabled={!settings}
+      oninput={(event) =>
+        fields.save(
+          ['webSearch', 'providers'],
+          event.currentTarget.value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean),
+          event.currentTarget.value
+        )}
+    />
+  </SettingRow>
+  <AxoTextRow
+    {fields}
+    path={['webSearch', 'searxngUrl']}
+    label="SearXNG URL"
+    value={settings?.webSearch.searxngUrl ?? null}
+    placeholder="https://search.example.com"
+  />
+  <SettingRow label="Grounded fallback model" stacked as="div">
+    {@render selectorPicker(
+      ['webSearch', 'groundedModel'],
+      settings?.webSearch.groundedModel ?? '',
+      'Grounded search model',
+      'Auto (session provider first)'
+    )}
+  </SettingRow>
+  <div class="divide-y divide-edge">
+    {#each webStatus?.searchProviders ?? [] as provider (provider.id)}
+      <SettingRow label={provider.label} class="py-3 first:pt-0 last:pb-0">
+        {#snippet description()}
+          <span class="inline-flex items-center gap-1.5">
+            <StatusDot tone={provider.configured ? 'success' : 'idle'} />
+            <span>{searchSourceLabel(provider)}</span>
+          </span>
+        {/snippet}
+        <div class="flex items-center gap-2">
+          {#if provider.id !== 'searxng'}
+            {#if provider.source.kind === 'apiKey'}
+              <Button size="sm" variant="ghost" disabled={webBusy} onclick={() => removeSearchKey(provider.id)}
+                >Remove</Button
+              >
+            {/if}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={webBusy}
+              onclick={() => {
+                keyTarget = provider
+                keyValue = ''
+              }}>{provider.source.kind === 'apiKey' ? 'Update key' : 'Set key'}</Button
+            >
+          {:else}
+            <Badge variant={provider.configured ? 'success' : 'default'}
+              >{provider.configured ? 'Active' : 'Unset'}</Badge
+            >
+          {/if}
+        </div>
+      </SettingRow>
+    {/each}
+  </div>
+</SettingsSection>
+
+<SettingsSection title="Docs Cache">
+  <AxoToggleRow
+    {fields}
+    path={['docs', 'enabled']}
+    label="Enable search_docs"
+    checked={settings?.docs.enabled ?? true}
+  />
+  <AxoNumberRow
+    {fields}
+    path={['docs', 'ttlHours']}
+    label="URL refresh TTL (hours)"
+    value={settings?.docs.ttlHours ?? null}
+  />
+  <AxoNumberRow
+    {fields}
+    path={['docs', 'retentionDays']}
+    label="Retention (days)"
+    value={settings?.docs.retentionDays ?? null}
+  />
+  <SettingRow label="Pre-configured sources (one URL, llms.txt, or path per line)" stacked>
+    <Textarea
+      value={String(fields.value(['docs', 'sources'], settings?.docs.sources.join('\n') ?? ''))}
+      rows={3}
+      disabled={!settings}
+      oninput={(event) =>
+        fields.save(
+          ['docs', 'sources'],
+          event.currentTarget.value
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean),
+          event.currentTarget.value
+        )}
+    />
+  </SettingRow>
+  <SettingRow
+    label="Cached index"
+    description={webStatus
+      ? `${formatCount(webStatus.docsSources.length, 'source')} · ${formatBytes(webStatus.cacheBytes)}`
+      : 'Loading…'}
+  >
+    <div class="flex items-center gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={webBusy || !webStatus?.docsSources.length}
+        onclick={() => refreshDocs(null)}>Refresh all</Button
+      >
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={webBusy || !webStatus?.docsSources.length}
+        onclick={() => removeDocs(null)}>Clear cache</Button
+      >
+    </div>
+  </SettingRow>
+  {#if webStatus && webStatus.docsSources.length > 0}
+    <div class="divide-y divide-edge">
+      {#each webStatus.docsSources as src (src.key)}
+        <SettingRow label={src.key} class="py-2.5 first:pt-0 last:pb-0">
+          {#snippet description()}
+            <span>{formatCount(src.sections, 'section')} · {src.kind}{src.stale ? ' · stale' : ''}</span>
+          {/snippet}
+          <div class="flex items-center gap-2">
+            <Button size="sm" variant="ghost" disabled={webBusy} onclick={() => refreshDocs(src.key)}>Refresh</Button>
+            <Button size="sm" variant="ghost" disabled={webBusy} onclick={() => removeDocs(src.key)}>Remove</Button>
+          </div>
+        </SettingRow>
+      {/each}
+    </div>
+  {/if}
+</SettingsSection>
+
+<ApiKeyDialog
+  open={keyTarget !== null}
+  title={`Set ${keyTarget?.label ?? ''} API key`}
+  description={`Saved to auth.json alongside model credentials. Environment fallback: ${keyTarget?.env.join(', ') || 'none'}.`}
+  bind:key={keyValue}
+  busy={webBusy}
+  onSave={saveSearchKey}
+  onClose={() => {
+    keyTarget = null
+    keyValue = ''
+  }}
+/>

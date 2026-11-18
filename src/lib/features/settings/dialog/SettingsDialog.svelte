@@ -145,7 +145,7 @@
           view: ToolsView,
           host: true,
           label: 'Tools',
-          description: `Bash and subagents. ${AXO_NOTE}`,
+          description: `Bash, subagents, web search and docs cache. ${AXO_NOTE}`,
           icon: icon(Wrench01Icon)
         },
         {

@@ -653,6 +653,16 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             AxoKeywords => axo_keywords() -> Vec<$crate::axo::AxoKeywordInfo>;
             #[route(server)]
+            AxoWebToolsStatus => axo_web_tools_status() -> $crate::axo::AxoWebToolsStatusPayload;
+            #[route(server)]
+            AxoSearchKeySet => axo_search_key_set(provider: String, key: String) -> ();
+            #[route(server)]
+            AxoSearchKeyRemove => axo_search_key_remove(provider: String) -> ();
+            #[route(server)]
+            AxoDocsRefresh => axo_docs_refresh(source: Option<String>) -> ();
+            #[route(server)]
+            AxoDocsRemove => axo_docs_remove(source: Option<String>) -> ();
+            #[route(server)]
             SettingsSetAxo => settings_set_axo(patch: serde_json::Value) -> $crate::axo_settings::AxoSettings;
             #[route(server)]
             SettingsPatchGlobalSection => settings_patch_global_section(

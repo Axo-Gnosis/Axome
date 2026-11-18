@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Chip, chipVariants } from '$lib/components/ui/chip'
   import { cn } from '$lib/utils/cn'
+  import { isJobId, stripRef } from '../../jobs'
 
   let {
     ref,
@@ -12,17 +13,8 @@
     onOpen?: (ref?: string) => void
   } = $props()
 
-  function stripRefSuffix(ref: string): string {
-    return ref.replace(/\/\d+$/, '')
-  }
-
-  const strippedRef = $derived(stripRefSuffix(ref))
-  const clickable = $derived(
-    strippedRef.startsWith('bg_') ||
-      strippedRef.startsWith('agent_') ||
-      strippedRef.startsWith('team_') ||
-      (member && strippedRef.length > 0)
-  )
+  const strippedRef = $derived(stripRef(ref))
+  const clickable = $derived(isJobId(strippedRef) || (member && strippedRef.length > 0))
 </script>
 
 {#if clickable && onOpen}

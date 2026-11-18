@@ -8,6 +8,8 @@ function call(name: 'grep' | 'find', source: string, details: unknown = null): T
   return {
     id: 'tool',
     entryId: 'entry',
+    timestamp: null,
+    endedAt: null,
     kind: 'tool',
     callId: 'call',
     name,

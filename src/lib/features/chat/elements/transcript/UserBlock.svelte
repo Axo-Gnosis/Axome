@@ -62,7 +62,12 @@
 </script>
 
 <div data-slot="user-block" class="flex min-w-0 flex-col items-end gap-1">
-  <div class={cn('rounded-lg bg-surface px-4 py-3', editing ? 'flex w-full flex-col gap-2' : 'max-w-4/5 min-w-0')}>
+  <div
+    class={cn(
+      'rounded-lg border border-edge bg-surface px-3 py-2.5',
+      editing ? 'flex w-full flex-col gap-2' : 'max-w-4/5 min-w-0'
+    )}
+  >
     {#if editing && controller.editing}
       <PromptInput
         bind:this={input}

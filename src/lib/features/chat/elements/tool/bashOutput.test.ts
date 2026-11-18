@@ -9,6 +9,8 @@ function call(content: ChatContent[], isError = false, details: unknown = null):
   return {
     id: 'tool',
     entryId: 'entry',
+    timestamp: null,
+    endedAt: null,
     kind: 'tool',
     callId: 'bash-call',
     name: 'bash',

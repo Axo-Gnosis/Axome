@@ -11,7 +11,7 @@
 </script>
 
 {#if fields?.length || (fields === null && input != null)}
-  <div data-slot="tool-fields" class="min-w-0 font-mono text-xs text-fg">
+  <div data-slot="tool-fields" class="min-w-0 px-3 py-2 font-mono text-xs text-fg">
     {#if fields}
       <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         {#each fields as [key, value] (key)}

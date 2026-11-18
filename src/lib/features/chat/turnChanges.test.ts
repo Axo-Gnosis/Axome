@@ -12,6 +12,8 @@ function toolStep(
   return {
     id,
     entryId: id,
+    timestamp: null,
+    endedAt: null,
     kind: 'tool',
     callId: id,
     name,

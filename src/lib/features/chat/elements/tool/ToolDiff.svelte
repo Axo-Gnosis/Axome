@@ -39,7 +39,7 @@
   )
 </script>
 
-<div data-slot="tool-diff" class="min-w-0 font-mono text-xs">
+<div data-slot="tool-diff" class="min-w-0 px-3 py-2 font-mono text-xs">
   {#if rows}
     {#if rows.length}
       <ToolCode

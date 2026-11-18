@@ -56,6 +56,26 @@ impl Host {
         self.axo.block_on(self.axo.keywords())?
     }
 
+    pub fn axo_web_tools_status(&self) -> Result<AxoWebToolsStatusPayload, ApiError> {
+        self.axo.block_on(self.axo.web_tools_status())?
+    }
+
+    pub fn axo_search_key_set(&self, provider: String, key: String) -> Result<(), ApiError> {
+        self.axo.block_on(self.axo.search_key_set(&provider, key))?
+    }
+
+    pub fn axo_search_key_remove(&self, provider: String) -> Result<(), ApiError> {
+        self.axo.block_on(self.axo.search_key_remove(&provider))?
+    }
+
+    pub fn axo_docs_refresh(&self, source: Option<String>) -> Result<(), ApiError> {
+        self.axo.block_on(self.axo.docs_refresh(source))?
+    }
+
+    pub fn axo_docs_remove(&self, source: Option<String>) -> Result<(), ApiError> {
+        self.axo.block_on(self.axo.docs_remove(source))?
+    }
+
     pub fn settings_set_axo(&self, patch: Value) -> Result<AxoSettings, ApiError> {
         if !patch.is_object() {
             return Err(ApiError::InvalidArgument(

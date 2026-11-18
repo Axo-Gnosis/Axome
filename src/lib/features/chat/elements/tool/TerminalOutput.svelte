@@ -12,7 +12,7 @@
   const hasText = $derived(output.some((part) => part.type === 'text' && part.text.length > 0))
 </script>
 
-<div data-slot="terminal-output" class="flex min-w-0 items-start gap-2 border-t border-edge pt-2">
+<div data-slot="terminal-output" class="flex min-w-0 items-start gap-2 bg-ground px-3 py-2">
   <div class="flex min-w-0 flex-1 flex-col gap-1.5">
     {@render children()}
   </div>

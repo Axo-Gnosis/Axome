@@ -11,6 +11,7 @@ import {
 import type {
   AxoSettings,
   AxoProvidersPayload,
+  AxoWebToolsStatusPayload,
   AxoLoginStarted,
   AxoLoginStatus,
   AxoKeywordInfo,
@@ -704,6 +705,21 @@ export const backend = {
     },
     keywords(folderPath?: string | null): Promise<AxoKeywordInfo[]> {
       return invoke('axo_keywords', { folderPath: folderPath ?? null })
+    },
+    webToolsStatus(folderPath?: string | null): Promise<AxoWebToolsStatusPayload> {
+      return invoke('axo_web_tools_status', { folderPath: folderPath ?? null })
+    },
+    setSearchKey(provider: string, key: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_search_key_set', { provider, key, folderPath: folderPath ?? null })
+    },
+    removeSearchKey(provider: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_search_key_remove', { provider, folderPath: folderPath ?? null })
+    },
+    refreshDocs(source: string | null, folderPath?: string | null): Promise<void> {
+      return invoke('axo_docs_refresh', { source, folderPath: folderPath ?? null })
+    },
+    removeDocs(source: string | null, folderPath?: string | null): Promise<void> {
+      return invoke('axo_docs_remove', { source, folderPath: folderPath ?? null })
     }
   },
 

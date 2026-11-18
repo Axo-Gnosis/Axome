@@ -4,7 +4,8 @@ import { record } from './elements/tool/payload'
 export type UserEntry = ChatEntry & { body: Extract<ChatEntryBody, { kind: 'user' }> }
 export type AssistantEntry = ChatEntry & { body: Extract<ChatEntryBody, { kind: 'assistant' }> }
 export type ToolResult = Extract<ChatEntryBody, { kind: 'toolResult' }>
-type StepBase = { id: string; entryId: string | null }
+/** `timestamp` is the entry's (null while streaming). */
+type StepBase = { id: string; entryId: string | null; timestamp: string | null }
 export type ToolStep = StepBase & {
   kind: 'tool'
   callId: string
@@ -12,6 +13,8 @@ export type ToolStep = StepBase & {
   arguments: unknown
   status: 'running' | 'done' | 'error'
   result: ToolResult | null
+  /** The tool-result entry's timestamp. */
+  endedAt: string | null
   output: ChatContent[]
   details: unknown
 }
@@ -52,9 +55,9 @@ export type Turn = {
 
 export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | null, live: ChatLive): Turn[] {
   const turns: Turn[] = []
-  const results = new Map<string, ToolResult>()
+  const results = new Map<string, ChatEntry & { body: ToolResult }>()
   for (const entry of entries) {
-    if (entry.body.kind === 'toolResult') results.set(entry.body.callId, entry.body)
+    if (entry.body.kind === 'toolResult') results.set(entry.body.callId, entry as ChatEntry & { body: ToolResult })
   }
   const runs = new Map(live.tools.map((run) => [run.callId, run]))
   let current: Turn | undefined
@@ -74,11 +77,12 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     turns.push(turn)
     return turn
   }
-  function blocks(turn: Turn, content: ChatBlock[], entryId: string | null) {
+  function blocks(turn: Turn, content: ChatBlock[], entryId: string | null, timestamp: string | null) {
     content.forEach((block, index) => {
-      const base = { id: `${entryId ?? 'streaming'}:${index}`, entryId }
+      const base = { id: `${entryId ?? 'streaming'}:${index}`, entryId, timestamp }
       if (block.type === 'toolCall') {
-        const result = results.get(block.id) ?? null
+        const resultEntry = results.get(block.id)
+        const result = resultEntry?.body ?? null
         const run = runs.get(block.id)
         let name = block.name
         let arguments_ = block.arguments
@@ -107,6 +111,7 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
           arguments: arguments_,
           status: result ? (result.isError ? 'error' : 'done') : 'running',
           result,
+          endedAt: resultEntry?.timestamp ?? null,
           details: result?.details ?? run?.details,
           output: result?.content ?? run?.output ?? []
         })
@@ -148,18 +153,34 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     if (body.kind === 'assistant') {
       current.config = { model: body.model, thinking: settings.thinking }
       current.assistants.push(entry as AssistantEntry)
-      blocks(current, body.blocks, entry.id)
+      blocks(current, body.blocks, entry.id, entry.timestamp)
     } else if (body.kind === 'runEnd') current.end = body
-    else current.steps.push({ ...body, id: entry.id, entryId: entry.id })
+    else current.steps.push({ ...body, id: entry.id, entryId: entry.id, timestamp: entry.timestamp })
   }
   if (streaming !== null) {
     if (current && current.end !== null) current = undefined
     current ??= start(null)
-    blocks(current, streaming, null)
+    blocks(current, streaming, null, null)
   }
   // Activity `running` also covers standalone maintenance; an ended turn never resumes.
   if (current) current.running = live.running && current.end === null
   return turns
+}
+
+export type TurnEndNotice = { kind: 'failed'; text: string } | { kind: 'stopped' } | { kind: 'note'; text: string }
+
+/** The one line that ends a turn; the first matching outcome wins. */
+export function turnEndNotice(turn: Turn): TurnEndNotice | null {
+  const end = turn.end
+  const stops = turn.assistants.map((entry) => entry.body.stopReason)
+  if (end?.outcome === 'failed' || stops.includes('error')) {
+    const error = turn.assistants.findLast((entry) => entry.body.error)?.body.error
+    return { kind: 'failed', text: end?.reason || error || 'The turn failed.' }
+  }
+  if (end?.outcome === 'aborted' || stops.includes('aborted')) return { kind: 'stopped' }
+  if (end?.outcome === 'interrupted') return { kind: 'note', text: end.reason || 'The turn was interrupted.' }
+  if (stops.includes('length')) return { kind: 'note', text: 'Stopped at the output token limit.' }
+  return null
 }
 
 export function turnDurationMs(turn: Turn, now: number): number | null {
