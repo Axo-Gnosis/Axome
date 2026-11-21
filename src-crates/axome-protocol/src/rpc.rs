@@ -641,11 +641,11 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             AxoProviderRemove => axo_provider_remove(provider: String) -> ();
             #[route(server)]
-            AxoModelsReload => axo_models_reload() -> ();
+            AxoModelsRefresh => axo_models_refresh() -> ();
             #[route(server)]
             AxoLoginStart => axo_login_start(provider: String) -> $crate::axo::AxoLoginStarted;
             #[route(server)]
-            AxoLoginSubmit => axo_login_submit(login_id: String, redirect: String) -> ();
+            AxoLoginSubmit => axo_login_submit(login_id: String, question_id: u32, answer: String) -> ();
             #[route(server)]
             AxoLoginStatus => axo_login_status(login_id: String) -> $crate::axo::AxoLoginStatus;
             #[route(server)]
@@ -1049,6 +1049,8 @@ pub enum HostEventWire {
     RecentFoldersChanged(Vec<RecentFolder>),
     /// The workbench registry changed: an attach, takeover, detach, or Close.
     WorkbenchesChanged(()),
+    /// The model registry changed: models, providers, or credentials.
+    ModelsChanged(()),
 }
 
 /// Wire mirror of `axome_core::errors::ApiError` plus transport-level auth.

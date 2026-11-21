@@ -351,7 +351,7 @@ dependencies = [
 [[package]]
 name = "axo"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=a0ec20d53e253e6e4bea33d9c969f76f4399b872#a0ec20d53e253e6e4bea33d9c969f76f4399b872"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=614089b8a801d26b04e65330abc47924f4973cf1#614089b8a801d26b04e65330abc47924f4973cf1"
 dependencies = [
  "async-trait",
  "axo-agent",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "axo-agent"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=a0ec20d53e253e6e4bea33d9c969f76f4399b872#a0ec20d53e253e6e4bea33d9c969f76f4399b872"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=614089b8a801d26b04e65330abc47924f4973cf1#614089b8a801d26b04e65330abc47924f4973cf1"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -406,10 +406,11 @@ dependencies = [
 [[package]]
 name = "axo-ai"
 version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=a0ec20d53e253e6e4bea33d9c969f76f4399b872#a0ec20d53e253e6e4bea33d9c969f76f4399b872"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=614089b8a801d26b04e65330abc47924f4973cf1#614089b8a801d26b04e65330abc47924f4973cf1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "bytes",
  "futures",
  "indexmap 2.14.2",
  "jiff",

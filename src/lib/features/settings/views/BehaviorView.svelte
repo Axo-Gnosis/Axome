@@ -136,6 +136,7 @@
     {fields}
     path={['extendedContext']}
     label={'Extended context'}
+    description="May incur premium pricing. Off keeps context windows at the standard-price size."
     checked={settings?.extendedContext ?? false}
   />
 </SettingsSection>

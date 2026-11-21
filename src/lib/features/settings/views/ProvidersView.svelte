@@ -3,17 +3,16 @@
   import * as Alert from '$lib/components/ui/alert'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
-  import * as Dialog from '$lib/components/ui/dialog'
-  import { Input, SearchInput } from '$lib/components/ui/input'
+  import { SearchInput } from '$lib/components/ui/input'
   import { Spinner } from '$lib/components/ui/progress'
   import { StatusDot } from '$lib/components/ui/status-dot'
-  import { reloadChatModels } from '$lib/features/chat/models.svelte'
-  import { getSettingsHost } from '../state/settings.svelte'
+  import { getSettingsHost, getSettingsServer } from '../state/settings.svelte'
   import { platform } from '$lib/platform'
-  import type { AxoLoginStarted, AxoProvider, AxoProvidersPayload } from '$lib/types/backend'
+  import type { AxoProvider, AxoProvidersPayload } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import ApiKeyDialog from './ApiKeyDialog.svelte'
+  import ProviderLoginDialog from './ProviderLoginDialog.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
 
   const host = getSettingsHost()
@@ -36,23 +35,18 @@
       if (generation === refreshGeneration) providers.loading = false
     }
   }
-  const changed = () => Promise.all([refresh(), reloadChatModels(host)])
   let busy = $state(false)
   let error = $state<string | null>(null)
   let keyProvider = $state<string | null>(null)
   let key = $state('')
-  let loginOpen = $state(false)
-  let login = $state<AxoLoginStarted | null>(null)
-  let loginError = $state<string | null>(null)
-  let redirect = $state('')
-  let submitted = $state(false)
-  let loginGeneration = 0
-  let loginTimer: ReturnType<typeof setTimeout> | undefined
+  let loginProvider = $state<string | null>(null)
+  const actionsDisabled = $derived(busy || loginProvider !== null)
   let query = $state('')
 
-  const isReady = (provider: AxoProvider) => provider.source.kind !== 'none' || !provider.requiresKey
+  const isReady = (provider: AxoProvider) => provider.status.kind === 'ready'
+  const isConfigured = (provider: AxoProvider) => provider.status.kind !== 'needsCredentials'
   const all = $derived(providers.payload?.providers ?? [])
-  const readyCount = $derived(all.filter(isReady).length)
+  const configuredCount = $derived(all.filter(isConfigured).length)
   const readyModels = $derived(all.filter(isReady).reduce((sum, provider) => sum + provider.models, 0))
   const matches = $derived.by(() => {
     const needle = query.trim().toLowerCase()
@@ -61,14 +55,17 @@
       (provider) => provider.id.includes(needle) || provider.env.some((name) => name.toLowerCase().includes(needle))
     )
   })
-  const ready = $derived(matches.filter(isReady))
-  const unconfigured = $derived(matches.filter((provider) => !isReady(provider)))
+  const configured = $derived(matches.filter(isConfigured))
+  const unconfigured = $derived(matches.filter((provider) => !isConfigured(provider)))
 
   onMount(() => {
+    const subscription = backend.axo.onModelsChanged(({ server }) => {
+      if (server === getSettingsServer()) void refresh()
+    })
     void refresh()
-  })
-  onDestroy(() => {
-    void cancelLogin()
+    return () => {
+      void subscription.then((unsubscribe) => unsubscribe())
+    }
   })
 
   // The group and status dot already say "not configured"; the badge names only a credential source.
@@ -88,7 +85,8 @@
   }
 
   function sourceDetail(provider: AxoProvider): string | null {
-    if (provider.source.kind === 'env') return provider.source.name
+    if (provider.source.kind === 'env')
+      return `${provider.source.name} is set in the environment. Unset it to stop using it.`
     if (provider.source.kind === 'none' && provider.requiresKey && provider.env.length)
       return `Set ${provider.env.join(' or ')}`
     return null
@@ -109,71 +107,9 @@
   async function saveKey() {
     if (!keyProvider || !key.trim()) return
     await backend.axo.setProviderKey(keyProvider, key, host)
-    await changed()
+    await refresh()
     key = ''
     keyProvider = null
-  }
-
-  async function cancelLogin() {
-    loginGeneration++
-    clearTimeout(loginTimer)
-    const current = login
-    login = null
-    loginOpen = false
-    if (current) {
-      try {
-        await backend.axo.loginCancel(current.loginId, host)
-      } catch (cause) {
-        error = getErrorMessage(cause)
-      }
-    }
-  }
-
-  async function startLogin(provider: string) {
-    const generation = ++loginGeneration
-    loginOpen = true
-    loginError = null
-    redirect = ''
-    submitted = false
-    try {
-      const started = await backend.axo.loginStart(provider, host)
-      if (generation !== loginGeneration) {
-        await backend.axo.loginCancel(started.loginId, host)
-        return
-      }
-      login = started
-      async function poll() {
-        try {
-          const status = await backend.axo.loginStatus(started.loginId, host)
-          if (generation !== loginGeneration) return
-          if (status.state === 'done') {
-            login = null
-            loginOpen = false
-          } else if (status.state === 'failed') {
-            login = null
-            loginError = status.message
-          }
-          if (status.state === 'pending') loginTimer = setTimeout(() => void poll(), 1000)
-          else await changed()
-        } catch (cause) {
-          if (generation === loginGeneration) loginError = getErrorMessage(cause)
-        }
-      }
-      loginTimer = setTimeout(() => void poll(), 1000)
-      await platform.links.openExternal(started.url)
-    } catch (cause) {
-      if (generation === loginGeneration) loginError = getErrorMessage(cause)
-    }
-  }
-
-  async function submitLogin() {
-    if (!login || !redirect.trim() || submitted) return
-    try {
-      await backend.axo.loginSubmit(login.loginId, redirect.trim(), host)
-      submitted = true
-    } catch (cause) {
-      loginError = getErrorMessage(cause)
-    }
   }
 </script>
 
@@ -194,10 +130,13 @@
         disabled={busy || providers.loading}
         onclick={() =>
           run(async () => {
-            await backend.axo.reloadModels(host)
-            await changed()
-          })}>Reload Models</Button
+            await backend.axo.refreshModels(host)
+            await refresh()
+          })}
       >
+        {#if busy}<Spinner />{/if}
+        Refresh Models
+      </Button>
     </div>
   </div>
 
@@ -214,7 +153,7 @@
     </div>
     <span class="flex shrink-0 items-center gap-2 text-xs text-muted">
       {#if providers.loading}<Spinner />{/if}
-      {#if providers.payload}{all.length} providers · {readyCount} configured · {readyModels} models{/if}
+      {#if providers.payload}{all.length} providers · {configuredCount} configured · {readyModels} models{/if}
     </span>
   </div>
 </div>
@@ -234,42 +173,33 @@
         <span class="truncate text-md font-semibold text-bright" title={provider.id}>{provider.id}</span>
         <span class="text-xs text-muted">{provider.models} {provider.models === 1 ? 'model' : 'models'}</span>
       </div>
-      <StatusDot tone={live ? 'success' : 'idle'} label={live ? 'Configured' : 'Not configured'} />
+      <StatusDot
+        tone={live ? 'success' : provider.status.kind === 'error' ? 'danger' : 'idle'}
+        label={live ? 'Configured' : provider.status.kind === 'error' ? 'Needs attention' : 'Not configured'}
+      />
     </header>
-    {#if label || provider.oauth}
-      <div class="flex flex-wrap gap-1.5">
-        {#if label}<Badge>{label}</Badge>{/if}
-        {#if provider.oauth}<Badge>OAuth</Badge>{/if}
-      </div>
+    {#if label}
+      <div><Badge>{label}</Badge></div>
+    {/if}
+    {#if provider.status.kind === 'error'}
+      <p class="text-xs text-danger">{provider.status.message}</p>
     {/if}
     {#if detail}
       <p class="truncate font-mono text-xs text-subtle" title={detail}>{detail}</p>
     {/if}
     <div class="mt-auto flex flex-wrap gap-1.5 border-t border-edge pt-2.5">
-      {#if provider.oauth}
-        {#if provider.source.kind === 'oauth'}
-          <Button
-            size="xs"
-            disabled={busy || loginOpen}
-            onclick={() =>
-              run(async () => {
-                await backend.axo.removeProvider(provider.id, host)
-                await changed()
-              })}>Log Out</Button
-          >
-        {:else}
-          <Button
-            size="xs"
-            variant={live ? 'default' : 'accent'}
-            disabled={busy || loginOpen}
-            onclick={() => startLogin(provider.id)}>Log In</Button
-          >
-        {/if}
+      {#if provider.login}
+        <Button
+          size="xs"
+          variant={live ? 'default' : 'accent'}
+          disabled={actionsDisabled}
+          onclick={() => (loginProvider = provider.id)}>Log In</Button
+        >
       {/if}
       {#if provider.requiresKey}
         <Button
           size="xs"
-          disabled={busy || loginOpen}
+          disabled={actionsDisabled}
           onclick={() => {
             keyProvider = provider.id
             key = ''
@@ -277,15 +207,15 @@
           }}>{provider.source.kind === 'apiKey' ? 'Update Key' : 'Add Key'}</Button
         >
       {/if}
-      {#if provider.source.kind === 'apiKey'}
+      {#if provider.source.kind === 'apiKey' || provider.source.kind === 'oauth'}
         <Button
           size="xs"
-          disabled={busy || loginOpen}
+          disabled={actionsDisabled}
           onclick={() =>
             run(async () => {
               await backend.axo.removeProvider(provider.id, host)
-              await changed()
-            })}>Remove</Button
+              await refresh()
+            })}>{provider.source.kind === 'oauth' ? 'Log Out' : 'Remove'}</Button
         >
       {/if}
     </div>
@@ -303,7 +233,7 @@
 {/snippet}
 
 <div>
-  {@render group('Configured', ready)}
+  {@render group('Configured', configured)}
   {@render group('Not Configured', unconfigured)}
   {#if providers.payload && !matches.length}
     <p class="py-6 text-center text-sm text-muted">No providers match “{query.trim()}”.</p>
@@ -328,40 +258,4 @@
   }}
 />
 
-<Dialog.Root
-  open={loginOpen}
-  onOpenChange={(open) => {
-    if (!open) void cancelLogin()
-  }}
->
-  <Dialog.Content onModalClose={() => void cancelLogin()}>
-    <Dialog.Header>
-      <Dialog.Title>Provider Login</Dialog.Title>
-      <Dialog.Description>Complete login in the browser, or paste the redirect URL below.</Dialog.Description>
-    </Dialog.Header>
-    <div class="flex flex-col gap-3">
-      {#if login}
-        <label class="flex flex-col gap-2 text-sm text-muted">Login URL<Input value={login.url} readonly /></label>
-        <div class="flex gap-2">
-          <Button size="sm" onclick={() => run(() => platform.links.openExternal(login!.url))}>Open Login</Button>
-          <Button size="sm" onclick={() => run(() => platform.clipboard.writeText(login!.url))}>Copy Link</Button>
-        </div>
-        <form
-          class="flex flex-col gap-3"
-          onsubmit={(event) => {
-            event.preventDefault()
-            void submitLogin()
-          }}
-        >
-          <label class="flex flex-col gap-2 text-sm text-muted"
-            >Paste redirect URL<Input bind:value={redirect} disabled={submitted} /></label
-          >
-          <Button type="submit" disabled={submitted || !redirect.trim()}>Submit</Button>
-        </form>
-        <p class="flex items-center gap-2 text-xs text-muted"><Spinner />Waiting for login…</p>
-      {:else if !loginError}<Spinner label="Starting login" />{/if}
-      {#if loginError}<p role="alert" class="text-sm text-danger">{loginError}</p>{/if}
-      <Dialog.Footer><Button onclick={() => cancelLogin()}>Cancel</Button></Dialog.Footer>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<ProviderLoginDialog bind:provider={loginProvider} {host} onDone={() => void refresh()} />

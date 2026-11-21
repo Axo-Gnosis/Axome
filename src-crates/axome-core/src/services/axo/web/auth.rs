@@ -1,6 +1,5 @@
-//! Credential resolution for dedicated web search backends and LLM-grounded search fallback.
+//! Credential resolution for dedicated web search backends.
 
-use axo_ai::auth::codex;
 use axo_ai::{Credential, CredentialStore, FileCredentialStore};
 use axome_protocol::axo::{AxoCredentialSource, AxoSearchProviderStatus};
 use axome_protocol::axo_settings::AxoWebSearchSettings;
@@ -122,66 +121,6 @@ pub(crate) async fn search_provider_statuses(
         source,
     });
     out
-}
-
-pub(crate) async fn resolve_grounded_auth(
-    credentials: &FileCredentialStore,
-    http: &reqwest::Client,
-    provider: &str,
-) -> Option<Credential> {
-    match provider {
-        "openai-codex" => {
-            let current = credentials.get("openai-codex").await.ok().flatten()?;
-            let Credential::Oauth { expires, .. } = &current else {
-                return Some(current);
-            };
-            let now = axo_ai::now_ms();
-            if *expires > now + 5 * 60 * 1000 {
-                return Some(current);
-            }
-            let http = http.clone();
-            credentials
-                .update(
-                    "openai-codex",
-                    Box::new(move |latest| {
-                        Box::pin(async move {
-                            let Some(cred) = latest else { return Ok(None) };
-                            let Credential::Oauth {
-                                ref refresh,
-                                expires,
-                                ..
-                            } = cred
-                            else {
-                                return Ok(Some(cred));
-                            };
-                            if expires > axo_ai::now_ms() + 5 * 60 * 1000 {
-                                return Ok(Some(cred));
-                            }
-                            let refreshed = codex::refresh(&http, refresh).await?;
-                            Ok(Some(refreshed))
-                        })
-                    }),
-                )
-                .await
-                .ok()
-                .flatten()
-        }
-        "anthropic" => match credentials.get("anthropic").await.ok().flatten() {
-            Some(cred) => Some(cred),
-            None => first_env(&["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"])
-                .map(|(_, key)| Credential::ApiKey { key }),
-        },
-        "openai" => match credentials.get("openai").await.ok().flatten() {
-            Some(cred) => Some(cred),
-            None => first_env(&["OPENAI_API_KEY"]).map(|(_, key)| Credential::ApiKey { key }),
-        },
-        "google" => match credentials.get("google").await.ok().flatten() {
-            Some(cred) => Some(cred),
-            None => first_env(&["GEMINI_API_KEY", "GOOGLE_API_KEY"])
-                .map(|(_, key)| Credential::ApiKey { key }),
-        },
-        _ => None,
-    }
 }
 
 async fn read_api_key(credentials: &FileCredentialStore, provider: &str) -> Option<String> {

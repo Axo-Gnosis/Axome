@@ -137,6 +137,8 @@ fn children_of<'a>(
 #[derive(Default)]
 struct EngineSlot {
     engine: Option<Arc<Engine>>,
+    /// The `models.jsonc` error from the last build or reload.
+    models_error: Option<String>,
     stamp: Option<(Option<(SystemTime, u64)>, bool)>,
 }
 
@@ -220,18 +222,7 @@ impl AxoService {
             let credentials = Arc::new(FileCredentialStore::new(
                 dirs.data.join("axo").join("auth.json"),
             ));
-            let weak_self = this.clone();
-            let web = web::WebTools::new(
-                dirs.clone(),
-                Arc::clone(&credentials),
-                Arc::new(move |session_id: &str| {
-                    let svc = weak_self.upgrade()?;
-                    let sessions = svc.sessions.lock();
-                    sessions
-                        .get(session_id)
-                        .map(|live| live.session.model().provider)
-                }),
-            );
+            let web = web::WebTools::new(dirs.clone(), Arc::clone(&credentials), this.clone());
             Self {
                 this: this.clone(),
                 db,
@@ -264,6 +255,7 @@ impl AxoService {
         {
             let mut slot = service.engine.try_lock().unwrap();
             slot.engine = Some(Arc::new(engine));
+            slot.models_error = None;
             slot.stamp = Some((None, false));
         }
         service.bind_runtime();
@@ -293,6 +285,7 @@ impl AxoService {
     }
 
     pub(crate) async fn engine(&self) -> Result<Arc<Engine>, ApiError> {
+        let _ = self.runtime();
         let mut slot = self.engine.lock().await;
         if self.closed.load(Ordering::Acquire) {
             return Err(ApiError::Internal("Axome is shutting down".into()));
@@ -308,33 +301,101 @@ impl AxoService {
         };
         let extended_context = engine::read_extended_context(&self.dirs)?;
         let stamp = Some((models_stamp, extended_context));
-        if slot.engine.is_none() || slot.stamp != stamp {
-            let supervision = match self.supervision {
-                Supervision::ProcessGroup => axo::Supervision::ProcessGroup,
-                Supervision::Cgroup => axo::Supervision::Cgroup {
-                    program: std::env::current_exe()
-                        .map_err(|error| ApiError::Internal(error.to_string()))?,
-                    args: vec![SUPERVISOR_ROUTE.into()],
-                    cgroup_root: None,
-                },
-            };
-            slot.engine = Some(Arc::new(
-                Engine::build(
+        let mut changed = false;
+        let engine = match slot.engine.clone() {
+            None => {
+                let supervision = match self.supervision {
+                    Supervision::ProcessGroup => axo::Supervision::ProcessGroup,
+                    Supervision::Cgroup => axo::Supervision::Cgroup {
+                        program: std::env::current_exe()
+                            .map_err(|error| ApiError::Internal(error.to_string()))?,
+                        args: vec![SUPERVISOR_ROUTE.into()],
+                        cgroup_root: None,
+                    },
+                };
+                let (engine, models_error) = Engine::build(
                     &self.dirs,
                     &self.db,
                     self.credentials.clone(),
                     supervision,
                     extended_context,
                 )
-                .await?,
-            ));
-            slot.stamp = stamp;
+                .await?;
+                let engine = Arc::new(engine);
+                slot.engine = Some(engine.clone());
+                slot.models_error = models_error;
+                slot.stamp = stamp;
+                engine
+            }
+            Some(engine) => {
+                if slot.stamp != stamp {
+                    slot.models_error =
+                        engine::reload(&engine.models, &self.dirs, extended_context).await?;
+                    slot.stamp = stamp;
+                    changed = true;
+                }
+                engine
+            }
+        };
+        drop(slot);
+        if changed {
+            self.emit_models_changed();
         }
-        Ok(slot.engine.as_ref().unwrap().clone())
+        Ok(engine)
     }
 
-    pub(crate) async fn invalidate(&self) {
-        self.engine.lock().await.engine = None;
+    /// Applies a `models.jsonc` edit reported by the settings watcher (called off the runtime).
+    pub(crate) fn models_file_changed(&self) {
+        let (Some(service), Some(runtime)) = (self.this.upgrade(), self.runtime()) else {
+            return;
+        };
+        runtime.spawn(async move {
+            // Nothing to reload yet: the first `engine()` reads the file.
+            if service.engine.lock().await.engine.is_none() {
+                return;
+            }
+            // `engine()` compares the stamp under the slot lock, so a burst of watcher events
+            // reloads and emits at most once per file change.
+            if let Err(error) = service.engine().await {
+                tracing::warn!(%error, "models.jsonc reload failed");
+            }
+        });
+    }
+
+    /// Re-runs model discovery after a credential or config change and announces it.
+    pub(crate) async fn reload_models(&self) -> Result<(), ApiError> {
+        {
+            let mut slot = self.engine.lock().await;
+            if let Some(engine) = slot.engine.clone() {
+                slot.models_error = engine::reload(
+                    &engine.models,
+                    &self.dirs,
+                    engine::read_extended_context(&self.dirs)?,
+                )
+                .await?;
+            }
+        }
+        self.emit_models_changed();
+        Ok(())
+    }
+
+    /// Fetches the model catalog and re-runs discovery; the registry keeps its previous catalog
+    /// when the fetch fails.
+    pub(crate) async fn refresh_models(&self) -> Result<(), ApiError> {
+        let engine = self.engine().await?;
+        self.reload_models().await?;
+        let result = engine.models.refresh().await;
+        self.emit_models_changed();
+        result.map_err(|error| ApiError::Internal(format!("Model catalog refresh failed: {error}")))
+    }
+
+    /// The `models.jsonc` error from the last build or reload, if any.
+    pub(crate) async fn models_error(&self) -> Option<String> {
+        self.engine.lock().await.models_error.clone()
+    }
+
+    fn emit_models_changed(&self) {
+        deliver(&self.events, HostEvent::ModelsChanged);
     }
 
     async fn axo(&self) -> Result<Arc<Axo>, ApiError> {
@@ -682,18 +743,23 @@ impl AxoService {
         Ok(Self::available_models(&engine).await)
     }
 
-    async fn available_models(engine: &Engine) -> Vec<ChatModel> {
-        let mut checked = HashSet::new();
-        let mut available = HashSet::new();
-        for model in engine.models.all() {
-            if checked.insert(model.provider.clone()) && engine.models.auth(model).await.is_ok() {
-                available.insert(model.provider.clone());
+    /// Whether each provider with models can authenticate now, checked with its first model.
+    async fn provider_auth(models: &axo_ai::Models) -> HashMap<String, Result<(), axo_ai::Error>> {
+        let mut auth = HashMap::new();
+        for model in models.all().iter() {
+            if !auth.contains_key(&model.provider) {
+                auth.insert(model.provider.clone(), models.auth(model).await.map(drop));
             }
         }
-        let mut models: Vec<_> = engine
-            .models
-            .all()
-            .filter(|m| available.contains(&m.provider))
+        auth
+    }
+
+    async fn available_models(engine: &Engine) -> Vec<ChatModel> {
+        let auth = Self::provider_auth(&engine.models).await;
+        let all = engine.models.all();
+        let mut models: Vec<_> = all
+            .iter()
+            .filter(|m| auth.get(&m.provider).is_some_and(Result::is_ok))
             .map(|m| ChatModel {
                 selector: format!("{}/{}", m.provider, m.id),
                 provider: m.provider.clone(),
@@ -1002,20 +1068,21 @@ impl AxoService {
             .await
             .map_err(axo_error)
     }
+    // ponytail: drops QueuedInput.custom; Axome posts no host messages (Session::post), so nothing custom reaches the queue. Carry it through if that changes.
     pub(crate) async fn withdraw(
         &self,
         folder: &Path,
         id: &str,
         submission_id: String,
     ) -> Result<Vec<ChatPart>, ApiError> {
-        let parts = self
+        let input = self
             .live(folder, id)
             .await?
             .session
             .withdraw(&submission_id)
             .await
             .map_err(axo_error)?;
-        Ok(convert::parts_to_wire(&parts))
+        Ok(convert::parts_to_wire(&input.parts))
     }
     /// Stops an active run, waits for it to settle idle, and immediately sends held input.
     pub(crate) async fn send_now(&self, folder: &Path, id: &str) -> Result<(), ApiError> {

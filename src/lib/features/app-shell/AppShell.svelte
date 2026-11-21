@@ -4,7 +4,7 @@
   import * as terminals from '$lib/features/terminal/registry'
   import * as chats from '$lib/features/chat/registry'
   import { backend } from '$lib/api/backend'
-  import { refreshChatModels } from '$lib/features/chat/models.svelte'
+  import { refreshChatModels, reloadChatModels } from '$lib/features/chat/models.svelte'
   import { refreshIssuesForFolder } from '$lib/features/issues/state.svelte'
   import { refreshNixForFolder } from '$lib/features/settings/state/nix.svelte'
   import { refreshHarnessListings } from '$lib/features/sessions/harnesses/state.svelte'
@@ -122,6 +122,7 @@
         refreshShellListings(event)
         refreshLoadedSessionIndexes((folderPath) => event.layer === 'global' || folderPath === event.folder_path)
       }),
+      backend.axo.onModelsChanged(({ server }) => void reloadChatModels(server)),
       backend.issues.onChanged(({ folderPath }) => void refreshIssuesForFolder(folderPath)),
       backend.nix.onChanged(({ folderPath }) => {
         refreshNixForFolder(folderPath)

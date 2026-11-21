@@ -21,16 +21,22 @@ pub struct SettingsWatcherService {
     dirs: crate::HostDirs,
     events: EventSink<HostEvent>,
     generation: Arc<AtomicU64>,
+    on_models_file: Arc<dyn Fn() + Send + Sync>,
     global_watcher: Mutex<Option<RecommendedWatcher>>,
     folder_watchers: Mutex<HashMap<PathBuf, Arc<Mutex<Option<FolderSettingsWatcher>>>>>,
 }
 
 impl SettingsWatcherService {
-    pub fn new(events: EventSink<HostEvent>, dirs: crate::HostDirs) -> Self {
+    pub fn new(
+        events: EventSink<HostEvent>,
+        dirs: crate::HostDirs,
+        on_models_file: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
         Self {
             events,
             dirs,
             generation: Arc::new(AtomicU64::new(0)),
+            on_models_file,
             global_watcher: Mutex::new(None),
             folder_watchers: Mutex::new(HashMap::new()),
         }
@@ -75,9 +81,14 @@ impl SettingsWatcherService {
         let generation = Arc::clone(&self.generation);
         let settings_file_for_events = settings_file.clone();
         let dirs = self.dirs.clone();
+        let models_file = self.dirs.models_path();
+        let on_models_file = Arc::clone(&self.on_models_file);
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
+            if event.paths.iter().any(|path| path == &models_file) {
+                on_models_file();
+            }
             if !event
                 .paths
                 .iter()

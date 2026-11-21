@@ -193,7 +193,8 @@ export interface AxoProvider {
   id: string
   env: string[]
   requiresKey: boolean
-  oauth: boolean
+  login: boolean
+  status: { kind: 'ready' } | { kind: 'needsCredentials' } | { kind: 'error'; message: string }
   source: AxoCredentialSource
   models: number
 }
@@ -210,10 +211,22 @@ export interface AxoProvidersPayload {
 
 export interface AxoLoginStarted {
   loginId: string
-  url: string
 }
 
-export type AxoLoginStatus = { state: 'pending' } | { state: 'done' } | { state: 'failed'; message: string }
+export type AxoLoginQuestion = { id: number; message: string } & (
+  | { kind: 'prompt'; placeholder: string | null; secret: boolean }
+  | { kind: 'select'; options: { id: string; label: string }[] }
+)
+
+export interface AxoLoginView {
+  url: { url: string; instructions: string | null } | null
+  deviceCode: { userCode: string; verificationUrl: string; expiresInSeconds: number | null } | null
+  progress: string | null
+  question: AxoLoginQuestion | null
+}
+
+export type AxoLoginStatus =
+  { state: 'pending'; view: AxoLoginView } | { state: 'done' } | { state: 'failed'; message: string }
 
 export interface AxoKeywordInfo {
   name: string

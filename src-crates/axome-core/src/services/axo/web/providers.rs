@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use super::auth::{resolve_grounded_auth, resolve_search_key, resolve_searxng_url};
-use super::grounded::search_grounded;
+use super::auth::{resolve_search_key, resolve_searxng_url};
+use super::grounded::{posts_to_chat_host, search_grounded};
+use super::Grounded;
 
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(25);
@@ -70,13 +71,12 @@ pub(crate) async fn run_search(
     http: &reqwest::Client,
     credentials: &FileCredentialStore,
     settings: &AxoWebSearchSettings,
-    active_provider: Option<&str>,
+    grounded: Option<&Grounded>,
     req: &SearchRequest,
     cancel: &CancellationToken,
 ) -> Result<SearchResponse, String> {
-    let chain = build_search_chain(settings, active_provider);
+    let chain = build_search_chain(settings, grounded);
     let mut failures = Vec::new();
-    let mut tried_any = false;
 
     for candidate in chain {
         if cancel.is_cancelled() {
@@ -87,7 +87,6 @@ pub(crate) async fn run_search(
                 let Some(base) = resolve_searxng_url(settings) else {
                     continue;
                 };
-                tried_any = true;
                 timed(cancel, SEARCH_TIMEOUT, search_searxng(http, &base, req))
                     .await
                     .map(|hits| (None, hits))
@@ -96,13 +95,11 @@ pub(crate) async fn run_search(
                 let Some(key) = resolve_search_key(credentials, id).await else {
                     continue;
                 };
-                tried_any = true;
                 timed(cancel, SEARCH_TIMEOUT, search_keyed(http, id, &key, req))
                     .await
                     .map(|hits| (None, hits))
             }
             "parallel" => {
-                tried_any = true;
                 let key = resolve_search_key(credentials, "parallel").await;
                 timed(
                     cancel,
@@ -112,21 +109,40 @@ pub(crate) async fn run_search(
                 .await
                 .map(|hits| (None, hits))
             }
-            grounded @ ("anthropic" | "openai" | "openai-codex" | "google") => {
-                let Some(cred) = resolve_grounded_auth(credentials, http, grounded).await else {
+            provider @ ("anthropic" | "openai" | "openai-codex" | "google") => {
+                let Some(grounded) = grounded else {
                     continue;
                 };
-                tried_any = true;
-                let model_override = grounded_model_for(settings, grounded);
-                search_grounded(
-                    http,
-                    grounded,
-                    model_override.as_deref(),
-                    &cred,
-                    req,
-                    cancel,
-                )
-                .await
+                let preferred = grounded
+                    .preferred
+                    .as_ref()
+                    .filter(|model| model.provider == provider);
+                let all = grounded.models.all();
+                let Some(auth_model) =
+                    preferred.or_else(|| all.iter().find(|model| model.provider == provider))
+                else {
+                    continue;
+                };
+                let auth = match grounded.models.auth(auth_model).await {
+                    Ok(auth) => auth,
+                    Err(axo_ai::Error::NoApiKey { .. }) => continue,
+                    Err(error) => {
+                        failures.push(ProviderFailure {
+                            provider: provider.to_owned(),
+                            reason: error.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                if !posts_to_chat_host(provider, &auth_model.base_url, &auth) {
+                    failures.push(ProviderFailure {
+                        provider: provider.to_owned(),
+                        reason: "skipped: this provider uses a custom base URL".into(),
+                    });
+                    continue;
+                }
+                let model_id = preferred.map(|model| model.id.as_str());
+                search_grounded(http, provider, model_id, &auth, req, cancel).await
             }
             other => {
                 failures.push(ProviderFailure {
@@ -177,7 +193,7 @@ pub(crate) async fn run_search(
         }
     }
 
-    if !tried_any {
+    if failures.is_empty() {
         return Err("No search providers available".into());
     }
     let summary = summarize(&failures);
@@ -276,10 +292,7 @@ fn summarize(failures: &[ProviderFailure]) -> String {
         .join("; ")
 }
 
-fn build_search_chain(
-    settings: &AxoWebSearchSettings,
-    active_provider: Option<&str>,
-) -> Vec<String> {
+fn build_search_chain(settings: &AxoWebSearchSettings, grounded: Option<&Grounded>) -> Vec<String> {
     if !settings.providers.is_empty() {
         return settings
             .providers
@@ -298,15 +311,17 @@ fn build_search_chain(
         push(id);
     }
     push("parallel");
-    if let Some(active) = active_provider {
-        if DEFAULT_GROUNDED_ORDER.contains(&active) {
-            push(active);
-        }
-    }
-    if let Some(model) = settings.grounded_model.as_deref() {
-        if let Some((prov, _)) = model.split_once('/') {
-            if DEFAULT_GROUNDED_ORDER.contains(&prov) {
-                push(prov);
+    if let Some(grounded) = grounded {
+        let preferred = grounded
+            .preferred
+            .as_ref()
+            .map(|model| model.provider.as_str());
+        for id in [grounded.active_provider.as_deref(), preferred]
+            .into_iter()
+            .flatten()
+        {
+            if DEFAULT_GROUNDED_ORDER.contains(&id) {
+                push(id);
             }
         }
     }
@@ -314,15 +329,6 @@ fn build_search_chain(
         push(id);
     }
     chain
-}
-
-fn grounded_model_for(settings: &AxoWebSearchSettings, provider: &str) -> Option<String> {
-    let raw = settings.grounded_model.as_deref()?.trim();
-    if let Some((prov, id)) = raw.split_once('/') {
-        (prov == provider && !id.is_empty()).then(|| id.to_owned())
-    } else {
-        None
-    }
 }
 
 async fn timed<F, T>(cancel: &CancellationToken, dur: Duration, fut: F) -> Result<T, String>

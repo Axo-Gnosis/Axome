@@ -1,26 +1,47 @@
+import { onMount } from 'svelte'
 import { backend } from '$lib/api/backend'
 import type { AxoSettings, ChatModel, ChatModelRole } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
+import { splitRemotePath } from '$lib/utils/paths'
 import { saveHostSection } from './settings.svelte'
 
-/** Models a host offers, loaded once per call; call during component init. */
+/** Models a host offers, kept current while the calling component is mounted. */
 export function axoModels(host: string | null): { models: ChatModel[]; loading: boolean; error: string | null } {
   const state = $state<{ models: ChatModel[]; loading: boolean; error: string | null }>({
     models: [],
     loading: true,
     error: null
   })
-  void backend.axo
-    .models(host)
-    .then((models) => {
-      state.models = models
+  onMount(() => {
+    const server = host === null ? null : (splitRemotePath(host)?.server ?? null)
+    let disposed = false
+    let generation = 0
+
+    async function refresh() {
+      if (disposed) return
+      const request = ++generation
+      try {
+        const models = await backend.axo.models(host)
+        if (request !== generation) return
+        state.models = models
+        state.error = null
+      } catch (error) {
+        if (request === generation) state.error = getErrorMessage(error)
+      } finally {
+        if (request === generation) state.loading = false
+      }
+    }
+
+    const listener = backend.axo.onModelsChanged((event) => {
+      if (event.server === server) void refresh()
     })
-    .catch((error) => {
-      state.error = getErrorMessage(error)
-    })
-    .finally(() => {
-      state.loading = false
-    })
+    void listener.then(refresh, refresh)
+    return () => {
+      disposed = true
+      generation++
+      void listener.then((stop) => stop()).catch(() => {})
+    }
+  })
   return state
 }
 

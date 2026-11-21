@@ -11,15 +11,15 @@ mod providers;
 mod search_tool;
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use axo::{HostTool, Scheme, SessionTools};
-use axo_ai::{Credential, CredentialStore, FileCredentialStore};
+use axo::{HostTool, ProjectAccess, Scheme, SessionTools};
+use axo_ai::{Credential, CredentialStore, FileCredentialStore, Model, Models};
 use axome_protocol::axo::AxoWebToolsStatusPayload;
 
 use crate::errors::ApiError;
 use crate::HostDirs;
-use axome_protocol::axo_settings::AxoSettings;
+use axome_protocol::axo_settings::{AxoSettings, AxoWebSearchSettings};
 use doc_scheme::DocScheme;
 use docs_cache::DocsCache;
 use docs_tool::SearchDocsTool;
@@ -32,21 +32,27 @@ pub(super) fn settings(dirs: &HostDirs, folder: Option<&Path>) -> AxoSettings {
         .axo
 }
 
-pub(crate) type SessionProviderLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+/// What grounded search authenticates with: the registry, the session's provider, and the
+/// preferred grounded model (Settings › Tools, else `@dash`).
+pub(crate) struct Grounded {
+    pub models: Arc<Models>,
+    pub active_provider: Option<String>,
+    pub preferred: Option<Model>,
+}
 
 pub(crate) struct WebTools {
     pub dirs: HostDirs,
     pub credentials: Arc<FileCredentialStore>,
     pub http: reqwest::Client,
     pub docs: DocsCache,
-    session_provider: SessionProviderLookup,
+    service: Weak<super::AxoService>,
 }
 
 impl WebTools {
     pub(crate) fn new(
         dirs: HostDirs,
         credentials: Arc<FileCredentialStore>,
-        session_provider: SessionProviderLookup,
+        service: Weak<super::AxoService>,
     ) -> Arc<Self> {
         let http = reqwest::Client::builder()
             .user_agent("Axome/1.0")
@@ -62,12 +68,20 @@ impl WebTools {
             credentials,
             http,
             docs,
-            session_provider,
+            service,
         })
     }
 
-    pub(crate) fn session_provider(&self, session_id: &str) -> Option<String> {
-        (self.session_provider)(session_id)
+    pub(crate) async fn grounded(
+        &self,
+        session_id: &str,
+        folder: &Path,
+        settings: &AxoWebSearchSettings,
+    ) -> Option<Grounded> {
+        self.service
+            .upgrade()?
+            .grounded(session_id, folder, settings)
+            .await
     }
 
     pub(crate) fn host_schemes(&self) -> Vec<Arc<dyn Scheme>> {
@@ -103,6 +117,43 @@ fn search_spec(provider: &str) -> Result<&'static auth::SearchProviderSpec, ApiE
 }
 
 impl super::AxoService {
+    /// What grounded search authenticates with for `session_id` in `folder`; `None` when the
+    /// engine is unavailable. An unresolvable selector only leaves `preferred` empty.
+    async fn grounded(
+        &self,
+        session_id: &str,
+        folder: &Path,
+        settings: &AxoWebSearchSettings,
+    ) -> Option<Grounded> {
+        let engine = self.engine().await.ok()?;
+        let active_provider = self
+            .sessions
+            .lock()
+            .get(session_id)
+            .map(|live| live.session.model().provider);
+        let selector = settings
+            .grounded_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|selector| !selector.is_empty())
+            .unwrap_or("@dash");
+        let preferred = super::bundled::catalog(&engine.axo, folder, ProjectAccess::Trust)
+            .ok()
+            .and_then(|catalog| {
+                catalog
+                    .config
+                    .settings
+                    .resolve_model(&engine.models, selector)
+                    .ok()
+            })
+            .and_then(|choice| choice.model);
+        Some(Grounded {
+            models: engine.models.clone(),
+            active_provider,
+            preferred,
+        })
+    }
+
     pub(crate) async fn web_tools_status(&self) -> Result<AxoWebToolsStatusPayload, ApiError> {
         let cfg = settings(&self.dirs, None);
         let search_providers =

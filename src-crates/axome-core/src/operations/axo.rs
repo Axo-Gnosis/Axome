@@ -31,17 +31,22 @@ impl Host {
         })
     }
 
-    pub fn axo_models_reload(&self) -> Result<(), ApiError> {
-        self.axo.block_on(self.axo.invalidate())
+    pub fn axo_models_refresh(&self) -> Result<(), ApiError> {
+        self.axo.block_on(self.axo.refresh_models())?
     }
 
     pub fn axo_login_start(&self, provider: String) -> Result<AxoLoginStarted, ApiError> {
         self.axo.block_on(self.axo.login_start(provider))?
     }
 
-    pub fn axo_login_submit(&self, login_id: String, redirect: String) -> Result<(), ApiError> {
+    pub fn axo_login_submit(
+        &self,
+        login_id: String,
+        question_id: u32,
+        answer: String,
+    ) -> Result<(), ApiError> {
         self.axo
-            .block_on(self.axo.login_submit(&login_id, redirect))?
+            .block_on(self.axo.login_submit(&login_id, question_id, answer))?
     }
 
     pub fn axo_login_status(&self, login_id: String) -> Result<AxoLoginStatus, ApiError> {

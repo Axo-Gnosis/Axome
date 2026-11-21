@@ -2,11 +2,16 @@
   import { Switch } from '$lib/components/ui/switch'
   import SettingRow from '../dialog/SettingRow.svelte'
   import type { AxoFields } from './axoFields.svelte'
-  let { fields, path, label, checked }: { fields: AxoFields; path: string[]; label: string; checked: boolean } =
-    $props()
+  let {
+    fields,
+    path,
+    label,
+    description,
+    checked
+  }: { fields: AxoFields; path: string[]; label: string; description?: string; checked: boolean } = $props()
 </script>
 
-<SettingRow {label} as="div">
+<SettingRow {label} {description} as="div">
   <Switch
     aria-label={label}
     {checked}

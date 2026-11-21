@@ -93,6 +93,14 @@ impl Host {
             dirs.clone(),
         );
         axo.bind_index(&session_index);
+        let on_models_file: Arc<dyn Fn() + Send + Sync> = {
+            let axo = Arc::downgrade(&axo);
+            Arc::new(move || {
+                if let Some(axo) = axo.upgrade() {
+                    axo.models_file_changed()
+                }
+            })
+        };
         Ok(Self {
             admission: Arc::new(tokio::sync::RwLock::new(())),
             db,
@@ -105,7 +113,11 @@ impl Host {
             files: FileService::default(),
             lsp: LspService::new(),
             tasks: TaskService::new(),
-            settings_watchers: SettingsWatcherService::new(Arc::clone(&events), dirs.clone()),
+            settings_watchers: SettingsWatcherService::new(
+                Arc::clone(&events),
+                dirs.clone(),
+                on_models_file,
+            ),
             file_watchers: FileWatcherService::new(),
             git_watchers: GitWatcherService::new(git),
             history_binder: HistoryBinder::new(),

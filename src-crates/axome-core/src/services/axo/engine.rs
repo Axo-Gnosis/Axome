@@ -12,7 +12,6 @@ use crate::{errors::ApiError, services::db::DatabaseService, HostDirs};
 pub(crate) struct Engine {
     pub axo: Arc<Axo>,
     pub models: Arc<Models>,
-    pub models_error: Option<String>,
 }
 
 impl Engine {
@@ -22,13 +21,15 @@ impl Engine {
             .map_or(0, |model| model.context_window)
     }
 
+    /// Builds the engine; the `Option<String>` is the `models.jsonc` error when the file was
+    /// rejected and built-in models were loaded instead.
     pub(crate) async fn build(
         dirs: &HostDirs,
         db: &Arc<DatabaseService>,
         credentials: Arc<FileCredentialStore>,
         supervision: axo::Supervision,
         extended_context: bool,
-    ) -> Result<Self, ApiError> {
+    ) -> Result<(Self, Option<String>), ApiError> {
         let data = dirs.data.join("axo");
         let cache = dirs.cache.join("axo");
         for path in [&data, &cache] {
@@ -43,11 +44,7 @@ impl Engine {
             dirs: dirs.clone(),
             db: db.clone(),
         };
-        let models_path = dirs.models_path();
-        let parsed = match read_optional(&models_path).map_err(axo_error)? {
-            Some(text) => ModelsConfig::parse_jsonc(&text),
-            None => Ok(ModelsConfig::default()),
-        };
+        let parsed = read_models_config(dirs)?;
         let load = |config| {
             Models::load(ModelsOptions {
                 cache_dir: Some(cache.clone()),
@@ -65,7 +62,7 @@ impl Engine {
             Ok(models) => (models, None),
             Err(error) => {
                 let message = error.to_string();
-                tracing::warn!(path = %models_path.display(), %message, "Loading built-in models after model configuration failure");
+                tracing::warn!(path = %dirs.models_path().display(), %message, "Loading built-in models after model configuration failure");
                 (
                     load(ModelsConfig::default())
                         .await
@@ -85,12 +82,37 @@ impl Engine {
             .supervision(supervision)
             .build(),
         );
-        Ok(Self {
-            axo,
-            models,
-            models_error,
-        })
+        Ok((Self { axo, models }, models_error))
     }
+}
+
+/// Applies `models.jsonc` and `extendedContext` to the live registry. `Some(message)` when the
+/// file is invalid or the reload fails; the registry then keeps its last good state.
+pub(super) async fn reload(
+    models: &Models,
+    dirs: &HostDirs,
+    extended_context: bool,
+) -> Result<Option<String>, ApiError> {
+    let config = match read_models_config(dirs)? {
+        Ok(config) => config,
+        Err(error) => return Ok(Some(error.to_string())),
+    };
+    Ok(models
+        .reload(config, extended_context)
+        .await
+        .err()
+        .map(|error| error.to_string()))
+}
+
+/// Reads and parses `models.jsonc`; a missing file is the default config. The outer error is
+/// I/O, the inner one a parse error.
+fn read_models_config(dirs: &HostDirs) -> Result<Result<ModelsConfig, axo_ai::Error>, ApiError> {
+    Ok(
+        match read_optional(&dirs.models_path()).map_err(axo_error)? {
+            Some(text) => ModelsConfig::parse_jsonc(&text),
+            None => Ok(ModelsConfig::default()),
+        },
+    )
 }
 
 pub(super) fn read_extended_context(dirs: &HostDirs) -> Result<bool, ApiError> {

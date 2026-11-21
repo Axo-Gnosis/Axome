@@ -121,7 +121,7 @@
           view: ProvidersView,
           host: true,
           label: 'Providers',
-          description: `Credentials for model providers. ${AXO_NOTE}`,
+          description: 'Credentials for model providers. Open chats pick up changes right away.',
           icon: icon(CloudIcon)
         },
         {

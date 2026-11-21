@@ -3,30 +3,56 @@
 use std::time::Duration;
 
 use axo_ai::auth::codex::BASE_URL as CODEX_BASE_URL;
-use axo_ai::Credential;
+use axo_ai::ModelAuth;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use super::providers::{SearchHit, SearchRequest};
 
 const GROUNDED_TIMEOUT: Duration = Duration::from_secs(25);
 const SEARCH_INSTRUCTION: &str = "Search the web to answer the user's query concisely. Ground every claim in search results and include exact URLs.";
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+const OPENAI_URL: &str = "https://api.openai.com/v1/responses";
+const GOOGLE_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
+
+/// Whether chat for this provider goes to the host its grounded search posts to. A custom
+/// `baseUrl` (a gateway) makes this false: the gateway's key must not reach the vendor.
+pub(crate) fn posts_to_chat_host(provider: &str, chat_base: &str, auth: &ModelAuth) -> bool {
+    let search = match provider {
+        "anthropic" => ANTHROPIC_URL,
+        "openai" => OPENAI_URL,
+        "google" => GOOGLE_BASE,
+        "openai-codex" => auth.base_url.as_deref().unwrap_or(CODEX_BASE_URL),
+        _ => return false,
+    };
+    let mut chat = auth.base_url.as_deref().unwrap_or(chat_base);
+    if provider == "openai-codex" && chat.trim().is_empty() {
+        chat = CODEX_BASE_URL;
+    }
+    let chat = host(chat);
+    chat.is_some() && chat == host(search)
+}
+
+fn host(url: &str) -> Option<String> {
+    Url::parse(url).ok()?.host_str().map(str::to_owned)
+}
 
 pub(crate) async fn search_grounded(
     http: &reqwest::Client,
     provider: &str,
     model_override: Option<&str>,
-    credential: &Credential,
+    auth: &ModelAuth,
     req: &SearchRequest,
     cancel: &CancellationToken,
 ) -> Result<(Option<String>, Vec<SearchHit>), String> {
     let query = format_grounded_query(req);
     let fut = async {
         match provider {
-            "anthropic" => search_anthropic(http, credential, model_override, &query, req).await,
-            "openai" => search_openai(http, credential, model_override, &query, req).await,
-            "openai-codex" => search_codex(http, credential, model_override, &query).await,
-            "google" => search_google(http, credential, model_override, &query).await,
+            "anthropic" => search_anthropic(http, auth, model_override, &query, req).await,
+            "openai" => search_openai(http, auth, model_override, &query, req).await,
+            "openai-codex" => search_codex(http, auth, model_override, &query).await,
+            "google" => search_google(http, auth, model_override, &query).await,
             other => Err(format!(
                 "grounded search is not supported for provider {other}"
             )),
@@ -39,6 +65,18 @@ pub(crate) async fn search_grounded(
             Err(_) => Err(format!("{provider} grounded search timed out")),
         }
     }
+}
+
+/// The resolved key or access token.
+fn token(auth: &ModelAuth) -> &str {
+    auth.api_key.as_deref().unwrap_or_default()
+}
+
+/// Adds the credential's own headers (e.g. Codex `chatgpt-account-id`) after the built-in ones.
+fn auth_headers(builder: reqwest::RequestBuilder, auth: &ModelAuth) -> reqwest::RequestBuilder {
+    auth.headers.iter().fold(builder, |builder, (name, value)| {
+        builder.header(name, value)
+    })
 }
 
 fn format_grounded_query(req: &SearchRequest) -> String {
@@ -54,26 +92,18 @@ fn format_grounded_query(req: &SearchRequest) -> String {
 
 async fn search_anthropic(
     http: &reqwest::Client,
-    credential: &Credential,
+    auth: &ModelAuth,
     model_override: Option<&str>,
     query: &str,
     req: &SearchRequest,
 ) -> Result<(Option<String>, Vec<SearchHit>), String> {
     let model = model_override.unwrap_or("claude-haiku-4-5");
-    let mut builder = http
-        .post("https://api.anthropic.com/v1/messages")
+    let builder = http
+        .post(ANTHROPIC_URL)
         .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json");
-    match credential {
-        Credential::ApiKey { key } => {
-            builder = builder.header("x-api-key", key);
-        }
-        Credential::Oauth { access, .. } => {
-            builder = builder
-                .bearer_auth(access)
-                .header("anthropic-beta", "oauth-2025-04-20");
-        }
-    }
+        .header("content-type", "application/json")
+        .header("x-api-key", token(auth));
+    let builder = auth_headers(builder, auth);
     let mut tool = json!({
         "type": "web_search_20250305",
         "name": "web_search",
@@ -173,15 +203,11 @@ async fn search_anthropic(
 
 async fn search_openai(
     http: &reqwest::Client,
-    credential: &Credential,
+    auth: &ModelAuth,
     model_override: Option<&str>,
     query: &str,
     req: &SearchRequest,
 ) -> Result<(Option<String>, Vec<SearchHit>), String> {
-    let token = match credential {
-        Credential::ApiKey { key } => key.as_str(),
-        Credential::Oauth { access, .. } => access.as_str(),
-    };
     let model = model_override.unwrap_or("gpt-4o-mini");
     let body = json!({
         "model": model,
@@ -189,9 +215,8 @@ async fn search_openai(
         "input": query,
         "tools": [{ "type": "web_search" }]
     });
-    let resp = http
-        .post("https://api.openai.com/v1/responses")
-        .bearer_auth(token)
+    let builder = http.post(OPENAI_URL).bearer_auth(token(auth));
+    let resp = auth_headers(builder, auth)
         .json(&body)
         .send()
         .await
@@ -207,18 +232,15 @@ async fn search_openai(
 
 async fn search_codex(
     http: &reqwest::Client,
-    credential: &Credential,
+    auth: &ModelAuth,
     model_override: Option<&str>,
     query: &str,
 ) -> Result<(Option<String>, Vec<SearchHit>), String> {
-    let (token, account_id) = match credential {
-        Credential::Oauth { access, extra, .. } => (
-            access.as_str(),
-            extra.get("accountId").and_then(Value::as_str),
-        ),
-        Credential::ApiKey { key } => (key.as_str(), None),
-    };
-    let base = CODEX_BASE_URL.trim_end_matches('/');
+    let base = auth
+        .base_url
+        .as_deref()
+        .unwrap_or(CODEX_BASE_URL)
+        .trim_end_matches('/');
     let url = format!("{base}/codex/responses");
     let model = model_override.unwrap_or("gpt-5.1-codex-mini");
     let body = json!({
@@ -230,17 +252,14 @@ async fn search_codex(
         "tools": [{ "type": "web_search" }],
         "include": ["web_search_call.action.sources"]
     });
-    let mut builder = http
+    let builder = http
         .post(&url)
-        .bearer_auth(token)
+        .bearer_auth(token(auth))
         .header("OpenAI-Beta", "responses=experimental")
         .header("originator", "axo")
         .header("accept", "text/event-stream")
         .header("content-type", "application/json");
-    if let Some(id) = account_id.filter(|id| !id.is_empty()) {
-        builder = builder.header("chatgpt-account-id", id);
-    }
-    let resp = builder
+    let resp = auth_headers(builder, auth)
         .json(&body)
         .send()
         .await
@@ -368,22 +387,17 @@ fn parse_responses_payload(
 
 async fn search_google(
     http: &reqwest::Client,
-    credential: &Credential,
+    auth: &ModelAuth,
     model_override: Option<&str>,
     query: &str,
 ) -> Result<(Option<String>, Vec<SearchHit>), String> {
     let model = model_override.unwrap_or("gemini-2.5-flash");
-    let url =
-        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
-    let mut builder = http.post(&url).header("content-type", "application/json");
-    match credential {
-        Credential::ApiKey { key } => {
-            builder = builder.header("x-goog-api-key", key);
-        }
-        Credential::Oauth { access, .. } => {
-            builder = builder.bearer_auth(access);
-        }
-    }
+    let url = format!("{GOOGLE_BASE}/models/{model}:generateContent");
+    let builder = http
+        .post(&url)
+        .header("content-type", "application/json")
+        .header("x-goog-api-key", token(auth));
+    let builder = auth_headers(builder, auth);
     let body = json!({
         "systemInstruction": { "parts": [{ "text": SEARCH_INSTRUCTION }] },
         "contents": [{ "role": "user", "parts": [{ "text": query }] }],
@@ -443,4 +457,44 @@ fn push_unique_hit(hits: &mut Vec<SearchHit>, title: &str, url: &str, snippet: O
 
 fn clip_err(body: &str) -> String {
     body.chars().take(240).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grounded_search_stays_on_the_chat_host() {
+        let none = ModelAuth::default();
+        let cases = [
+            ("anthropic", "https://api.anthropic.com", true),
+            ("openai", "https://api.openai.com/v1", true),
+            (
+                "google",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                true,
+            ),
+            ("openai", "https://gateway.internal/v1", false),
+            ("anthropic", "not a url", false),
+            ("openai-codex", "", true),
+            ("openai-codex", "https://gateway.internal", false),
+            ("groq", "https://api.openai.com/v1", false),
+        ];
+        for (provider, chat_base, expected) in cases {
+            assert_eq!(
+                posts_to_chat_host(provider, chat_base, &none),
+                expected,
+                "{provider} via {chat_base:?}"
+            );
+        }
+        let codex_oauth = ModelAuth {
+            base_url: Some(CODEX_BASE_URL.into()),
+            ..ModelAuth::default()
+        };
+        assert!(posts_to_chat_host(
+            "openai-codex",
+            "https://gateway.internal",
+            &codex_oauth
+        ));
+    }
 }

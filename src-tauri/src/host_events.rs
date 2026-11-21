@@ -21,6 +21,10 @@ pub enum DesktopEvent {
     WorkbenchesChanged {
         server: String,
     },
+    /// `server`'s model registry changed; the desktop refetches its model lists.
+    ModelsChanged {
+        server: String,
+    },
 }
 
 pub fn channel_sink<T: Serialize + Send + Sync + 'static>(
@@ -39,6 +43,10 @@ pub fn desktop_event_sink(
                 app.emit("remote-status", json!({ "server": server, "connected": connected, "last_error": last_error, "state": state })),
             DesktopEvent::WorkbenchesChanged { server } =>
                 app.emit("workbenches-changed", json!({ "server": server })),
+            DesktopEvent::ModelsChanged { server } =>
+                app.emit("models-changed", json!({ "server": server })),
+            DesktopEvent::Host(HostEvent::ModelsChanged) =>
+                app.emit("models-changed", json!({ "server": null })),
             DesktopEvent::RemoteRunStatus { run_id, state } =>
                 app.emit("remote-run-status", json!({ "runId": run_id, "state": state })),
             DesktopEvent::Host(HostEvent::FilesChanged(payload)) => app.emit("files-changed", payload),

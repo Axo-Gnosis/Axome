@@ -56,6 +56,7 @@
   let {
     parts = $bindable([]),
     disabled = false,
+    blocked = null,
     placeholder,
     commands,
     models = [],
@@ -74,6 +75,7 @@
   }: {
     parts?: ChatPart[]
     disabled?: boolean
+    blocked?: string | null
     placeholder: string
     commands: ChatCommand[]
     models?: ChatModel[]
@@ -98,6 +100,7 @@
   let view: EditorView | undefined
   let lastParts: ChatPart[] = []
   let validation = $state('')
+  const alertMessage = $derived(validation || blocked)
   // The argument a failed send flagged; cleared by the next edit.
   let invalid = $state<string | null>(null)
   let submitting = $state(false)
@@ -105,7 +108,6 @@
   const sendMode = $derived<'send' | 'steer' | 'followUp'>(
     running ? (altHeld && onFollowUp ? 'followUp' : 'steer') : 'send'
   )
-  const canSend = $derived(!disabled && !submitting && hasContent(parts))
   const skill = $derived(invokedCommand(parts, commands, 'skill'))
   // Only a composer that can enter modes treats `/<mode>` as one; elsewhere it is plain text.
   const mode = $derived(onMode ? invokedCommand(parts, commands, 'mode') : null)
@@ -115,6 +117,7 @@
   let query = $state.raw<Query | null>(null)
   // The built-in command being typed, re-read on every editor change.
   let line = $state.raw<CommandLine | null>(null)
+  const canSend = $derived(!disabled && !submitting && (!blocked || !!line || !!mode) && hasContent(parts))
   let dismissed = ''
   let active = $state(0)
   let files = $state.raw<string[]>([])
@@ -330,7 +333,7 @@
       const enter = onMode
       const name = mode.name
       return settle(() => enter(name, rest), end)
-    } else {
+    } else if (!blocked) {
       submitting = true
       try {
         await (running && followUp && onFollowUp ? onFollowUp() : onSubmit())
@@ -809,10 +812,10 @@
       onPick={(index) => choose(index)}
     />
   {/if}
-  {#if context || validation}
+  {#if context || alertMessage}
     <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-4 py-2 text-sm">
-      {#if validation}
-        <span role="alert" class="truncate text-danger">{validation}</span>
+      {#if alertMessage}
+        <span role="alert" class="truncate text-danger">{alertMessage}</span>
       {:else if context}
         <span class="shrink-0 font-medium text-bright">{context.title}</span>
         {#if context.note}<span class="shrink-0 text-xs text-subtle">{context.note}</span>{/if}

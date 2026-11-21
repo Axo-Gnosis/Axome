@@ -73,8 +73,7 @@ export function releaseChatModelsFolder(folderPath: string): void {
   queued.delete(folderPath)
 }
 
-export async function reloadChatModels(host: string | null): Promise<void> {
-  const server = host === null ? null : (splitRemotePath(host)?.server ?? null)
+export async function reloadChatModels(server: string | null): Promise<void> {
   await Promise.all(
     [...states.keys()]
       .filter((folder) => (splitRemotePath(folder)?.server ?? null) === server)

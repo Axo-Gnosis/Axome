@@ -1709,6 +1709,7 @@ mod tests {
                     parts: vec![axo::PromptPart::Text {
                         text: "steer".into(),
                     }],
+                    custom: None,
                 },
                 axo::QueuedInput {
                     submission_id: "reopened".into(),
@@ -1716,6 +1717,7 @@ mod tests {
                     parts: vec![axo::PromptPart::Text {
                         text: "reopened".into(),
                     }],
+                    custom: None,
                 },
                 axo::QueuedInput {
                     submission_id: "follow".into(),
@@ -1723,6 +1725,7 @@ mod tests {
                     parts: vec![axo::PromptPart::Text {
                         text: "follow".into(),
                     }],
+                    custom: None,
                 },
             ],
             messages: vec![],

@@ -124,7 +124,10 @@ impl Tool for WebSearchTool {
         }
 
         let session_id = &self.session_tools.schemes.context().session_id;
-        let active_provider = self.shared.session_provider(session_id);
+        let grounded = self
+            .shared
+            .grounded(session_id, &self.session_tools.cwd, &settings)
+            .await;
         let req = SearchRequest {
             query: query.clone(),
             recency,
@@ -142,7 +145,7 @@ impl Tool for WebSearchTool {
             &self.shared.http,
             &self.shared.credentials,
             &settings,
-            active_provider.as_deref(),
+            grounded.as_ref(),
             &req,
             &cancel,
         )

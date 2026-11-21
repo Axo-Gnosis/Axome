@@ -247,7 +247,7 @@ pub(crate) fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + S
         axo_models,
         axo_provider_set_key,
         axo_provider_remove,
-        axo_models_reload,
+        axo_models_refresh,
         axo_login_start,
         axo_login_submit,
         axo_login_status,

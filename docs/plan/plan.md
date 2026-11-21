@@ -4,7 +4,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
-- **Pinned axo:** `a0ec20d` (Phase 2 Live Work on `97513d6`, then the host capability handoff `cd12162`: activity signal, typed receipts, prompt/context inspection, labeled command output, effective mode, edited results, project skill roots; [P8](design.md#decisions), [`research/axo-cd12162/`](research/axo-cd12162/host-capability-handoff.md); then the Phase 3 batch: fired keywords on submissions, inherited write scopes; [P17](design.md#decisions), [`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md); then per-turn file snapshots (`4d6bc34`) and steer/queue control (`a0ec20d`), see [T10](#t10-remaining-axo-gaps))
+- **Pinned axo:** `614089b` ([T11](#t11-axo-614089b-providers-login-and-the-live-catalog)). Earlier handoffs: Phase 2 Live Work (`97513d6`), [host capabilities](research/axo-cd12162/host-capability-handoff.md) (`cd12162`), [Phase 3](research/axo-b961066/host-capability-handoff.md) (`b961066`), and [snapshots and steer/queue control](#t10-remaining-axo-gaps) (`4d6bc34`, `a0ec20d`).
 
 ## How we work
 
@@ -28,6 +28,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 | [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Implemented (Phase 2) |
 | [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Implemented (Phase 2) |
 | [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Decided |
+| [T11](#t11-axo-614089b-providers-login-and-the-live-catalog) | axo `614089b`: provider/login seam, live model catalog, layered writes | Q44–Q57 | 7 | Slices 1–7 implemented; slice 8 awaits axo |
 
 ```mermaid
 flowchart LR
@@ -307,8 +308,50 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | **Phase 3 batch, shipped in `b961066`** | **K:** `Entry::Submission.keywords: Vec<String>` (fired names, deduplicated, text order, model-only included; old journals read empty). **W:** `writes: Option<Vec<String>>` on `ModeSpec`, `AgentSpec`, `ToolScope`, `SpawnLink`; entries are scheme URL prefixes or cwd-relative/absolute directories, absent unrestricted, `[]` none; enforced in `write`/`edit` by real path; effective scope is agent ∩ effective mode ∩ inherited ceiling, persisted on `SpawnLink`, `local://` meaning each child's own; does not restrict `bash` | Pin bumped; Stage B (keyword chip, bundled modes' `writes`, Toolbox `writes` line) uses the names as requested ([`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md)) |
 | **Adopted from axo `4d6bc34`:** per-turn file snapshots & `write` diff metadata | `write` and `edit` record `details.change` (`FileChange`) with content-addressed `<session>/snapshots/<sha256>` blobs, `LineDiff` (`additions`, `deletions`, `firstChangedLine`, `patch`, `patchTruncated`), `Axo::{read_snapshot, squash_changes}`, `Session::{read_snapshot, squash_changes}`, and `axo::{file_change, squash}`. **Breaking:** `edit` dropped top-level `diff`/`patch`/`first_changed_line` | Adopted: `editDiff` / `toolHeader` read `details.change.diff`; transcript-only per-turn `N files changed +A -D [Review]` cards open Monaco `DiffStack` ([`handoff/axo-turn-diff-snapshots.md`](handoff/axo-turn-diff-snapshots.md)) |
 | **Adopted from axo `a0ec20d`:** steer reliability & queue control | `abort` latches when pressed (not after settle); `resume_wakes` delivers held steers/follow-ups; queued steers settle pending `ask` & reviewed `yield` (`ResultResolution::Steered`); `steeringMode` defaults to `"all"`; `LiveSnapshot::queued: Vec<QueuedInput>` replaces `queued_steering`/`queued_follow_up`; `Session::withdraw` removes queued input & writes `Entry::SubmissionWithdrawn` | Pin bumped to `a0ec20d`; collapsible `QueuedMessages` card (`→` promote/interrupt-and-send, Edit prepending w/ `\n`, Cancel), double-Enter guard, and `whitespace: 'pre'` newline preservation landed ([`handoff/axo-steer-queue.md`](handoff/axo-steer-queue.md)) |
+| **axo `614089b`:** provider/login/rewrite seam, models.dev v2 + Codex account catalog with refresh, layered write scopes, `withdraw` → `QueuedInput` | Shipped; Axome pins `614089b` | Adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog); registry change signal and logout requested in [`handoff/axo-models-batch.md`](handoff/axo-models-batch.md) |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.
 
 **Decisions:** [D24](design.md#decisions) — 12 items batched for axo in [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md); remaining rows accepted/handled in Axome. [P17](design.md#decisions) — the Phase 3 batch (W, K) gated Stage B; [`handoff/axo-phase-3-batch.md`](handoff/axo-phase-3-batch.md) is fulfilled by `b9610666`; both Phase 3 stages are implemented and verified. [P18](design.md#decisions) records the accepted native bash scratch-space exception.
+
+---
+
+## T11. axo `614089b`: providers, login and the live catalog
+
+**Status:** Slices 1–7 implemented; slice 8 awaits axo · **Evidence:** [`research/axo-614089b/`](research/README.md) (compile probe, provider/login, catalog, session/write-scope surveys; harness comparisons; Axome code answers; legacy journals) · **Handoff:** [`handoff/axo-models-batch.md`](handoff/axo-models-batch.md)
+
+**What axo gives** (`a0ec20d..614089b`: `54dccae`, `0f4f890`, `614089b`)
+- **Providers and login:** `Models::{register, unregister, reload, login}`; `ProviderLogin` + `LoginInteraction` (`open_url`, `device_code`, `prompt{secret}`, `select`, `progress`; cancel by dropping); `RequestRewrite`; `CodexLogin` replaces `auth::codex::{login, refresh}`; `ProviderInfo.oauth` → `login`; OAuth credentials gain `headers`/`baseUrl` (auth.json readable as is); requests resolve against the current registry (`Error::UnknownModel`).
+- **Live catalog:** models.dev v2 (`models.dev.v2.json`, old cache ignored), the ChatGPT account's `/codex/models` list (fetched after login, offline floor otherwise), `Models::refresh` and a 2 h timer (`refreshInterval`, `catalogUrl`); open sessions adopt changed definitions at the next request, clamping thinking with an ordinary `ThinkingLevelChange`.
+- **Sessions:** layered real-path write scopes (`WriteScope`; old persisted child ceilings no longer parse); `withdraw` returns `QueuedInput` with `custom`; delivery race and reentrancy fixes; accepted-review details in camelCase; `PipeChunk` capture; concurrent squash.
+- **Breaking for Axome:** 7 production + 3 test compile errors ([`compile-probe.md`](research/axo-614089b/compile-probe.md)).
+
+**Questions** (all answered)
+- **Q44.** Registry lifetime and what Reload Models means → [P21](design.md#decisions).
+- **Q45.** First-run catalog wait after the v1 → v2 cache change → [P21](design.md#decisions).
+- **Q46.** Exposing refresh, interval, feed URL, freshness → [P21](design.md#decisions).
+- **Q47.** Keeping frontend model lists current, including the post-login Codex list → [P22](design.md#decisions).
+- **Q48.** Which login interactions Axome supports, and remote hosts → [P23](design.md#decisions).
+- **Q49.** Provider card semantics now that `login` is not OAuth → [P24](design.md#decisions).
+- **Q50.** Telling offline, unauthenticated and invalid config apart → [P24](design.md#decisions), [P21](design.md#decisions).
+- **Q51.** A selected model that no longer exists → [P25](design.md#decisions).
+- **Q52.** Grounded search auth and default model → [P26](design.md#decisions).
+- **Q53.** Runtime providers and request rewrites → [P27](design.md#decisions).
+- **Q54.** Automatic thinking clamps → [P27](design.md#decisions).
+- **Q55.** Unknown and tiered prices, extended context → [P27](design.md#decisions); unknown-price support requested as optional item U.
+- **Q56.** Child journals with legacy write ceilings → [P27](design.md#decisions).
+- **Q57.** Queued custom host messages → [P27](design.md#decisions).
+
+**Implementation**
+
+Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
+
+1. **Pin bump and mechanical fixes.** Bump `Cargo.toml:28-30`; snapshot `Models::all()` at `providers.rs:13` and `mod.rs:688,696`; `withdraw(..).parts` at `mod.rs:1018` (ponytail comment: Axome posts no host messages, P27); `custom: None` in the three `convert.rs` queue fixtures. `login.rs:61` and `web/auth.rs:160` go away in slices 3 and 6. Update the `withdraw` signature in [`handoff/axo-steer-queue.md`](handoff/axo-steer-queue.md).
+2. **Registry lifetime (P21).** Build the engine once per host; `models.jsonc`/`extendedContext` changes call `Models::reload` (error kept as `models_error`, last good registry kept); credential actions stop invalidating; **Refresh models** runs `reload` + `refresh` and reports errors; the model picker shows a loading state while the first catalog fetch runs.
+3. **Generic login (P23).** `login.rs` implements `LoginInteraction` as a current-state view (`url`, `deviceCode`, `progress`, and at most one `prompt` or `select`). Questions await an answer by id; dropping the task cancels. Protocol, RPC, `backend.ts` and the Providers login dialog carry that view. The provider's prompt accepts a pasted redirect, with a loopback explanation on remote hosts. Any provider with `login` can start one.
+4. **Provider cards (P24).** `login` replaces `oauth` on the wire; Log in and Add key independent; Remove/Log out only for stored credentials; environment hint; per-provider auth status from the backend (`available_models` already checks auth per provider: return the reason instead of dropping it).
+5. **Model freshness (P22).** `HostEvent::ModelsChanged` (global, not folder-claimed) through desktop and server event mappings; emitted after key set/remove, login and Refresh models; the chat catalog cache, `axoModels` Settings states and Providers view refetch on it.
+6. **Grounded search (P26).** `WebTools` gets the registry; grounded credentials via `Models::auth` for a registry model of the chosen provider; delete the Codex refresh in `web/auth.rs`; the grounded-model field resolves selectors (roles included) through `Models::find`; unset uses `@dash` when it lands on a grounded provider, else the hardcoded default.
+7. **Unavailable model and copy (P25, P27).** Composer marks a selected model missing from the catalog as unavailable and blocks Send with a pick-another hint; `extendedContext` description explains the standard-price cap. README: login dialog, provider cards, Refresh models, `refreshInterval`/`catalogUrl`, grounded default.
+8. **After the handoff lands.** Bump again; subscribe to `Models::subscribe` (S) and emit `ModelsChanged` from it; route Log out/Remove through `Models::logout` (L).

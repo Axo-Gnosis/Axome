@@ -20,6 +20,7 @@ pub(crate) fn to_wire(event: HostEvent) -> Option<HostEventWire> {
         HostEvent::SessionsChanged(folder) => Some(HostEventWire::SessionsChanged(folder)),
         HostEvent::IssuesChanged(folder) => Some(HostEventWire::IssuesChanged(folder)),
         HostEvent::ChatSummariesChanged(event) => Some(HostEventWire::ChatSummariesChanged(event)),
+        HostEvent::ModelsChanged => Some(HostEventWire::ModelsChanged(())),
         HostEvent::FileMoved { .. } | HostEvent::FileDeleted(_) => None,
     }
 }
@@ -96,9 +97,9 @@ pub(crate) async fn run(
 
 pub(crate) async fn claimed(session: &Mutex<Session>, event: &HostEventWire) -> bool {
     let folder = match event {
-        HostEventWire::RecentFoldersChanged(_) | HostEventWire::WorkbenchesChanged(()) => {
-            return true
-        }
+        HostEventWire::RecentFoldersChanged(_)
+        | HostEventWire::WorkbenchesChanged(())
+        | HostEventWire::ModelsChanged(()) => return true,
         HostEventWire::FilesChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::GitChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::ChatSummariesChanged(event) => Some(event.folder_path.as_str()),

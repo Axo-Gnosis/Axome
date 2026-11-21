@@ -688,14 +688,17 @@ export const backend = {
     removeProvider(provider: string, folderPath?: string | null): Promise<void> {
       return invoke('axo_provider_remove', { provider, folderPath: folderPath ?? null })
     },
-    reloadModels(folderPath?: string | null): Promise<void> {
-      return invoke('axo_models_reload', { folderPath: folderPath ?? null })
+    refreshModels(folderPath?: string | null): Promise<void> {
+      return invoke('axo_models_refresh', { folderPath: folderPath ?? null })
+    },
+    onModelsChanged(handler: (event: { server: string | null }) => void): Promise<Unsubscribe> {
+      return getHostTransport().subscribe('models-changed', handler)
     },
     loginStart(provider: string, folderPath?: string | null): Promise<AxoLoginStarted> {
       return invoke('axo_login_start', { provider, folderPath: folderPath ?? null })
     },
-    loginSubmit(loginId: string, redirect: string, folderPath?: string | null): Promise<void> {
-      return invoke('axo_login_submit', { loginId, redirect, folderPath: folderPath ?? null })
+    loginSubmit(loginId: string, questionId: number, answer: string, folderPath?: string | null): Promise<void> {
+      return invoke('axo_login_submit', { loginId, questionId, answer, folderPath: folderPath ?? null })
     },
     loginStatus(loginId: string, folderPath?: string | null): Promise<AxoLoginStatus> {
       return invoke('axo_login_status', { loginId, folderPath: folderPath ?? null })

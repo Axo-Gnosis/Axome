@@ -35,4 +35,6 @@ pub enum HostEvent {
         replace_destination: bool,
     },
     FileDeleted(PathBuf),
+    /// The model registry changed: models, providers, or credentials.
+    ModelsChanged,
 }

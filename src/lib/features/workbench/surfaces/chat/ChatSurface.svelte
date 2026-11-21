@@ -44,11 +44,12 @@
   const running = $derived(chat?.live.running ?? false)
   const model = $derived(chat?.live.model ?? null)
   const current = $derived(available.find((item) => item.selector === model))
+  const modelUnavailable = $derived(!!model && !!catalog && !current)
   const thinking = $derived(chat?.live.thinking ?? 'off')
   const levels = $derived(current?.thinking ?? [thinking])
   const disabled = $derived(controller.connection !== 'live' || !model || !!chat?.live.maintenance)
   const modelDisabled = $derived(disabled || !available.length)
-  const canSend = $derived(!disabled && hasContent(controller.draft))
+  const canSend = $derived(!disabled && !modelUnavailable && hasContent(controller.draft))
   const imageWarning = $derived(current?.images === false && controller.draft.some(isImagePart))
   const owner = $derived({ folderPath: tab.folderPath, sessionId: tab.sessionId })
   const canBranch = $derived(controller.connection === 'live' && !controller.busy)
@@ -294,6 +295,7 @@
               {keywordMatches}
               onCancel={running ? () => void stop() : undefined}
               {disabled}
+              blocked={modelUnavailable ? `${model} is no longer available. Pick another model to continue.` : null}
               placeholder={running ? 'Steer axo…' : 'Ask axo…'}
               hint={chat?.live.questions.length
                 ? { title: 'Steer', text: 'Sending this answers in your own words and closes the question' }
@@ -335,6 +337,7 @@
                   label="Model (Alt+M)"
                   value={model ?? ''}
                   models={available}
+                  loaded={!!catalog}
                   roles={catalog?.roles ?? []}
                   side="top"
                   align="end"

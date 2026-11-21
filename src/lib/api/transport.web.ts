@@ -66,6 +66,7 @@ const eventNames: Record<string, string> = {
   sessions_changed: 'sessions-changed',
   issues_changed: 'issues-changed',
   workbenches_changed: 'workbenches-changed',
+  models_changed: 'models-changed',
   chat_summaries_changed: 'chat-summaries-changed'
 }
 
@@ -434,7 +435,7 @@ export function createWebHostTransport(options: WebHostTransportOptions): WebHos
           const name = eventNames[frame.event.kind]
           if (!name) throw new Error(`Unknown host event: ${frame.event.kind}`)
           const payload =
-            frame.event.kind === 'workbenches_changed'
+            frame.event.kind === 'workbenches_changed' || frame.event.kind === 'models_changed'
               ? { server: null }
               : frame.event.kind === 'nix_changed' ||
                   frame.event.kind === 'sessions_changed' ||

@@ -631,6 +631,11 @@ fn remote_host_event(server: &str, event: HostEventWire) -> Option<DesktopEvent>
                 server: server.into(),
             })
         }
+        HostEventWire::ModelsChanged(()) => {
+            return Some(DesktopEvent::ModelsChanged {
+                server: server.into(),
+            })
+        }
         HostEventWire::RecentFoldersChanged(_) => return None,
     }))
 }

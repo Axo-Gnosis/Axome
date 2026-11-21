@@ -119,7 +119,6 @@ impl Fixture {
             Engine {
                 axo: Arc::new(axo),
                 models,
-                models_error: None,
             },
             events,
         );
@@ -1301,8 +1300,8 @@ fn chat_close_succeeds_after_folder_is_deleted() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn engine_rebuilds_when_extended_context_changes() {
-    let dir = std::env::temp_dir().join(format!("axome-extended-ctx-{}", uuid::Uuid::new_v4()));
+async fn engine_reloads_in_place() {
+    let dir = std::env::temp_dir().join(format!("axome-reload-{}", uuid::Uuid::new_v4()));
     let dirs = crate::HostDirs::under(&dir);
     std::fs::create_dir_all(&dirs.config).unwrap();
     std::fs::create_dir_all(&dirs.data).unwrap();
@@ -1329,17 +1328,39 @@ async fn engine_rebuilds_when_extended_context_changes() {
         Arc::new(|_| Ok(())),
     );
     service.bind_runtime();
+    let selectors = |engine: &Engine| {
+        engine
+            .models
+            .all()
+            .iter()
+            .map(|model| format!("{}/{}", model.provider, model.id))
+            .collect::<Vec<_>>()
+    };
 
     let first = service.engine().await.unwrap();
+    assert!(first.models.find("test/m").is_some());
 
     std::fs::write(
         dirs.settings_path(),
         json!({"axo": {"extendedContext": false}}).to_string(),
     )
     .unwrap();
-
     let second = service.engine().await.unwrap();
-    assert!(!Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(&first, &second));
+    let before = selectors(&second);
+
+    // An invalid file keeps the last good registry and reports the error.
+    std::fs::write(dirs.models_path(), "{").unwrap();
+    let third = service.engine().await.unwrap();
+    assert!(Arc::ptr_eq(&first, &third));
+    assert!(service
+        .providers()
+        .await
+        .unwrap()
+        .models_file
+        .error
+        .is_some());
+    assert_eq!(selectors(&third), before);
 
     service.shutdown();
     let _ = std::fs::remove_dir_all(&dir);

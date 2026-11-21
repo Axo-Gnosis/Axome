@@ -9,6 +9,7 @@
 
   @param value - current selector
   @param models - available models
+  @param loaded - false while the model list is still unknown; an unlisted value is then shown plainly, not as unavailable
   @param roles - roles offered first; omit where a role can't be chosen
   @param none - label of the empty choice (e.g. "Inherits @default"); omitted = no empty choice
   @param custom - offer typed `provider/model` or `@role` text that isn't listed
@@ -34,6 +35,7 @@
   let {
     value,
     models,
+    loaded = true,
     roles = [],
     none,
     custom = false,
@@ -48,6 +50,7 @@
   }: {
     value: string
     models: ChatModel[]
+    loaded?: boolean
     roles?: ChatModelRole[]
     none?: string
     custom?: boolean
@@ -122,7 +125,7 @@
     {/if}
   {:else if value}
     <span class="truncate">{value}</span>
-    {#if variant === 'field'}<span class="shrink-0 text-danger">· unavailable</span>{/if}
+    {#if loaded}<span class="shrink-0 text-danger">· unavailable</span>{/if}
   {:else}
     <span class="truncate text-subtle italic">{none ?? 'Choose a model'}</span>
   {/if}
