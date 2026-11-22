@@ -45,7 +45,7 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
   return state
 }
 
-export const BUILTIN_ROLES = ['default', 'reason', 'work', 'dash', 'conduct'] as const
+export const BUILTIN_ROLES = ['default', 'reason', 'work', 'dash', 'conduct', 'memory'] as const
 
 /** Roles as settings define them, for pickers: built-ins first, then custom names. */
 export function settingsRoles(modelRoles: Record<string, string> | undefined, extra: string[] = []): ChatModelRole[] {

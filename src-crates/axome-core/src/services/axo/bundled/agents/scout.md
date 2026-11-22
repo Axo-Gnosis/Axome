@@ -12,6 +12,7 @@ tools:
   - web_search
   - web_fetch
   - search_docs
+  - memory_search
 bash: readOnly
 ---
 Investigate the assigned codebase questions quickly and thoroughly, then return a compact, evidence-backed handoff for your parent agent.

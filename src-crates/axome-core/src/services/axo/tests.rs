@@ -321,6 +321,157 @@ async fn two_subscribers_see_same_stream() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn memory_capture_is_cursor_bound_and_never_recursive() {
+    if isolated_reopen_test("memory_capture_is_cursor_bound_and_never_recursive") {
+        return;
+    }
+    let fixture = Fixture::with_settings(
+        vec![
+            ScriptedTurn::Reply(reply_text("Agreed, the lazy icon loader stays.")),
+            ScriptedTurn::Reply(reply_text("That is the project decision.")),
+            ScriptedTurn::Reply(reply_text("Writer-directory session.")),
+        ],
+        json!({"modelRoles": {"memory": "test/m2"}}),
+    )
+    .await;
+    fixture.api.lane(
+        "m2",
+        vec![ScriptedTurn::Reply(reply_text(
+            "proj/Icons :: [decision] The lazy icon loader stays.",
+        ))],
+    );
+    let dirs = crate::HostDirs::under(&fixture.dir);
+    std::fs::create_dir_all(&dirs.config).unwrap();
+    std::fs::write(
+        dirs.config.join("settings.jsonc"),
+        r#"{"memory":{"enabled":true,"semantic":false}}"#,
+    )
+    .unwrap();
+    let id = fixture.create().await;
+    let events = fixture.attach(&id, "memory").await;
+    fixture
+        .prompt(&id, "Keep the lazy icon loader.", &events, 1)
+        .await;
+    fixture
+        .prompt(
+            &id,
+            "Yes, remember that decision for this project.",
+            &events,
+            2,
+        )
+        .await;
+    let (axo, path) = {
+        let sessions = fixture.service.sessions.lock();
+        let live = &sessions[&id];
+        (live.engine.axo.clone(), live.session.path().to_owned())
+    };
+    fixture.service.close(&id).await.unwrap();
+    wait_until(|| !fixture.service.memory.capture_pending()).await;
+    let status = fixture
+        .service
+        .memory
+        .last_capture
+        .lock()
+        .clone()
+        .expect("capture completed");
+    assert!(status.error.is_none(), "{status:?}");
+    let note = dirs.data.join("memory/banks/main/proj/Icons.md");
+    assert!(std::fs::read_to_string(&note)
+        .unwrap()
+        .contains("- [decision] The lazy icon loader stays."));
+    let (_, entries) = axo.open_session_read(&path).await.unwrap();
+    let last_seq = entries.last().unwrap().seq;
+    let cursor: u64 = fixture
+        .service
+        .db
+        .read()
+        .conn()
+        .query_row(
+            "SELECT seq FROM memory_cursors WHERE session_id = ?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cursor, last_seq);
+    assert_eq!(fixture.api.requests().len(), 3);
+    let writer_dir = dirs.data.join("memory/writer");
+    let writer_count = axo.list_sessions(&writer_dir).await.unwrap().len();
+    assert_eq!(writer_count, 0);
+    fixture.attach(&id, "reopened").await;
+    let entry_id = entries
+        .iter()
+        .rev()
+        .find_map(|seq| seq.entry.id())
+        .unwrap()
+        .to_owned();
+    let fork = fixture
+        .service
+        .fork(&fixture.folder, &id, entry_id)
+        .await
+        .unwrap();
+    fixture.service.close(&fork.session_id).await.unwrap();
+    wait_until(|| !fixture.service.memory.capture_pending()).await;
+    assert_eq!(fixture.api.requests().len(), 3);
+    let fork_cursors: u64 = fixture
+        .service
+        .db
+        .read()
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM memory_cursors WHERE session_id = ?1",
+            [&fork.session_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(fork_cursors, 1);
+    fixture.service.close(&id).await.unwrap();
+    wait_until(|| !fixture.service.memory.capture_pending()).await;
+    assert_eq!(fixture.api.requests().len(), 3);
+    assert_eq!(
+        axo.list_sessions(&writer_dir).await.unwrap().len(),
+        writer_count
+    );
+
+    let writer_id = fixture
+        .service
+        .create(&writer_dir, "test/m".into(), ChatThinking::Off)
+        .await
+        .unwrap();
+    let (writer_events, sink) = collector();
+    fixture
+        .service
+        .attach(&writer_dir, &writer_id, "writer".into(), sink)
+        .await
+        .unwrap();
+    fixture
+        .service
+        .prompt(
+            &writer_dir,
+            &writer_id,
+            "writer-cwd".into(),
+            text_parts("This session must not capture itself."),
+        )
+        .await
+        .unwrap();
+    wait_settled(&writer_events, 1).await;
+    fixture.service.close(&writer_id).await.unwrap();
+    assert!(!fixture.service.memory.capture_pending());
+    let cursors: u64 = fixture
+        .service
+        .db
+        .read()
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM memory_cursors WHERE session_id = ?1",
+            [&writer_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cursors, 0);
+    assert_eq!(fixture.api.requests().len(), 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn ask_round_trip() {
     let fixture = Fixture::new(vec![
         ScriptedTurn::Reply(reply_tool_calls(&[(

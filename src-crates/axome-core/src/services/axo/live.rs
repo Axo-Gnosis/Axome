@@ -890,6 +890,7 @@ impl LiveSession {
                             break;
                         };
                         let started = matches!(event, SessionEvent::MaintenanceStart { .. });
+                        let compacted = matches!(&event, SessionEvent::Entry(seq) if matches!(seq.entry, Entry::Compaction { .. }));
                         let (refresh, unload, summary_changed) = {
                             let mut state = live.state.lock();
                             let (refresh, unload) =
@@ -897,6 +898,11 @@ impl LiveSession {
                             let summary_changed = state.take_summary_change(&live.id);
                             (refresh, unload, summary_changed)
                         };
+                        if compacted {
+                            if let Some(service) = service.upgrade() {
+                                service.memory_capture(&live, true);
+                            }
+                        }
                         if started {
                             live.maintenance_starts.send_modify(|starts| *starts += 1);
                         }
@@ -908,6 +914,7 @@ impl LiveSession {
                         };
                         let last_seq = live.state.lock().entries.last().map(|seq| seq.seq);
                         let attach = session.attach(last_seq).await;
+                        let compacted = attach.missed.iter().any(|seq| matches!(seq.entry, Entry::Compaction { .. }));
                         let (maintaining, summary_changed) = {
                             let mut state = live.state.lock();
                             state.entries.extend(attach.missed);
@@ -943,6 +950,11 @@ impl LiveSession {
                             state.broadcast_snapshot(&live.id);
                             (maintaining, summary_changed)
                         };
+                        if compacted {
+                            if let Some(service) = service.upgrade() {
+                                service.memory_capture(&live, true);
+                            }
+                        }
                         if maintaining {
                             live.maintenance_starts.send_modify(|starts| *starts += 1);
                         }

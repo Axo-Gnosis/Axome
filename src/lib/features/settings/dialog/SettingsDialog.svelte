@@ -21,6 +21,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip'
   import {
     AppWindowIcon,
+    BrainIcon,
     Cancel01Icon,
     CloudIcon,
     CommandLineIcon,
@@ -53,6 +54,7 @@
   import ModelsView from '$lib/features/settings/views/ModelsView.svelte'
   import BehaviorView from '$lib/features/settings/views/BehaviorView.svelte'
   import ToolsView from '$lib/features/settings/views/ToolsView.svelte'
+  import MemoryView from '$lib/features/settings/views/MemoryView.svelte'
   import ProjectAccessView from '$lib/features/settings/views/ProjectAccessView.svelte'
   import { getSaveStatus } from '../views/autoSaver.svelte'
   import { getPageSections, getSettingsPage, setSettingsPage } from './state.svelte'
@@ -147,6 +149,14 @@
           label: 'Tools',
           description: `Bash, subagents, web search and docs cache. ${AXO_NOTE}`,
           icon: icon(Wrench01Icon)
+        },
+        {
+          id: 'memory',
+          view: MemoryView,
+          host: true,
+          label: 'Memory',
+          description: 'Long-term notes the agent keeps across sessions. Off by default.',
+          icon: icon(BrainIcon)
         },
         {
           id: 'project-access',

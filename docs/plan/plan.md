@@ -4,12 +4,12 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
-- **Pinned axo:** `614089b` ([T11](#t11-axo-614089b-providers-login-and-the-live-catalog)). Earlier handoffs: Phase 2 Live Work (`97513d6`), [host capabilities](research/axo-cd12162/host-capability-handoff.md) (`cd12162`), [Phase 3](research/axo-b961066/host-capability-handoff.md) (`b961066`), and [snapshots and steer/queue control](#t10-remaining-axo-gaps) (`4d6bc34`, `a0ec20d`).
+- **Pinned axo:** `5c3f418` (`614089b` plus `SessionOptions::keywords_enabled`; see [T10](#t10-remaining-axo-gaps)). The `614089b` adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog). Earlier handoffs: Phase 2 Live Work (`97513d6`), [host capabilities](research/axo-cd12162/host-capability-handoff.md) (`cd12162`), [Phase 3](research/axo-b961066/host-capability-handoff.md) (`b961066`), and [snapshots and steer/queue control](#t10-remaining-axo-gaps) (`4d6bc34`, `a0ec20d`).
 
 ## How we work
 
 - **One topic at a time**, in the order of the table below. For each topic: re-read its facts, answer its questions, record each answer as a decision in [`design.md`](design.md), then mark the topic **Decided**.
-- **Questions keep their IDs** (Q1–Q43) for the whole adoption, so notes and commits can refer to them. New questions get the next free number.
+- **Questions keep their IDs** for the whole adoption, so notes and commits can refer to them. New questions get the next free number.
 - **Facts come from axo source, not its docs.** If axo moves, re-survey the affected area into `research/axo-<rev>/` and update the facts here.
 - **When a question needs axo work**, add it to [T10](#t10-remaining-axo-gaps) so requests to axo go out in batches.
 - **Implementation starts per topic** once its decisions are recorded; the [mechanical migration](#mechanical-migration) can start as soon as T1 is decided.
@@ -29,6 +29,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 | [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Implemented (Phase 2) |
 | [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Decided |
 | [T11](#t11-axo-614089b-providers-login-and-the-live-catalog) | axo `614089b`: provider/login seam, live model catalog, layered writes | Q44–Q57 | 7 | Slices 1–7 implemented; slice 8 awaits axo |
+| [T12](#t12-long-term-memory) | Native long-term memory (Basic Memory port) | Q58–Q62 (superseded) | 8 | Shipped off by default ([P31](design.md#decisions)) |
 
 ```mermaid
 flowchart LR
@@ -308,7 +309,8 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | **Phase 3 batch, shipped in `b961066`** | **K:** `Entry::Submission.keywords: Vec<String>` (fired names, deduplicated, text order, model-only included; old journals read empty). **W:** `writes: Option<Vec<String>>` on `ModeSpec`, `AgentSpec`, `ToolScope`, `SpawnLink`; entries are scheme URL prefixes or cwd-relative/absolute directories, absent unrestricted, `[]` none; enforced in `write`/`edit` by real path; effective scope is agent ∩ effective mode ∩ inherited ceiling, persisted on `SpawnLink`, `local://` meaning each child's own; does not restrict `bash` | Pin bumped; Stage B (keyword chip, bundled modes' `writes`, Toolbox `writes` line) uses the names as requested ([`research/axo-b961066/`](research/axo-b961066/host-capability-handoff.md)) |
 | **Adopted from axo `4d6bc34`:** per-turn file snapshots & `write` diff metadata | `write` and `edit` record `details.change` (`FileChange`) with content-addressed `<session>/snapshots/<sha256>` blobs, `LineDiff` (`additions`, `deletions`, `firstChangedLine`, `patch`, `patchTruncated`), `Axo::{read_snapshot, squash_changes}`, `Session::{read_snapshot, squash_changes}`, and `axo::{file_change, squash}`. **Breaking:** `edit` dropped top-level `diff`/`patch`/`first_changed_line` | Adopted: `editDiff` / `toolHeader` read `details.change.diff`; transcript-only per-turn `N files changed +A -D [Review]` cards open Monaco `DiffStack` ([`handoff/axo-turn-diff-snapshots.md`](handoff/axo-turn-diff-snapshots.md)) |
 | **Adopted from axo `a0ec20d`:** steer reliability & queue control | `abort` latches when pressed (not after settle); `resume_wakes` delivers held steers/follow-ups; queued steers settle pending `ask` & reviewed `yield` (`ResultResolution::Steered`); `steeringMode` defaults to `"all"`; `LiveSnapshot::queued: Vec<QueuedInput>` replaces `queued_steering`/`queued_follow_up`; `Session::withdraw` removes queued input & writes `Entry::SubmissionWithdrawn` | Pin bumped to `a0ec20d`; collapsible `QueuedMessages` card (`→` promote/interrupt-and-send, Edit prepending w/ `\n`, Cancel), double-Enter guard, and `whitespace: 'pre'` newline preservation landed ([`handoff/axo-steer-queue.md`](handoff/axo-steer-queue.md)) |
-| **axo `614089b`:** provider/login/rewrite seam, models.dev v2 + Codex account catalog with refresh, layered write scopes, `withdraw` → `QueuedInput` | Shipped; Axome pins `614089b` | Adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog); registry change signal and logout requested in [`handoff/axo-models-batch.md`](handoff/axo-models-batch.md) |
+| **axo `614089b`:** provider/login/rewrite seam, models.dev v2 + Codex account catalog with refresh, layered write scopes, `withdraw` → `QueuedInput` | Shipped; Axome pins `5c3f418`, which builds on it | Adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog); registry change signal and logout requested in [`handoff/axo-models-batch.md`](handoff/axo-models-batch.md) |
+| **axo `5c3f418`:** `SessionOptions::keywords_enabled` | Shipped; `false` loads no keywords for the session and its forks | The memory writer sets it, so keyword words quoted in a captured transcript never inject bodies or switch the writer off `@memory` |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.
@@ -355,3 +357,17 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 6. **Grounded search (P26).** `WebTools` gets the registry; grounded credentials via `Models::auth` for a registry model of the chosen provider; delete the Codex refresh in `web/auth.rs`; the grounded-model field resolves selectors (roles included) through `Models::find`; unset uses `@dash` when it lands on a grounded provider, else the hardcoded default.
 7. **Unavailable model and copy (P25, P27).** Composer marks a selected model missing from the catalog as unavailable and blocks Send with a pick-another hint; `extendedContext` description explains the standard-price cap. README: login dialog, provider cards, Refresh models, `refreshInterval`/`catalogUrl`, grounded default.
 8. **After the handoff lands.** Bump again; subscribe to `Models::subscribe` (S) and emit `ModelsChanged` from it; route Log out/Remove through `Models::logout` (L).
+
+---
+
+## T12. Long-term memory
+
+**Status:** Shipped as native memory, off by default ([P31](design.md#decisions), superseding P28–P30). The Hindsight research below stays as evidence; its gates Q58–Q62 applied to a remote backend that Axome no longer uses. Workspace Trust gating of folder-level bank settings is tracked in `TODO.md`.
+
+**Open questions / gates before enabling remote memory**
+
+- **Q58. Deployment authority.** Where will credentials and the scope-bound broker live for each desktop/server principal, out of reach of model tools and repository code? Demonstrate real Workspace Trust and the code/web/admin split on the target deployment, not just in the isolated policy smoke. Until then: disabled.
+- **Q59. Retrieval value.** On held-out decisions from more projects and dates, does ranking *approved note IDs* outperform searching the same local notes, with positive coverage ≥0.80, graded precision ≥0.70, zero forbidden output and on-demand p95 ≤2 s? Legacy-bank scores and a synthetic isolation check are not acceptance of the new corpus.
+- **Q60. Forget and sharing.** Can deletion of one reviewed version be verified after an ambiguous retain acknowledgement, a late worker, or web recall of a code document? Qualify derivative/model refresh, backup expiry and already-delivered transcript limits before promising deletion outside the host.
+- **Q61. Operating budget.** Does extraction **plus consolidation** of approved notes stay within the research budget on the single shared inference slot, including retries? Establish daily operator quota and energy/price accounting. Qualify cache loss on the actual target provider with deferred tools, compaction and resume.
+- **Q62. Human scope mapping.** Which trusted worktrees, principals and deployments should share a note namespace, and does the user want code→web visibility for that scope? Require an explicit host-owned mapping; do not infer identity from repo text, basename, remote URL or a tag. Decide whether any legacy evidence warrants individual review; no bulk import.

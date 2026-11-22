@@ -655,6 +655,12 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             AxoWebToolsStatus => axo_web_tools_status() -> $crate::axo::AxoWebToolsStatusPayload;
             #[route(server)]
+            MemoryStatus => memory_status() -> $crate::memory::MemoryStatus;
+            #[route(server)]
+            MemoryRetryDownload => memory_retry_download() -> ();
+            #[route(server)]
+            MemoryEnsureBank => memory_ensure_bank(name: String) -> String;
+            #[route(server)]
             AxoSearchKeySet => axo_search_key_set(provider: String, key: String) -> ();
             #[route(server)]
             AxoSearchKeyRemove => axo_search_key_remove(provider: String) -> ();
@@ -672,6 +678,10 @@ macro_rules! axome_rpc_ops {
             SettingsSetNix => settings_set_nix(
                 settings: $crate::settings::NixSettings,
             ) -> $crate::settings::NixSettings;
+            #[route(server)]
+            SettingsSetMemory => settings_set_memory(
+                settings: $crate::settings::MemorySettings,
+            ) -> $crate::settings::MemorySettings;
             #[route(server)]
             SettingsSetFormatting => settings_set_formatting(
                 formatting: $crate::settings::FormattingSettings,

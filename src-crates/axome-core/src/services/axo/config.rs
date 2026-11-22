@@ -135,7 +135,7 @@ fn fill_roles(settings: &mut Option<serde_json::Value>, last_model: Option<&str>
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut()
         .expect("validated model roles");
-    for name in ["default", "reason", "work", "dash", "conduct"] {
+    for name in ["default", "reason", "work", "dash", "conduct", "memory"] {
         roles.entry(name).or_insert_with(|| fallback.clone().into());
     }
 }
@@ -167,7 +167,8 @@ mod tests {
             Some(json!({
                 "modelRoles": {
                     "default": "provider/default", "reason": "provider/default",
-                    "work": "provider/default", "dash": "provider/fast", "conduct": "provider/default"
+                    "work": "provider/default", "dash": "provider/fast", "conduct": "provider/default",
+                    "memory": "provider/default"
                 },
                 "defaultThinkingLevel": "high"
             }))
@@ -185,7 +186,7 @@ mod tests {
             Some(json!({"modelRoles": {
                 "custom": "provider/custom", "work": "provider/work",
                 "default": "provider/last", "reason": "provider/last",
-                "dash": "provider/last", "conduct": "provider/last"
+                "dash": "provider/last", "conduct": "provider/last", "memory": "provider/last"
             }}))
         );
 
@@ -197,7 +198,7 @@ mod tests {
             absent,
             Some(json!({"modelRoles": {
                 "default": "provider/last", "reason": "provider/last", "work": "provider/last",
-                "dash": "provider/last", "conduct": "provider/last"
+                "dash": "provider/last", "conduct": "provider/last", "memory": "provider/last"
             }}))
         );
     }

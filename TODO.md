@@ -7,6 +7,8 @@
 
 ## Backlog
 
+- Memory: gate folder-level `memory.bank`/`memory.banks` on Workspace Trust (D4) once it exists; today any opened repo may point memory at any bank or path.
+
 ### UI
 
 - [ ] `VariableHeightVirtualList` sibling primitive

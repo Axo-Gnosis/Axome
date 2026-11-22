@@ -66,7 +66,8 @@ const markdownSchema: Options = {
       'local',
       'artifact',
       'history',
-      'agent'
+      'agent',
+      'memory'
     ],
     // Embedded images are MIME-checked after sanitization; data links stay blocked.
     src: [...(defaultSchema.protocols?.src ?? []), 'data']

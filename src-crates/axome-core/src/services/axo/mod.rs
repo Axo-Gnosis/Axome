@@ -100,6 +100,7 @@ pub(crate) struct AxoService {
     engine: tokio::sync::Mutex<EngineSlot>,
     credentials: Arc<FileCredentialStore>,
     web: Arc<web::WebTools>,
+    pub(crate) memory: Arc<crate::services::memory::MemoryService>,
     login: tokio::sync::Mutex<Option<login::Login>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     // Attachments to closed child sessions, by session id: (attach id, sink).
@@ -223,12 +224,15 @@ impl AxoService {
                 dirs.data.join("axo").join("auth.json"),
             ));
             let web = web::WebTools::new(dirs.clone(), Arc::clone(&credentials), this.clone());
+            let memory =
+                crate::services::memory::MemoryService::new(dirs.clone(), web.http.clone());
             Self {
                 this: this.clone(),
                 db,
                 runtime: OnceLock::new(),
                 credentials,
                 web,
+                memory,
                 dirs,
                 supervision,
                 events,
@@ -412,6 +416,11 @@ impl AxoService {
             tracing::warn!(%error, "could not read plansDir; using the default");
             axome_protocol::axo_settings::DEFAULT_PLANS_DIR.to_owned()
         });
+        let mut tools = self.web.host_tools(folder);
+        tools.extend(crate::services::memory::tools::host_tools(
+            &self.memory,
+            folder,
+        ));
         SessionOptions {
             cwd: folder.to_owned(),
             model,
@@ -426,11 +435,21 @@ impl AxoService {
                 folder.to_owned(),
             ))),
             sections: Vec::new(),
-            tools: self.web.host_tools(folder),
-            schemes: self.web.host_schemes(),
+            tools,
+            schemes: self.host_schemes(folder),
             recovery: RecoveryPolicy::Resume,
             ..Default::default()
         }
+    }
+
+    fn host_schemes(&self, folder: &Path) -> Vec<Arc<dyn axo::Scheme>> {
+        let mut schemes = self.web.host_schemes();
+        if let Some(fm) = self.memory.active(folder) {
+            schemes.push(Arc::new(
+                crate::services::memory::scheme::MemoryScheme::new(Arc::clone(&self.memory), fm),
+            ));
+        }
+        schemes
     }
 
     fn ensure_open(&self) -> Result<(), ApiError> {
@@ -614,7 +633,7 @@ impl AxoService {
                 let Some(live) = sessions.remove(id) else {
                     return;
                 };
-                self.retire(live);
+                self.retire(live, false);
                 parent_to_check = Some(root_id);
                 None
             } else {
@@ -626,7 +645,7 @@ impl AxoService {
                         return;
                     };
                     let folder = live.folder.clone();
-                    self.retire(live);
+                    self.retire(live, false);
                     Some(folder)
                 } else {
                     drop(sessions);
@@ -664,7 +683,7 @@ impl AxoService {
                 {
                     sessions.remove(&id).map(|live| {
                         let folder = live.folder.clone();
-                        service.retire(live);
+                        service.retire(live, false);
                         folder
                     })
                 } else {
@@ -677,17 +696,43 @@ impl AxoService {
         });
     }
     // Called with the registry locked so reopen cannot miss the retirement barrier.
-    fn retire(&self, live: Arc<LiveSession>) {
+    fn retire(&self, live: Arc<LiveSession>, capture: bool) {
         live.abort_relay();
         if let Some(runtime) = self.runtime() {
             let id = live.id.clone();
+            let service = self.this.clone();
             let task = runtime.spawn(async move {
                 live.release().await;
+                if capture {
+                    if let Some(service) = service.upgrade() {
+                        service.memory_capture(&live, false);
+                    }
+                }
             });
             self.retiring
                 .lock()
                 .insert(id, Arc::new(tokio::sync::Mutex::new(Some(task))));
         }
+    }
+
+    fn memory_capture(&self, live: &LiveSession, compaction: bool) {
+        if self.closed.load(Ordering::Acquire)
+            || live.root_id.is_some()
+            || !live.session.path().is_file()
+        {
+            return;
+        }
+        self.memory.capture(
+            crate::services::memory::writer::CaptureJob {
+                folder: live.folder.clone(),
+                session_path: live.session.path().to_owned(),
+                session_id: live.id.clone(),
+            },
+            compaction,
+            live.engine.axo.clone(),
+            self.db.clone(),
+            vec![bundled::memory_writer().clone()],
+        );
     }
 
     async fn wait_retiring(&self, id: &str) -> bool {
@@ -712,7 +757,7 @@ impl AxoService {
 
     /// Removes `id` (and, for a root, its children) from the registry, tells their
     /// subscribers, and retires them under the registry lock. Returns them, target last.
-    fn evict(&self, id: &str, message: &str) -> Vec<Arc<LiveSession>> {
+    fn evict(&self, id: &str, message: &str, capture: bool) -> Vec<Arc<LiveSession>> {
         let mut sessions = self.sessions.lock();
         let Some(target) = sessions.remove(id) else {
             return Vec::new();
@@ -725,14 +770,14 @@ impl AxoService {
         evicted.push(target);
         for live in &evicted {
             live.broadcast_closed(message.to_owned());
-            self.retire(live.clone());
+            self.retire(live.clone(), capture);
         }
         evicted
     }
 
     fn crashed(&self, id: &str, message: String) {
         let notice = format!("axo session stopped unexpectedly: {message}");
-        let evicted = self.evict(id, &notice);
+        let evicted = self.evict(id, &notice, false);
         if let Some(target) = evicted.last().filter(|live| live.root_id.is_none()) {
             self.emit_summaries(&target.folder);
         }
@@ -1019,7 +1064,7 @@ impl AxoService {
                 missing: false,
             });
         }
-        let evicted = self.evict(id, "Session closed");
+        let evicted = self.evict(id, "Session closed", true);
         if let Some(target) = evicted.last().filter(|live| live.root_id.is_none()) {
             self.emit_summaries(&target.folder);
         }
@@ -1339,7 +1384,7 @@ impl AxoService {
         match self.target(folder, id).await? {
             SessionTarget::Live(live) => Ok(SessionSchemes::Live(live)),
             SessionTarget::Closed(axo, path) => {
-                let host_schemes = self.web.host_schemes();
+                let host_schemes = self.host_schemes(folder);
                 Ok(SessionSchemes::Closed(
                     axo.schemes(&path, Some(ProjectAccess::Trust), &host_schemes)
                         .await
@@ -1673,6 +1718,30 @@ impl AxoService {
                 live.engine.clone(),
             )
             .await?;
+        // The copied history belongs to the parent's capture; the fork captures only what follows.
+        match live
+            .engine
+            .axo
+            .open_session_read(session.session.path())
+            .await
+        {
+            Ok((_, entries)) => {
+                if let Some(last) = entries.last() {
+                    if let Err(error) = crate::services::memory::writer::save_cursor(
+                        self.db.clone(),
+                        session.id.clone(),
+                        last.seq,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%error, "Could not seed the fork's memory cursor");
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Could not read the fork to seed its memory cursor")
+            }
+        }
         self.schedule_refresh(folder);
         Ok(ChatForkInfo {
             session_id: session.id.clone(),
@@ -1775,6 +1844,7 @@ impl AxoService {
             return;
         };
         let service = self.this.upgrade();
+        let memory = Arc::clone(&self.memory);
         let result = std::thread::spawn(move || {
             runtime.block_on(async move {
                 if let Some(service) = service {
@@ -1796,6 +1866,9 @@ impl AxoService {
                     });
                 }
                 tokio::time::timeout(Duration::from_secs(10), async {
+                    // Awaited here, not spawned: with no capture queue it returns at once,
+                    // so a shutdown with nothing to release never needs the runtime to schedule.
+                    memory.stop_capture().await;
                     while let Some(result) = tasks.join_next().await {
                         if let Err(error) = result {
                             tracing::warn!(%error, "axo shutdown task failed");
@@ -1967,6 +2040,30 @@ async fn build_readonly_state(
     })
 }
 
+pub(crate) fn message_text(message: &axo_ai::Message) -> impl Iterator<Item = &str> {
+    let (user, assistant) = match message {
+        axo_ai::Message::User(user) => (Some(user), None),
+        axo_ai::Message::Assistant(assistant) => (None, Some(assistant)),
+        axo_ai::Message::System(_) | axo_ai::Message::ToolResult(_) => (None, None),
+    };
+    user.into_iter()
+        .flat_map(|user| &user.content)
+        .filter_map(|block| match block {
+            axo_ai::UserBlock::Text { text } => Some(text.as_str()),
+            axo_ai::UserBlock::Image { .. } => None,
+        })
+        .chain(
+            assistant
+                .into_iter()
+                .flat_map(|assistant| &assistant.content)
+                .filter_map(|block| match block {
+                    axo_ai::AssistantBlock::Text { text, .. } => Some(text.as_str()),
+                    axo_ai::AssistantBlock::Thinking { .. }
+                    | axo_ai::AssistantBlock::ToolCall(_) => None,
+                }),
+        )
+}
+
 fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<HistoryRow> {
     let read = || -> std::io::Result<Option<HistoryRow>> {
         let mut entries = Vec::new();
@@ -2002,34 +2099,23 @@ fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<History
                     notices.insert(submission_id);
                 }
                 Entry::Message {
-                    message: axo_agent::AgentMessage::Llm(axo_ai::Message::User(user)),
+                    message: axo_agent::AgentMessage::Llm(message @ axo_ai::Message::User(_)),
                     submission_id,
                     ..
                 } if !submission_id
                     .as_ref()
                     .is_some_and(|id| notices.contains(id)) =>
                 {
-                    row.push_message(
-                        MessageRole::User,
-                        user.content.iter().filter_map(|block| match block {
-                            axo_ai::UserBlock::Text { text } => Some(text.as_str()),
-                            axo_ai::UserBlock::Image { .. } => None,
-                        }),
-                    )
+                    row.push_message(MessageRole::User, message_text(&message))
                 }
                 Entry::Message {
-                    message: axo_agent::AgentMessage::Llm(axo_ai::Message::Assistant(assistant)),
+                    message: axo_agent::AgentMessage::Llm(message @ axo_ai::Message::Assistant(_)),
                     ..
                 } => {
-                    row.model = Some(format!("{}/{}", assistant.provider, assistant.model));
-                    row.push_message(
-                        MessageRole::Agent,
-                        assistant.content.iter().filter_map(|block| match block {
-                            axo_ai::AssistantBlock::Text { text, .. } => Some(text.as_str()),
-                            axo_ai::AssistantBlock::Thinking { .. }
-                            | axo_ai::AssistantBlock::ToolCall(_) => None,
-                        }),
-                    );
+                    if let axo_ai::Message::Assistant(assistant) = &message {
+                        row.model = Some(format!("{}/{}", assistant.provider, assistant.model));
+                    }
+                    row.push_message(MessageRole::Agent, message_text(&message));
                 }
                 entry @ (Entry::Submission { .. } | Entry::SessionInfo { .. }) => {
                     entries.push(entry)

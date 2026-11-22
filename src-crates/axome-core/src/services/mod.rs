@@ -18,6 +18,7 @@ pub(crate) mod history;
 pub mod issue_bridge;
 pub mod issues;
 pub mod lsp;
+pub mod memory;
 pub mod nix;
 pub mod omp;
 pub mod pty;

@@ -6,7 +6,7 @@ use axome_protocol::extensions::{FORMATTER_DISABLED, FORMATTER_LSP};
 use axome_protocol::settings::{
     EffectiveSettings, HarnessConfigRecord, HarnessSettings, LspServerConfigRecord,
     LspServerSettings, SettingsDiagnostic, SettingsDiagnosticCode, SettingsDiagnosticSeverity,
-    SettingsLayerKind, SettingsOrigin,
+    SettingsLayerKind, SettingsOrigin, MEMORY_BANK_NAME_PATTERN,
 };
 use jsonschema::{error::ValidationErrorKind, Validator};
 use schemars::schema_for;
@@ -255,10 +255,17 @@ fn validate_layer(
                     (pointer, SettingsDiagnosticCode::UnknownKey, message)
                 }));
             }
-            // Harnesses, lsp.servers, and formatting use catalog ids; presets
-            // use a name pattern, all pinned in the schema as `propertyNames`.
+            // Catalog ids and preset/bank name patterns are pinned as `propertyNames`.
             ValidationErrorKind::PropertyNames { error: inner } => {
                 let key = inner.instance().as_str().unwrap_or_default().to_string();
+                if at == "/memory/banks" {
+                    rejected.push((
+                        format!("{at}{}", json_pointer(&[&key])),
+                        SettingsDiagnosticCode::InvalidValue,
+                        format!("Invalid bank name `{key}`: use a lowercase letter followed by lowercase letters, digits or '-'"),
+                    ));
+                    continue;
+                }
                 if at.ends_with("/presets") {
                     rejected.push((
                         format!("{at}{}", json_pointer(&[&key])),
@@ -377,6 +384,9 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     "/axo/webSearch",
     "/axo/docs/ttlHours",
     "/axo/docs/retentionDays",
+    // trust: until Workspace Trust (design D4) exists, a repo's .axome/settings.jsonc may set memory.bank, memory.banks and memory.exclude freely; gate them on trust when it lands.
+    "/memory/enabled",
+    "/memory/semantic",
 ];
 
 fn is_global_only_pointer(pointer: &str) -> bool {
@@ -409,6 +419,24 @@ pub(crate) fn settings_layer_schema(layer: SettingsLayerKind, ids: &SettingsCata
                 "propertyNames".to_string(),
                 json!({ "pattern": "^[A-Za-z0-9_-]+$" }),
             );
+    }
+    for (pointer, key, value) in [
+        (
+            "/definitions/MemorySettings/properties/banks",
+            "propertyNames",
+            json!({ "pattern": MEMORY_BANK_NAME_PATTERN }),
+        ),
+        (
+            "/definitions/MemorySettings/properties/bank",
+            "pattern",
+            json!(MEMORY_BANK_NAME_PATTERN),
+        ),
+    ] {
+        schema
+            .pointer_mut(pointer)
+            .and_then(Value::as_object_mut)
+            .unwrap_or_else(|| panic!("settings schema exposes {pointer}"))
+            .insert(key.to_string(), value);
     }
     restrict_map_keys(&mut schema, &["lsp", "servers"], ids.lsp_server_ids.clone());
     restrict_map_keys(
@@ -551,6 +579,63 @@ mod tests {
     }
 
     #[test]
+    fn memory_settings_keep_enablement_global_and_strip_invalid_bank_names() {
+        let defaults = resolve(missing(SettingsLayerKind::Global, "global"), None);
+        assert!(!defaults.settings.memory.enabled);
+        assert!(defaults.settings.memory.semantic);
+        assert_eq!(defaults.settings.memory.bank, "main");
+        assert!(defaults.settings.memory.capture.compaction);
+        assert!(defaults.settings.memory.capture.close);
+
+        let resolved = resolve(
+            loaded(
+                SettingsLayerKind::Global,
+                "global",
+                json!({ "memory": { "enabled": true, "semantic": false } }),
+            ),
+            Some(loaded(
+                SettingsLayerKind::Folder,
+                "folder",
+                json!({ "memory": {
+                    "enabled": false, "semantic": true, "bank": "proj",
+                    "exclude": true, "capture": { "close": false },
+                    "banks": { "proj": { "path": ".axome/memory" }, "Bad/name": {} }
+                } }),
+            )),
+        );
+        let memory = &resolved.settings.memory;
+        assert!(memory.enabled);
+        assert!(!memory.semantic);
+        assert!(memory.exclude);
+        assert_eq!(memory.bank, "proj");
+        assert!(!memory.capture.close);
+        assert_eq!(memory.banks.len(), 1);
+        assert_eq!(memory.banks["proj"].path.as_deref(), Some(".axome/memory"));
+        assert!(resolved
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.pointer == "/memory/banks/Bad~1name"
+                && diagnostic.code == SettingsDiagnosticCode::InvalidValue));
+
+        for bank in ["../x", "", "team/notes"] {
+            let resolved = resolve(
+                loaded(
+                    SettingsLayerKind::Global,
+                    "global",
+                    json!({ "memory": { "enabled": true, "bank": bank } }),
+                ),
+                None,
+            );
+            assert_eq!(resolved.settings.memory.bank, "main");
+            assert!(resolved
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.pointer == "/memory/bank"
+                    && diagnostic.code == SettingsDiagnosticCode::InvalidValue));
+        }
+    }
+
+    #[test]
     fn valid_global_overrides_defaults() {
         let resolved = resolve(
             loaded(
@@ -636,6 +721,7 @@ mod tests {
                         },
                         "bash": { "ci": false }
                     },
+                    "memory": { "enabled": true, "semantic": false },
                     "window": { "tabBeamPosition": "top" },
                     "typography": { "codeFontSize": 20 },
                     "remotes": {

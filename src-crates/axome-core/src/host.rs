@@ -66,6 +66,7 @@ pub struct Host {
     pub(crate) history_binder: HistoryBinder,
     pub(crate) session_index: Arc<SessionIndexService>,
     pub(crate) axo: Arc<AxoService>,
+    pub(crate) memory: Arc<crate::services::memory::MemoryService>,
     pub(crate) nix_eval_locks: Mutex<HashSet<String>>,
     pub(crate) events: EventSink<HostEvent>,
 }
@@ -101,6 +102,15 @@ impl Host {
                 }
             })
         };
+        let memory = Arc::clone(&axo.memory);
+        let on_global_settings: Arc<dyn Fn() + Send + Sync> = {
+            let memory = Arc::downgrade(&memory);
+            Arc::new(move || {
+                if let Some(memory) = memory.upgrade() {
+                    memory.refresh(false);
+                }
+            })
+        };
         Ok(Self {
             admission: Arc::new(tokio::sync::RwLock::new(())),
             db,
@@ -117,12 +127,14 @@ impl Host {
                 Arc::clone(&events),
                 dirs.clone(),
                 on_models_file,
+                on_global_settings,
             ),
             file_watchers: FileWatcherService::new(),
             git_watchers: GitWatcherService::new(git),
             history_binder: HistoryBinder::new(),
             session_index,
             axo,
+            memory,
             nix_eval_locks: Mutex::new(HashSet::new()),
             events,
             dirs,

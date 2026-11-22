@@ -1012,8 +1012,45 @@ export interface AxoSettings {
   docs: AxoDocsSettings
 }
 
+export interface MemoryBank {
+  path: string | null
+}
+
+export interface MemoryCapture {
+  compaction: boolean
+  close: boolean
+}
+
+export interface MemorySettings {
+  enabled: boolean
+  semantic: boolean
+  bank: string
+  exclude: boolean
+  banks: Record<string, MemoryBank>
+  capture: MemoryCapture
+}
+
+export interface MemoryStatus {
+  enabled: boolean
+  embed: {
+    state: 'disabled' | 'missing' | 'downloading' | 'ready' | 'failed'
+    received: number
+    total: number
+    error: string | null
+  }
+  banks: { name: string; path: string; exists: boolean; notes: number; default: boolean }[]
+  lastCapture: {
+    at: string
+    sessionId: string
+    added: number
+    replaced: number
+    error: string | null
+  } | null
+}
+
 export interface EffectiveSettings {
   axo: AxoSettings
+  memory: MemorySettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings
@@ -1076,6 +1113,7 @@ export interface HarnessSettingsEntry {
 
 export interface SettingsPayload {
   axo: AxoSettings
+  memory: MemorySettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings

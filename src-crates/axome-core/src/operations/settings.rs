@@ -14,7 +14,7 @@ use crate::{
 };
 use axome_protocol::settings::{
     EffectiveSettingsPayload, FormattingSettings, HarnessConfigRecord, HarnessSettingsEntry,
-    NixSettings, PatchSettingsSectionInput, SettingsFileResult, SettingsLayerKind,
+    MemorySettings, NixSettings, PatchSettingsSectionInput, SettingsFileResult, SettingsLayerKind,
     SettingsLayerPayload, SettingsPayload, ShellConfigRecord, TypographySettings, WindowSettings,
 };
 use serde_json::{json, Value};
@@ -45,6 +45,7 @@ impl Host {
 
         Ok(SettingsPayload {
             axo: resolved.settings.axo,
+            memory: resolved.settings.memory,
             window: resolved.settings.window,
             typography: resolved.settings.typography,
             nix: resolved.settings.nix,
@@ -144,6 +145,16 @@ impl Host {
         let value = serde_json::to_value(&settings)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         self.settings_update_global_section("nix", |_| Ok(value))?;
+        Ok(settings)
+    }
+
+    pub fn settings_set_memory(
+        &self,
+        settings: MemorySettings,
+    ) -> Result<MemorySettings, ApiError> {
+        let value = serde_json::to_value(&settings)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        self.settings_update_global_section("memory", |_| Ok(value))?;
         Ok(settings)
     }
 

@@ -5,6 +5,7 @@ import { loadLspServers } from './lspSettings.svelte'
 import type {
   FormattingSettings,
   LspServerConfig,
+  MemorySettings,
   NixSettings,
   HarnessConfig,
   SettingsPayload,
@@ -113,6 +114,17 @@ export async function saveNixSettings(nextSettings: NixSettings, host: string | 
     (current, saved) => ({
       ...current,
       nix: saved
+    })
+  )
+}
+
+export async function saveMemorySettings(nextSettings: MemorySettings, host: string | null) {
+  return saveHostSection(
+    host,
+    (folder) => backend.settings.setMemory(nextSettings, folder),
+    (current, saved) => ({
+      ...current,
+      memory: saved
     })
   )
 }

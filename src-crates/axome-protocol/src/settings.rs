@@ -1,5 +1,6 @@
 use crate::axo_settings::AxoSettings;
 use crate::harness::HarnessStatus;
+use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -300,6 +301,54 @@ pub struct LspSettings {
     pub servers: BTreeMap<String, LspServerSettings>,
 }
 
+pub const MEMORY_BANK_NAME_PATTERN: &str = "^[a-z][a-z0-9-]*$";
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct MemorySettings {
+    pub enabled: bool,
+    pub semantic: bool,
+    pub bank: String,
+    pub exclude: bool,
+    pub banks: IndexMap<String, MemoryBank>,
+    pub capture: MemoryCapture,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            semantic: true,
+            bank: "main".to_string(),
+            exclude: false,
+            banks: IndexMap::new(),
+            capture: MemoryCapture::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct MemoryBank {
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct MemoryCapture {
+    pub compaction: bool,
+    pub close: bool,
+}
+
+impl Default for MemoryCapture {
+    fn default() -> Self {
+        Self {
+            compaction: true,
+            close: true,
+        }
+    }
+}
+
 /// # Axome settings
 ///
 /// Project settings can override executable paths and args for harnesses and LSP servers. Only trust settings from repositories you trust.
@@ -307,6 +356,7 @@ pub struct LspSettings {
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct EffectiveSettings {
     pub axo: AxoSettings,
+    pub memory: MemorySettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -423,6 +473,7 @@ pub struct HarnessSettingsEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsPayload {
     pub axo: AxoSettings,
+    pub memory: MemorySettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -507,6 +558,7 @@ mod tests {
             .extra_args = vec!["--stdio".to_string()];
         let payload = SettingsPayload {
             axo: settings.axo,
+            memory: settings.memory,
             window: settings.window,
             typography: settings.typography,
             nix: settings.nix,

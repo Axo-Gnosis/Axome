@@ -22,7 +22,8 @@
     reason: 'Planning, research and reasoning',
     work: 'Delegated task subagents',
     dash: 'Fast exploration',
-    conduct: 'Orchestrating subagents'
+    conduct: 'Orchestrating subagents',
+    memory: 'Background memory capture. Runs after sessions; a local model keeps it free.'
   }
   let settings = $derived(fields.settings)
   // Settings are host-scoped and must load models even with no folder open.

@@ -17,6 +17,7 @@ Surveys of axo as Axome sees it. Each was made by a read-only subagent against a
 | [`axo-614089b/harness-model-catalog.md`](axo-614089b/harness-model-catalog.md) | How the same harnesses load, refresh and push model catalogs, report offline/auth/config states, clamp effort, and show unknown or tiered prices and extended context |
 | [`axo-614089b/legacy-journals-and-queue.md`](axo-614089b/legacy-journals-and-queue.md) | The 9 local child journals with legacy `writes`, the blast radius at `614089b`, exactness of a one-layer read; whether custom `QueuedInput` can reach Axome today |
 | [`axo-614089b/axome-code-answers.md`](axo-614089b/axome-code-answers.md) | Axome-side facts for the open questions: engine rebuild vs live sessions, model caches and push channels, login path and remote callback, provider cards, grounded search auth, empty/unavailable states, change entries, cost display |
+| [`axo-614089b/memory.md`](axo-614089b/memory.md) | 2026-11-21: two live Hindsight bank exports, 46 session questions, measured recall quality/latency and provider cache reads, pinned harness comparison, and the host-owned memory decision |
 
 ## axo `b961066` (2026-11-15): Phase 3 batch survey
 

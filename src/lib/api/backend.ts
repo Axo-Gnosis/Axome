@@ -53,6 +53,8 @@ import type {
   FilesChangedEvent,
   FormattingSettings,
   NixSettings,
+  MemorySettings,
+  MemoryStatus,
   TypographySettings,
   WindowSettings,
   GitBrief,
@@ -726,7 +728,22 @@ export const backend = {
     }
   },
 
+  memory: {
+    status(folderPath?: string | null): Promise<MemoryStatus> {
+      return invoke('memory_status', { folderPath: folderPath ?? null })
+    },
+    retryDownload(folderPath?: string | null): Promise<void> {
+      return invoke('memory_retry_download', { folderPath: folderPath ?? null })
+    },
+    ensureBank(name: string, folderPath?: string | null): Promise<string> {
+      return invoke('memory_ensure_bank', { name, folderPath: folderPath ?? null })
+    }
+  },
+
   settings: {
+    setMemory(settings: MemorySettings, folderPath?: string): Promise<MemorySettings> {
+      return invoke<MemorySettings>('settings_set_memory', { settings, folderPath: folderPath ?? null })
+    },
     setAxo(patch: Record<string, unknown>, folderPath?: string): Promise<AxoSettings> {
       return invoke('settings_set_axo', { patch, folderPath: folderPath ?? null })
     },

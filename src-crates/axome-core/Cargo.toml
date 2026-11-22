@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 axome-protocol = { path = "../axome-protocol" }
+axome-memory = { path = "../axome-memory" }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -34,11 +35,17 @@ portable-pty = "0.9"
 refinery = { version = "0.8", features = ["rusqlite"] }
 which = "8"
 sha2 = "0.10"
+regex = "1"
 base64 = "0.22"
 jsonschema = { version = "0.55.0", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 url = "2"
 html5ever = "0.38"
+# candle 0.11's AVX512-VNNI quantized kernels hit an LLVM intrinsic mismatch on nixpkgs rustc 1.97; 0.10 predates them.
+candle-core = "0.10"
+candle-nn = "0.10"
+candle-transformers = "0.10"
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 
 [dev-dependencies]
 axo-ai = { workspace = true, features = ["testing"] }

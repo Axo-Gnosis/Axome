@@ -12,6 +12,7 @@ mod git;
 mod harnesses;
 mod issues;
 mod lsp;
+mod memory;
 mod nix;
 mod session_index;
 mod sessions;

@@ -158,6 +158,7 @@ impl SettingsService {
                 | "lsp"
                 | "remotes"
                 | "axo"
+                | "memory"
         ) {
             Ok(())
         } else {

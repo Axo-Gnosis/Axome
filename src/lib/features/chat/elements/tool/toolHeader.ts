@@ -51,6 +51,7 @@ const tools: Record<string, { verbs: [done: string, running: string]; icon: Icon
   search_docs: { verbs: ['Searched docs', 'Searching docs'], icon: BookOpen01Icon },
   web_search: { verbs: ['Searched the web', 'Searching the web'], icon: Globe02Icon },
   web_fetch: { verbs: ['Fetched', 'Fetching'], icon: Link01Icon, noun: 'page' },
+  memory_search: { verbs: ['Searched memory', 'Searching memory'], icon: Search01Icon },
   ask: { verbs: ['Asked', 'Asking'], icon: MessageSquareIcon }
 }
 
@@ -150,6 +151,9 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
         detail = call.name === 'grep' ? `${count} ${count === 1 ? 'match' : 'matches'}` : formatCount(count, 'file')
       break
     }
+    case 'memory_search':
+      summary = typeof args.query === 'string' ? JSON.stringify(args.query) : ''
+      break
     case 'web_search': {
       summary = typeof args.query === 'string' ? JSON.stringify(args.query) : ''
       const parsed = parseWebSearch(call)

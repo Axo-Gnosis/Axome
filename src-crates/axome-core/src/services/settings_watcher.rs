@@ -22,6 +22,7 @@ pub struct SettingsWatcherService {
     events: EventSink<HostEvent>,
     generation: Arc<AtomicU64>,
     on_models_file: Arc<dyn Fn() + Send + Sync>,
+    on_global_settings: Arc<dyn Fn() + Send + Sync>,
     global_watcher: Mutex<Option<RecommendedWatcher>>,
     folder_watchers: Mutex<HashMap<PathBuf, Arc<Mutex<Option<FolderSettingsWatcher>>>>>,
 }
@@ -31,12 +32,14 @@ impl SettingsWatcherService {
         events: EventSink<HostEvent>,
         dirs: crate::HostDirs,
         on_models_file: Arc<dyn Fn() + Send + Sync>,
+        on_global_settings: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
         Self {
             events,
             dirs,
             generation: Arc::new(AtomicU64::new(0)),
             on_models_file,
+            on_global_settings,
             global_watcher: Mutex::new(None),
             folder_watchers: Mutex::new(HashMap::new()),
         }
@@ -47,6 +50,9 @@ impl SettingsWatcherService {
     }
 
     pub fn notify(&self, layer: SettingsLayerKind, folder: Option<&Path>) {
+        if matches!(layer, SettingsLayerKind::Global) {
+            (self.on_global_settings)();
+        }
         emit_settings_changed(&self.dirs, &self.events, &self.generation, layer, folder);
     }
 
@@ -83,6 +89,7 @@ impl SettingsWatcherService {
         let dirs = self.dirs.clone();
         let models_file = self.dirs.models_path();
         let on_models_file = Arc::clone(&self.on_models_file);
+        let on_global_settings = Arc::clone(&self.on_global_settings);
 
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
@@ -96,6 +103,7 @@ impl SettingsWatcherService {
             {
                 return;
             }
+            on_global_settings();
             emit_settings_changed(&dirs, &events, &generation, SettingsLayerKind::Global, None);
         })
         .map_err(|error| format!("Failed to create global settings watcher: {error}"))?;

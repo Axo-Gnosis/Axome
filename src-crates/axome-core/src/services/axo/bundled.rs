@@ -25,6 +25,20 @@ static BUNDLED_AGENTS: LazyLock<Vec<AgentSpec>> = LazyLock::new(|| {
     ]
 });
 
+static MEMORY_WRITER: LazyLock<AgentSpec> = LazyLock::new(|| {
+    parse_bundled(
+        "agent",
+        "memory-writer",
+        include_str!("bundled/agents/memory-writer.md"),
+        AgentSpec::parse,
+    )
+});
+
+/// The capture agent. Kept out of `agents()` so chats never list it as a persona.
+pub(super) fn memory_writer() -> &'static AgentSpec {
+    &MEMORY_WRITER
+}
+
 static BUNDLED_KEYWORDS: LazyLock<Vec<KeywordSpec>> = LazyLock::new(|| {
     vec![parse_bundled(
         "keyword",

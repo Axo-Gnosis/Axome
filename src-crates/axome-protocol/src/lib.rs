@@ -13,6 +13,7 @@ pub mod git;
 pub mod harness;
 pub mod issues;
 pub mod lsp;
+pub mod memory;
 pub mod nix_env;
 pub mod omp;
 pub mod pairing;
