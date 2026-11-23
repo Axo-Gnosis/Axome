@@ -31,6 +31,7 @@ pub struct AxoSettings {
     pub keywords: AxoKeywordSettings,
     pub web_search: AxoWebSearchSettings,
     pub docs: AxoDocsSettings,
+    pub browser: AxoBrowserSettings,
 }
 
 impl Default for AxoSettings {
@@ -65,6 +66,7 @@ impl Default for AxoSettings {
             keywords: AxoKeywordSettings::default(),
             web_search: AxoWebSearchSettings::default(),
             docs: AxoDocsSettings::default(),
+            browser: AxoBrowserSettings::default(),
         }
     }
 }
@@ -286,6 +288,28 @@ impl Default for AxoDocsSettings {
             ttl_hours: 24,
             retention_days: 30,
             sources: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoBrowserSettings {
+    pub enabled: bool,
+    pub headless: bool,
+    pub cdp_url: Option<String>,
+    pub executable_path: Option<String>,
+    pub idle_close_secs: u64,
+}
+
+impl Default for AxoBrowserSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            headless: true,
+            cdp_url: None,
+            executable_path: None,
+            idle_close_secs: 1800,
         }
     }
 }

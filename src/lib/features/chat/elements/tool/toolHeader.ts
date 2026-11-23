@@ -21,6 +21,7 @@ import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
 import { fileChange, record } from './payload'
 import { searchOutput } from './searchOutput'
+import { browserHeaderSummary } from './browserOutput'
 import { parseSearchDocs, parseWebFetch, parseWebSearch, urlDisplay } from './webOutput'
 
 export type ToolHeader = {
@@ -51,6 +52,7 @@ const tools: Record<string, { verbs: [done: string, running: string]; icon: Icon
   search_docs: { verbs: ['Searched docs', 'Searching docs'], icon: BookOpen01Icon },
   web_search: { verbs: ['Searched the web', 'Searching the web'], icon: Globe02Icon },
   web_fetch: { verbs: ['Fetched', 'Fetching'], icon: Link01Icon, noun: 'page' },
+  browser: { verbs: ['Browsed', 'Browsing'], icon: Globe02Icon },
   memory_search: { verbs: ['Searched memory', 'Searching memory'], icon: Search01Icon },
   ask: { verbs: ['Asked', 'Asking'], icon: MessageSquareIcon }
 }
@@ -176,6 +178,12 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
         if (parsed.savedLocalUrl) parts.push('saved')
         detail = parts.join(' · ')
       }
+      break
+    }
+    case 'browser': {
+      const info = browserHeaderSummary(call)
+      summary = info.summary
+      detail = info.detail
       break
     }
     case 'search_docs': {

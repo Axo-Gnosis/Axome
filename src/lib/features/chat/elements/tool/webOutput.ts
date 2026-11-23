@@ -68,7 +68,7 @@ export function urlHost(raw: string): string {
 export function urlDisplay(raw: string): string {
   try {
     const u = new URL(raw)
-    const host = u.hostname.replace(/^www\./, '')
+    const host = u.host.replace(/^www\./, '')
     const path = u.pathname === '/' ? '' : u.pathname
     const full = `${host}${path}`
     return full.length > 64 ? `${full.slice(0, 61)}...` : full

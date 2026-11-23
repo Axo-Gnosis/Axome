@@ -988,6 +988,14 @@ export interface AxoDocsSettings {
   sources: string[]
 }
 
+export interface AxoBrowserSettings {
+  enabled: boolean
+  headless: boolean
+  cdpUrl: string | null
+  executablePath: string | null
+  idleCloseSecs: number
+}
+
 export interface AxoSettings {
   defaultModel: string | null
   defaultAgent: string | null
@@ -1010,6 +1018,7 @@ export interface AxoSettings {
   keywords: AxoKeywordSettings
   webSearch: AxoWebSearchSettings
   docs: AxoDocsSettings
+  browser: AxoBrowserSettings
 }
 
 export interface MemoryBank {

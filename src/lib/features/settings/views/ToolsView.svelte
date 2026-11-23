@@ -404,6 +404,48 @@
   {/if}
 </SettingsSection>
 
+<SettingsSection
+  title="Browser"
+  description="Playwright browser automation for Axo. Auto-detects your installed Chromium-based browser (Helium, Chrome, Chromium, Brave, etc.)."
+>
+  <AxoToggleRow
+    {fields}
+    path={['browser', 'enabled']}
+    label="Enable browser tool"
+    description="Register the deferred browser tool in Axo sessions."
+    checked={settings?.browser.enabled ?? true}
+  />
+  <AxoToggleRow
+    {fields}
+    path={['browser', 'headless']}
+    label="Headless by default"
+    description="Run without a visible browser window unless a tool call passes headed: true."
+    checked={settings?.browser.headless ?? true}
+  />
+  <AxoTextRow
+    {fields}
+    path={['browser', 'executablePath']}
+    label="Browser executable"
+    description="Optional command name or path (e.g. helium, chromium, /usr/bin/brave). Leave blank to auto-detect."
+    placeholder="Auto-detect (helium, chrome, chromium, brave…)"
+    value={settings?.browser.executablePath ?? null}
+  />
+  <AxoTextRow
+    {fields}
+    path={['browser', 'cdpUrl']}
+    label="CDP endpoint URL"
+    description="Optional default remote debugging URL (e.g. http://127.0.0.1:9222) to attach to instead of launching a browser."
+    placeholder="http://127.0.0.1:9222"
+    value={settings?.browser.cdpUrl ?? null}
+  />
+  <AxoNumberRow
+    {fields}
+    path={['browser', 'idleCloseSecs']}
+    label="Idle tab timeout (seconds)"
+    value={settings?.browser.idleCloseSecs ?? null}
+  />
+</SettingsSection>
+
 <ApiKeyDialog
   open={keyTarget !== null}
   title={`Set ${keyTarget?.label ?? ''} API key`}

@@ -4,6 +4,7 @@ members = [
   "src-tauri",
   "src-crates/axome-protocol",
   "src-crates/axome-core",
+  "src-crates/axome-browser",
   "src-crates/axome-memory",
   "src-crates/axome-remote",
   "src-crates/axome-server",
@@ -30,5 +31,6 @@ axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af
 axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af686b77992c55278811" }
 axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af686b77992c55278811" }
 async-trait = "0.1"
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
+playwright-rs = { version = "0.21", default-features = false, features = ["ring", "native-tls"] }

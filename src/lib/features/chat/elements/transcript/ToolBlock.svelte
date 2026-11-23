@@ -13,6 +13,7 @@
   import { askOutcome, questionLabel } from '../ask/askResult'
   import BashCommand from '../tool/BashCommand.svelte'
   import BashOutput from '../tool/BashOutput.svelte'
+  import BrowserOutput from '../tool/BrowserOutput.svelte'
   import DocsSearchOutput from '../tool/DocsSearchOutput.svelte'
   import ReadOutput from '../tool/ReadOutput.svelte'
   import SearchOutput from '../tool/SearchOutput.svelte'
@@ -23,6 +24,7 @@
   import WebSearchOutput from '../tool/WebSearchOutput.svelte'
   import { openReferenceResult } from '../tool/referenceNavigation'
   import { toolHeader, toolIcon } from '../tool/toolHeader'
+  import { parseBrowserOutput } from '../tool/browserOutput'
   import { parseSearchDocs, parseWebFetch, parseWebSearch } from '../tool/webOutput'
   import RailRow from './RailRow.svelte'
   let {
@@ -64,11 +66,14 @@
   const failed = $derived(call.status === 'error')
   // Bulk expansion opens calls; only their More control reveals unabridged output.
   const view = $derived(overrides[call.id] ?? (expansion === 'collapsed' ? 'collapsed' : 'preview'))
-  const showFields = $derived(!['read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs'].includes(call.name))
+  const showFields = $derived(
+    !['read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser'].includes(call.name)
+  )
   // A dismissed ask is a tool error but reads as muted; its outcome decides the tone.
   const tone = $derived(askResult ? (askResult.tone === 'danger' ? 'danger' : 'idle') : header.tone)
   const webSearch = $derived(!failed && call.name === 'web_search' ? parseWebSearch(call) : null)
   const webFetch = $derived(!failed && call.name === 'web_fetch' ? parseWebFetch(call) : null)
+  const browser = $derived(!failed && call.name === 'browser' ? parseBrowserOutput(call) : null)
   const docs = $derived(!failed && call.name === 'search_docs' ? parseSearchDocs(call) : null)
   const toggle = () => onView(call.id, view === 'collapsed' ? 'preview' : 'collapsed')
   const expand = () => onView(call.id, 'full')
@@ -195,6 +200,8 @@
       <WebSearchOutput data={webSearch} running={call.status === 'running'} {view} onExpand={expand} />
     {:else if webFetch}
       <WebFetchOutput data={webFetch} output={call.output} {view} {folderPath} {sessionId} onExpand={expand} />
+    {:else if browser}
+      <BrowserOutput data={browser} output={call.output} {view} onExpand={expand} />
     {:else if docs}
       <DocsSearchOutput data={docs} {view} {folderPath} {sessionId} onExpand={expand} />
     {:else if call.name === 'read' && !failed}

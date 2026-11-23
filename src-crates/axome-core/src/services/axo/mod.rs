@@ -100,6 +100,7 @@ pub(crate) struct AxoService {
     engine: tokio::sync::Mutex<EngineSlot>,
     credentials: Arc<FileCredentialStore>,
     web: Arc<web::WebTools>,
+    pub(crate) browser: Arc<axome_browser::BrowserService>,
     pub(crate) memory: Arc<crate::services::memory::MemoryService>,
     login: tokio::sync::Mutex<Option<login::Login>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
@@ -224,6 +225,7 @@ impl AxoService {
                 dirs.data.join("axo").join("auth.json"),
             ));
             let web = web::WebTools::new(dirs.clone(), Arc::clone(&credentials), this.clone());
+            let browser = Arc::new(axome_browser::BrowserService::new());
             let memory =
                 crate::services::memory::MemoryService::new(dirs.clone(), web.http.clone());
             Self {
@@ -232,6 +234,7 @@ impl AxoService {
                 runtime: OnceLock::new(),
                 credentials,
                 web,
+                browser,
                 memory,
                 dirs,
                 supervision,
@@ -417,6 +420,7 @@ impl AxoService {
             axome_protocol::axo_settings::DEFAULT_PLANS_DIR.to_owned()
         });
         let mut tools = self.web.host_tools(folder);
+        tools.extend(self.browser.host_tools(config::browser_config(&self.dirs, folder)));
         tools.extend(crate::services::memory::tools::host_tools(
             &self.memory,
             folder,
@@ -1844,6 +1848,7 @@ impl AxoService {
             return;
         };
         let service = self.this.upgrade();
+        let browser = Arc::clone(&self.browser);
         let memory = Arc::clone(&self.memory);
         let result = std::thread::spawn(move || {
             runtime.block_on(async move {
@@ -1874,6 +1879,7 @@ impl AxoService {
                             tracing::warn!(%error, "axo shutdown task failed");
                         }
                     }
+                    browser.shutdown().await;
                 })
                 .await
             })

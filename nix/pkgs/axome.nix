@@ -45,8 +45,9 @@ let
     # The tauri CLI injects this feature automatically; raw cargo does not.
     # Without it, cfg(dev) stays active and assets are not embedded.
     cargoExtraArgs = "--locked -p axome --features tauri/custom-protocol";
-    cargoTestExtraArgs = "-p axome-core -p axome-protocol -p axome-remote -p axome-server -p axome --features tauri/custom-protocol";
+    cargoTestExtraArgs = "-p axome-browser -p axome-core -p axome-protocol -p axome-remote -p axome-server -p axome --features tauri/custom-protocol";
 
+    PLAYWRIGHT_SKIP_DRIVER_DOWNLOAD = "1";
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
     TAURI_CONFIG = builtins.toJSON { inherit version; };
   };
@@ -90,7 +91,11 @@ craneLib.buildPackage (
           | sort -u); do
         recordOriginals+=(--run "export AXOME_ORIG_$name=\"\''${$name-__AXOME_UNSET__}\"")
       done
-      wrapProgramShell $out/bin/axome "''${recordOriginals[@]}" "''${gappsWrapperArgs[@]}"
+      wrapProgramShell $out/bin/axome \
+        "''${recordOriginals[@]}" \
+        "''${gappsWrapperArgs[@]}" \
+        --set-default PLAYWRIGHT_NODE_EXE "${lib.getExe pkgs.nodejs}" \
+        --set-default PLAYWRIGHT_CLI_JS "${pkgs.playwright-driver}/cli.js"
     '';
 
     meta = {

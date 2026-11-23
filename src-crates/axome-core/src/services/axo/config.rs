@@ -118,6 +118,26 @@ pub(super) fn plans_dir(dirs: &HostDirs, folder: &Path) -> Result<String, axo::E
         .to_owned())
 }
 
+/// Resolves effective `axo.browser` settings (global-only per `GLOBAL_ONLY_POINTERS`)
+/// into `axome_browser::BrowserConfig`.
+pub(super) fn browser_config(dirs: &HostDirs, folder: &Path) -> axome_browser::BrowserConfig {
+    let settings = crate::services::settings_resolution::resolve_effective_settings_for_folder_path(
+        dirs,
+        Some(folder),
+    )
+    .settings
+    .axo
+    .browser;
+    axome_browser::BrowserConfig {
+        enabled: settings.enabled,
+        headless: settings.headless,
+        cdp_url: settings.cdp_url,
+        executable_path: settings.executable_path,
+        idle_close_secs: settings.idle_close_secs,
+        spill_dir: dirs.cache.join("browser"),
+    }
+}
+
 fn fill_roles(settings: &mut Option<serde_json::Value>, last_model: Option<&str>) {
     let fallback = settings
         .as_ref()

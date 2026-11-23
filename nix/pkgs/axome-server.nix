@@ -24,6 +24,7 @@ let
     '';
     cargoExtraArgs = "--locked -p axome-server";
     cargoTestExtraArgs = "-p axome-server";
+    PLAYWRIGHT_SKIP_DRIVER_DOWNLOAD = "1";
   };
 
   serverCargoArtifacts = craneLib.buildDepsOnly (
@@ -60,6 +61,8 @@ pkgs.runCommand "axome-server-${version}"
     mkdir -p "$out/bin"
     cat > "$out/bin/axome-server" <<'EOF'
     #!${pkgs.runtimeShell}
+    export PLAYWRIGHT_NODE_EXE="''${PLAYWRIGHT_NODE_EXE:-${lib.getExe pkgs.nodejs}}"
+    export PLAYWRIGHT_CLI_JS="''${PLAYWRIGHT_CLI_JS:-${pkgs.playwright-driver}/cli.js}"
     exec "${unwrapped}/bin/axome-server" --web-assets-dir "${webFrontend}" "$@"
     EOF
     chmod +x "$out/bin/axome-server"

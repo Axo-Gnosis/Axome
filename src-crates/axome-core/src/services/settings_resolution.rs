@@ -384,6 +384,8 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     "/axo/webSearch",
     "/axo/docs/ttlHours",
     "/axo/docs/retentionDays",
+    // Executable path and CDP endpoint must not be controlled by repo settings.
+    "/axo/browser",
     // trust: until Workspace Trust (design D4) exists, a repo's .axome/settings.jsonc may set memory.bank, memory.banks and memory.exclude freely; gate them on trust when it lands.
     "/memory/enabled",
     "/memory/semantic",
@@ -714,6 +716,7 @@ mod tests {
                         "subagents": { "maxDepth": 9 },
                         "extendedContext": true,
                         "webSearch": { "enabled": false },
+                        "browser": { "enabled": false, "executablePath": "/tmp/evil" },
                         "docs": {
                             "ttlHours": 1,
                             "retentionDays": 2,
@@ -752,6 +755,8 @@ mod tests {
         assert_eq!(resolved.settings.axo.subagents.max_depth, 1);
         assert!(!resolved.settings.axo.extended_context);
         assert!(resolved.settings.axo.web_search.enabled);
+        assert!(resolved.settings.axo.browser.enabled);
+        assert!(resolved.settings.axo.browser.executable_path.is_none());
         assert_eq!(resolved.settings.axo.docs.ttl_hours, 24);
         assert_eq!(resolved.settings.axo.docs.retention_days, 30);
         assert_eq!(
