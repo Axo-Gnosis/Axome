@@ -11,7 +11,12 @@ export interface AskQuestionDraft {
   noteOpen: boolean
   note: string
   skipped: boolean
+  /** Settled by the user; renders as its answer row until reopened. */
+  collapsed: boolean
 }
+
+/** Markdown blocks, and runs of back-to-back questions that render as one card. */
+export type AskSection = { type: 'markdown'; text: string } | { type: 'questions'; questions: AskQuestion[] }
 
 export interface AskDraft {
   blocks: ChatAskBlock[]
@@ -24,12 +29,10 @@ export interface AskDraft {
 export interface AskValidation {
   answers: ChatAnswer[]
   errors: Record<string, string>
-  error: string | null
   ready: number
   total: number
 }
 
-const UNAVAILABLE = 'This question document is unavailable.'
 const blank = (text: string) => /^[\p{White_Space}]*$/u.test(text)
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const optionalBool = (value: unknown): value is boolean | undefined => value === undefined || typeof value === 'boolean'
@@ -135,12 +138,20 @@ export function validAskBlocks(blocks: ChatAskBlock[]): boolean {
       if (values.length < 2 || new Set(values).size !== values.length || values.some(blank)) return false
       if (!block.multi && block.options.filter((option) => option.recommended).length > 1) return false
     } else if (block.type === 'number') {
-      const { min, max, integer, default: suggested } = block
-      if (min !== null && max !== null && (min > max || (integer && Math.ceil(min) > Math.floor(max)))) return false
-      if (suggested !== null && numberError(block, suggested)) return false
+      const { lower, upper } = askNumberBounds(block)
+      if (lower > upper) return false
+      if (block.default !== null && numberError(block, block.default)) return false
     }
   }
   return ids.size > 0
+}
+
+/** The accepted range; integer questions round their bounds inward. Missing bounds are infinite. */
+export function askNumberBounds({ min, max, integer }: Extract<AskQuestion, { type: 'number' }>) {
+  return {
+    lower: min === null ? -Infinity : integer ? Math.ceil(min) : min,
+    upper: max === null ? Infinity : integer ? Math.floor(max) : max
+  }
 }
 
 export function createAskDraft(blocks: ChatAskBlock[]): AskDraft {
@@ -162,10 +173,33 @@ export function createAskDraft(blocks: ChatAskBlock[]): AskDraft {
       other: '',
       noteOpen: false,
       note: '',
-      skipped: false
+      skipped: false,
+      collapsed: false
     }
   }
   return { blocks, questions, busy: false, errors: {}, error: null }
+}
+
+export function askSections(blocks: ChatAskBlock[]): AskSection[] {
+  const sections: AskSection[] = []
+  for (const block of blocks) {
+    const last = sections.at(-1)
+    if (block.type === 'markdown') sections.push({ type: 'markdown', text: block.text })
+    else if (last?.type === 'questions') last.questions.push(block)
+    else sections.push({ type: 'questions', questions: [block] })
+  }
+  return sections
+}
+
+/** Display text of a validated answer that carries a value or `other`. */
+export function askAnswerText(question: AskQuestion, { value, other }: ChatAnswer): string {
+  if (question.type !== 'choice') return question.type === 'number' ? String(value) : `"${value}"`
+  const picks = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+  const labels = picks.flatMap((pick) =>
+    question.options.filter((option) => option.value === pick).map((option) => option.label)
+  )
+  if (other && !blank(other)) labels.push(`"${other}"`)
+  return labels.join(', ')
 }
 
 function numberError(question: Extract<AskQuestion, { type: 'number' }>, value: number): string | null {
@@ -256,9 +290,6 @@ export function buildQuestionAnswer(
 }
 
 export function buildAskAnswers(blocks: ChatAskBlock[], questions: Record<string, AskQuestionDraft>): AskValidation {
-  if (!validAskBlocks(blocks)) {
-    return { answers: [], errors: {}, error: UNAVAILABLE, total: 0, ready: 0 }
-  }
   const answers: ChatAnswer[] = []
   const errors: Record<string, string> = {}
   for (const block of blocks) {
@@ -269,7 +300,7 @@ export function buildAskAnswers(blocks: ChatAskBlock[], questions: Record<string
     if (error) errors[key] = error
   }
   const total = answers.length
-  return { answers, errors, error: null, total, ready: total - Object.keys(errors).length }
+  return { answers, errors, total, ready: total - Object.keys(errors).length }
 }
 
 export function askDecimalPlaces(value: number): number {
@@ -285,17 +316,8 @@ export function askNumberStep(question: Extract<AskQuestion, { type: 'number' }>
   return Number(`1e-${digits || 1}`)
 }
 
-const ASK_CONTROL = ':is(input, textarea, button):not(:disabled)'
-
-/** Focuses the first invalid question's invalid (else first) control inside `root`, else root's first control. */
-export function focusAskControl(root: ParentNode): boolean {
-  const field = root.querySelector('[data-invalid]') ?? root
-  const control =
-    field.querySelector<HTMLElement>(`${ASK_CONTROL}[aria-invalid="true"]`) ??
-    field.querySelector<HTMLElement>(ASK_CONTROL)
-  control?.focus({ preventScroll: true })
-  return control !== null
-}
+/** Where the keyboard enters an ask: the first stop of its first open question, else any stop. */
+export const ASK_ENTRY = '[data-ask-question-id]:not([data-collapsed]) [data-nav-stop]'
 
 export function askCountdown(deadlineMs: number, now: number): string {
   const seconds = Math.ceil(Math.max(0, deadlineMs - now) / 1000)

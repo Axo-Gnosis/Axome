@@ -8,6 +8,7 @@ import {
   type StreamHandle,
   type Unsubscribe
 } from './transport'
+import { splitRemotePath } from '$lib/utils/paths'
 import type {
   AxoSettings,
   AxoExtensions,
@@ -61,6 +62,8 @@ import type {
   FilesChangedEvent,
   FormattingSettings,
   NixSettings,
+  MemoryCaptureQuery,
+  MemoryCaptureRun,
   MemorySettings,
   MemoryStatus,
   TypographySettings,
@@ -814,6 +817,22 @@ export const backend = {
     },
     ensureBank(name: string, folderPath?: string | null): Promise<string> {
       return invoke('memory_ensure_bank', { name, folderPath: folderPath ?? null })
+    },
+    captures(query: MemoryCaptureQuery, folderPath?: string | null): Promise<MemoryCaptureRun[]> {
+      return invoke('memory_captures', { query, folderPath: folderPath ?? null })
+    },
+    revertFact(factId: number, folderPath?: string | null): Promise<MemoryCaptureRun> {
+      return invoke('memory_capture_revert', { factId, folderPath: folderPath ?? null })
+    },
+    /** The active bank name for a folder; `null` when memory is off for it. */
+    folder(folderPath: string): Promise<string | null> {
+      const scopeFolder = splitRemotePath(folderPath)?.path ?? folderPath
+      return invoke('memory_folder', { scopeFolder, folderPath })
+    },
+    onCaptureChanged(
+      handler: (event: { server: string | null; capture: MemoryCaptureRun; notify: boolean }) => void
+    ): Promise<Unsubscribe> {
+      return getHostTransport().subscribe('memory-capture-changed', handler)
     }
   },
 

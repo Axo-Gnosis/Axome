@@ -75,6 +75,24 @@ pub(crate) fn section_range(text: &str, name: &str) -> Result<std::ops::Range<us
     }
     Ok(found.unwrap())
 }
+/// Replaces or removes the first line equal to `old`, ignoring its ending; `None` when absent.
+pub fn replace_line(text: &str, old: &str, new: Option<&str>) -> Option<String> {
+    let mut start = 0;
+    for line in text.split_inclusive('\n') {
+        let end = start + line.len();
+        if line.trim_end_matches(['\n', '\r']) == old {
+            let mut result = text.to_owned();
+            match new {
+                Some(new) => result.replace_range(start..start + old.len(), new),
+                None => result.replace_range(start..end, ""),
+            }
+            return Some(result);
+        }
+        start = end;
+    }
+    None
+}
+
 pub fn append_observation(text: &str, line: &str) -> String {
     if writable(text).is_err() {
         return text.into();

@@ -8,11 +8,17 @@
   import { notify } from '$lib/features/notifications/state.svelte'
   import { getSettings, getSettingsHost, loadSettings, saveMemorySettings } from '../state/settings.svelte'
   import { setSettingsPage } from '../dialog/state.svelte'
-  import { openFolder } from '$lib/features/workbench/state.svelte'
+  import {
+    loadCaptures,
+    openBank,
+    recentCaptures,
+    reviewCapture,
+    runSummary,
+    runTitle
+  } from '$lib/features/memory/captures.svelte'
   import type { MemorySettings, MemoryStatus } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { timeAgo } from '$lib/utils/date'
-  import { splitRemotePath } from '$lib/utils/paths'
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
 
@@ -31,7 +37,7 @@
       case 'downloading':
         return `Downloading ${(embed.received / 1_000_000).toFixed(1)}/${(embed.total / 1_000_000).toFixed(1)} MB`
       case 'ready':
-        return 'Ready'
+        return 'Ready · bge-small-en-v1.5'
       case 'failed':
         return 'Download failed'
       default:
@@ -50,7 +56,10 @@
   onMount(() => {
     void loadSettings(host).catch((error) => notify.error('Load memory settings failed', getErrorMessage(error)))
     void refreshStatus()
+    void loadCaptures(host, { sessionId: null, bank: null, limit: 8 })
   })
+
+  const captures = $derived(recentCaptures(host, null).slice(0, 8))
 
   $effect(() => {
     if (status?.embed.state !== 'downloading') return
@@ -98,14 +107,6 @@
     delete banks[bank]
     update({ banks, bank: settings.bank === bank ? 'main' : settings.bank })
   }
-
-  function openBank(bank: string) {
-    void runAction(async () => {
-      const directory = await backend.memory.ensureBank(bank, host)
-      const remote = host ? splitRemotePath(host) : null
-      await openFolder(remote ? `axome://${remote.server}${directory}` : directory)
-    })
-  }
 </script>
 
 <SettingsSection title="Memory">
@@ -131,6 +132,67 @@
 </SettingsSection>
 
 <div class:opacity-50={!settings?.enabled}>
+  <SettingsSection title="Capture">
+    <SettingRow label="After Compaction" as="div">
+      <Switch
+        aria-label="After Compaction"
+        checked={settings?.capture.compaction ?? true}
+        {disabled}
+        onCheckedChange={(compaction) => settings && update({ capture: { ...settings.capture, compaction } })}
+      />
+    </SettingRow>
+    <SettingRow label="After Closing a Chat" as="div">
+      <Switch
+        aria-label="After Closing a Chat"
+        checked={settings?.capture.close ?? true}
+        {disabled}
+        onCheckedChange={(close) => settings && update({ capture: { ...settings.capture, close } })}
+      />
+    </SettingRow>
+    <SettingRow
+      label="Notify After Saving From a Closed Chat"
+      description="Off: only failures notify. Saves still show in the chat and the Memory panel."
+      as="div"
+    >
+      <Switch
+        aria-label="Notify After Saving From a Closed Chat"
+        checked={settings?.capture.notify ?? true}
+        {disabled}
+        onCheckedChange={(notify) => settings && update({ capture: { ...settings.capture, notify } })}
+      />
+    </SettingRow>
+    {#if captures.length}
+      <p class="pt-2 text-xs font-medium text-muted">Recent captures</p>
+      {#each captures as run (run.id)}
+        {@const summary = runSummary(run)}
+        <SettingRow label={runTitle(run)} as="div">
+          {#snippet description()}
+            <span class:text-danger={!!run.error}
+              >After {run.trigger === 'compaction' ? 'compaction' : 'closing'} · {timeAgo(
+                run.endedAt ?? run.startedAt
+              )}{run.error ? ` · ${run.error}` : ''}</span
+            >
+          {/snippet}
+          <div class="flex shrink-0 items-center gap-2 text-sm">
+            {#if run.endedAt === null}
+              <span class="text-muted">Saving…</span>
+            {:else}
+              {#if !run.error || run.facts.length}
+                <span class={summary === 'nothing new' ? 'text-muted' : 'text-fg'}>{summary}</span>
+              {/if}
+              {#if run.facts.length}
+                <Button variant="ghost" size="sm" onclick={() => reviewCapture(run)}>Review</Button>
+              {/if}
+              {#if run.error && run.noModel}
+                <Button size="sm" onclick={() => setSettingsPage('models')}>Open Models</Button>
+              {/if}
+            {/if}
+          </div>
+        </SettingRow>
+      {/each}
+    {/if}
+  </SettingsSection>
+
   <SettingsSection title="Search">
     <SettingRow
       label="Semantic Search"
@@ -156,34 +218,6 @@
     {/if}
   </SettingsSection>
 
-  <SettingsSection title="Capture">
-    <SettingRow label="After Compaction" as="div">
-      <Switch
-        aria-label="After Compaction"
-        checked={settings?.capture.compaction ?? true}
-        {disabled}
-        onCheckedChange={(compaction) => settings && update({ capture: { ...settings.capture, compaction } })}
-      />
-    </SettingRow>
-    <SettingRow label="After Closing a Chat" as="div">
-      <Switch
-        aria-label="After Closing a Chat"
-        checked={settings?.capture.close ?? true}
-        {disabled}
-        onCheckedChange={(close) => settings && update({ capture: { ...settings.capture, close } })}
-      />
-    </SettingRow>
-    {#if status?.lastCapture}
-      {#if status.lastCapture.error}
-        <p class="text-sm text-danger" role="alert">{status.lastCapture.error}</p>
-      {:else}
-        <p class="text-sm text-muted">
-          Last capture {timeAgo(status.lastCapture.at)}: {status.lastCapture.added} added, {status.lastCapture.replaced} replaced
-        </p>
-      {/if}
-    {/if}
-  </SettingsSection>
-
   <SettingsSection title="Banks">
     <div class="divide-y divide-edge">
       {#each status?.banks ?? [] as bank (bank.name)}
@@ -193,7 +227,9 @@
           {/snippet}
           <div class="flex flex-wrap items-center gap-2">
             {#if bank.default}<Badge>Default</Badge>{/if}
-            <Button variant="text" size="sm" {disabled} onclick={() => openBank(bank.name)}>Open</Button>
+            <Button variant="text" size="sm" {disabled} onclick={() => runAction(() => openBank(host, bank.name))}
+              >Open</Button
+            >
             {#if !bank.default}
               <Button variant="text" size="sm" {disabled} onclick={() => update({ bank: bank.name })}
                 >Make Default</Button

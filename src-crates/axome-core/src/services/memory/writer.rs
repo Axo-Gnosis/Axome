@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map::Entry as MapEntry, HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -13,16 +13,25 @@ use axo::{
 use axo_agent::{AgentMessage, RunOutcome};
 use axo_ai::Message;
 use axome_memory::{edit, index::LocatedObservation, links};
-use axome_protocol::memory::MemoryCaptureStatus;
+use axome_protocol::memory::{
+    MemoryCaptureChangedEvent, MemoryCaptureRun, MemoryCaptureTrigger, MemoryFactOutcome,
+};
 use chrono::Utc;
 use parking_lot::Mutex;
 use regex::Regex;
 use rusqlite::OptionalExtension;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedMutexGuard};
 use tokio_util::sync::CancellationToken;
 
-use super::{atomic_write, checked_path, FolderMemory, MemoryService, SearchRequest};
-use crate::services::{axo::message_text, db::DatabaseService};
+use super::{
+    atomic_write, captures,
+    captures::{ClosedLine, NewFact, Undo},
+    checked_path, FolderMemory, MemoryService, SearchRequest,
+};
+use crate::{
+    events::{deliver, HostEvent},
+    services::{axo::message_text, db::DatabaseService},
+};
 
 const EXTRACT_PROMPT: &str = r#"Project: {project}
 Date: {date}
@@ -66,19 +75,22 @@ pub(crate) struct CaptureJob {
     pub folder: PathBuf,
     pub session_path: PathBuf,
     pub session_id: String,
+    pub trigger: MemoryCaptureTrigger,
+    /// The compaction entry this capture follows.
+    pub anchor_entry_id: Option<String>,
+    pub title: Option<String>,
 }
 
 struct QueuedJob {
     job: CaptureJob,
     axo: Arc<Axo>,
-    db: Arc<DatabaseService>,
     agents: Vec<AgentSpec>,
 }
 
 pub(super) struct CaptureQueue {
     sender: mpsc::UnboundedSender<QueuedJob>,
-    /// Sessions queued or running; `true` when another trigger arrived meanwhile.
-    pending: Arc<Mutex<HashMap<String, bool>>>,
+    /// Sessions queued or running, with the latest trigger that arrived meanwhile.
+    pending: Arc<Mutex<HashMap<String, Option<CaptureJob>>>>,
     stop: CancellationToken,
     worker: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -94,20 +106,17 @@ impl MemoryService {
     pub(crate) fn capture(
         self: &Arc<Self>,
         job: CaptureJob,
-        compaction: bool,
         axo: Arc<Axo>,
-        db: Arc<DatabaseService>,
         agents: Vec<AgentSpec>,
     ) {
         let settings = self.settings(Some(&job.folder));
         if self.active(&job.folder).is_none()
             || job.folder == self.dirs.data.join("memory/writer")
             || !job.session_path.is_file()
-            || !(if compaction {
-                settings.capture.compaction
-            } else {
-                settings.capture.close
-            })
+            || !match job.trigger {
+                MemoryCaptureTrigger::Compaction => settings.capture.compaction,
+                MemoryCaptureTrigger::Close => settings.capture.close,
+            }
         {
             return;
         }
@@ -124,7 +133,7 @@ impl MemoryService {
             let worker = runtime.spawn(async move {
                 let stop = worker_stop;
                 loop {
-                    let queued = tokio::select! {
+                    let mut queued = tokio::select! {
                         biased;
                         () = stop.cancelled() => break,
                         job = receiver.recv() => match job {
@@ -140,15 +149,11 @@ impl MemoryService {
                         }
                         if let Err(error) = result {
                             tracing::warn!(%error, session_id = queued.job.session_id, "Memory capture failed");
-                            let mut status = service.last_capture.lock();
-                            let (added, replaced) = status.as_ref().filter(|s| s.session_id == queued.job.session_id)
-                                .map(|s| (s.added, s.replaced)).unwrap_or_default();
-                            *status = Some(MemoryCaptureStatus { at: Utc::now().to_rfc3339(), session_id: queued.job.session_id.clone(), added, replaced, error: Some(error.to_string()) });
                         }
                         let mut pending = pending_worker.lock();
-                        match pending.get_mut(&queued.job.session_id) {
-                            Some(again) if *again => *again = false,
-                            _ => {
+                        match pending.get_mut(&queued.job.session_id).and_then(Option::take) {
+                            Some(next) => queued.job = next,
+                            None => {
                                 pending.remove(&queued.job.session_id);
                                 break;
                             }
@@ -164,21 +169,12 @@ impl MemoryService {
         let mut pending = queue.pending.lock();
         match pending.entry(job.session_id.clone()) {
             MapEntry::Occupied(mut running) => {
-                running.insert(true);
+                running.insert(Some(job));
             }
             MapEntry::Vacant(slot) => {
                 let id = slot.key().clone();
-                slot.insert(false);
-                if queue
-                    .sender
-                    .send(QueuedJob {
-                        job,
-                        axo,
-                        db,
-                        agents,
-                    })
-                    .is_err()
-                {
+                slot.insert(None);
+                if queue.sender.send(QueuedJob { job, axo, agents }).is_err() {
                     pending.remove(&id);
                 }
             }
@@ -210,37 +206,97 @@ impl MemoryService {
         if header.spawn.is_some() {
             return Ok(());
         }
-        let db = queued.db.clone();
         let id = job.session_id.clone();
-        let (chunks, last_seq) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let cursor = db
-                .read()
-                .conn()
-                .query_row(
-                    "SELECT seq FROM memory_cursors WHERE session_id = ?1",
-                    [&id],
-                    |row| row.get::<_, u64>(0),
-                )
-                .optional()?
-                .unwrap_or(0);
-            Ok(transcript(&entries, cursor))
-        })
-        .await??;
+        let (chunks, last_seq) = self
+            .db(move |db| {
+                let cursor = db
+                    .read()
+                    .conn()
+                    .query_row(
+                        "SELECT seq FROM memory_cursors WHERE session_id = ?1",
+                        [&id],
+                        |row| row.get::<_, u64>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(0);
+                Ok(transcript(&entries, cursor))
+            })
+            .await?;
         if chunks.is_empty() {
             if let Some(seq) = last_seq {
-                save_cursor(queued.db.clone(), job.session_id.clone(), seq).await?;
+                save_cursor(self.db.clone(), job.session_id.clone(), seq).await?;
             }
             return Ok(());
         }
-        let date = Utc::now().format("%Y-%m-%d").to_string();
+        let run = captures::NewRun {
+            session_id: job.session_id.clone(),
+            folder_path: job.folder.to_string_lossy().into_owned(),
+            title: job.title.clone(),
+            bank: fm.bank.name.clone(),
+            trigger: job.trigger,
+            anchor_entry_id: job.anchor_entry_id.clone(),
+        };
+        let capture_id = self.db(move |db| captures::start(db, run)).await?;
+        self.emit_capture(capture_id).await;
+        let result = self
+            .capture_chunks(queued, &fm, chunks, capture_id, stop)
+            .await;
+        let error = result.as_ref().err();
+        // The writer could not resolve a model for `@memory`.
+        let no_model = error.is_some_and(|error| {
+            matches!(
+                error.downcast_ref::<axo::Error>(),
+                Some(
+                    axo::Error::UnknownModelRole(_)
+                        | axo::Error::ModelNotFound(_)
+                        | axo::Error::NoModel
+                )
+            )
+        });
+        let error_text = error.map(|error| {
+            if no_model {
+                "No model is set for @memory.".to_owned()
+            } else {
+                error.to_string()
+            }
+        });
+        let finished = self
+            .db(move |db| {
+                captures::finish(db, capture_id, error_text.as_deref(), no_model)?;
+                captures::get(db, capture_id)
+            })
+            .await;
+        match finished {
+            Ok(run) => {
+                let notify = run.error.is_some()
+                    || (job.trigger == MemoryCaptureTrigger::Close
+                        && self.settings(Some(&job.folder)).capture.notify
+                        && run
+                            .facts
+                            .iter()
+                            .any(|fact| fact.outcome != MemoryFactOutcome::Known));
+                self.emit(run, notify);
+            }
+            Err(error) => tracing::warn!(%error, "Could not finish the memory capture log"),
+        }
+        result
+    }
+
+    async fn capture_chunks(
+        self: &Arc<Self>,
+        queued: &QueuedJob,
+        fm: &FolderMemory,
+        chunks: Vec<Chunk>,
+        capture_id: i64,
+        stop: &CancellationToken,
+    ) -> Result<()> {
+        let job = &queued.job;
         let project = job
             .folder
             .file_name()
             .map_or_else(|| "root".into(), |name| name.to_string_lossy());
-        let mut added = 0;
-        let mut replaced = 0;
         for chunk in chunks.into_iter().take(20) {
-            self.ensure_active(&fm)?;
+            self.ensure_active(fm)?;
             let cwd = self.dirs.data.join("memory/writer");
             tokio::fs::create_dir_all(&cwd).await?;
             let session = queued
@@ -260,17 +316,11 @@ impl MemoryService {
                     recovery: RecoveryPolicy::MarkInterrupted,
                     ..Default::default()
                 })
-                .await
-                .map_err(|error| match error {
-                    axo::Error::UnknownModelRole(_)
-                    | axo::Error::ModelNotFound(_)
-                    | axo::Error::NoModel => anyhow!("No model is configured for @memory."),
-                    error => anyhow!(error),
-                })?;
+                .await?;
             let result = tokio::select! {
                 biased;
                 () = stop.cancelled() => Err(anyhow!("Axome is shutting down")),
-                result = self.capture_chunk(&fm, &session, &chunk.text, &project, &date, &job.session_id) => result,
+                result = self.capture_chunk(fm, &session, &chunk.text, &project, job, capture_id) => result,
             };
             let journal = session.path().to_owned();
             session.shutdown().await;
@@ -286,19 +336,34 @@ impl MemoryService {
                     }
                 }
             }
-            let counts = result?;
-            added += counts.0;
-            replaced += counts.1;
-            save_cursor(queued.db.clone(), job.session_id.clone(), chunk.seq).await?;
-            *self.last_capture.lock() = Some(MemoryCaptureStatus {
-                at: Utc::now().to_rfc3339(),
-                session_id: job.session_id.clone(),
-                added,
-                replaced,
-                error: None,
-            });
+            result?;
+            save_cursor(self.db.clone(), job.session_id.clone(), chunk.seq).await?;
+            self.emit_capture(capture_id).await;
         }
         Ok(())
+    }
+
+    fn emit(&self, capture: MemoryCaptureRun, notify: bool) {
+        deliver(
+            &self.events,
+            HostEvent::MemoryCaptureChanged(MemoryCaptureChangedEvent { capture, notify }),
+        );
+    }
+
+    async fn emit_capture(&self, capture_id: i64) {
+        match self.db(move |db| captures::get(db, capture_id)).await {
+            Ok(capture) => self.emit(capture, false),
+            Err(error) => tracing::warn!(%error, "Could not read a memory capture"),
+        }
+    }
+
+    /// Runs `f` against the app database off the async runtime.
+    async fn db<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&DatabaseService) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || f(&db)).await?
     }
 
     async fn capture_chunk(
@@ -307,25 +372,24 @@ impl MemoryService {
         session: &Session,
         transcript: &str,
         project: &str,
-        date: &str,
-        session_id: &str,
-    ) -> Result<(u32, u32)> {
+        job: &CaptureJob,
+        capture_id: i64,
+    ) -> Result<()> {
+        let date = Utc::now().format("%Y-%m-%d").to_string();
         let prompt = EXTRACT_PROMPT
             .replace("{project}", project)
-            .replace("{date}", date)
+            .replace("{date}", &date)
             .replace("{transcript}", transcript);
         let reply = ask(session, prompt).await?;
-        let mut added = 0;
-        let mut replaced = 0;
-        for captures in reply
+        for found in reply
             .lines()
             .filter_map(|line| CANDIDATE.captures(line))
             .take(12)
         {
             let candidate = Candidate {
-                page: captures["page"].trim().into(),
-                category: captures["category"].into(),
-                fact: captures["fact"].into(),
+                page: found["page"].trim().into(),
+                category: found["category"].into(),
+                fact: found["fact"].into(),
             };
             let hits = self
                 .search(
@@ -373,24 +437,56 @@ impl MemoryService {
                     .replace("{numbered}", &numbered);
                 classify(&ask(session, prompt).await?, observations.len())
             };
-            let old = match choice {
-                Choice::New => None,
-                Choice::Replace(n) => observations.into_iter().nth(n),
+            let fact = match choice {
                 Choice::Skip => continue,
+                Choice::Same(n) => {
+                    let known = observations
+                        .into_iter()
+                        .nth(n)
+                        .context("Memory observation missing")?;
+                    let path = fm.bank.dir.join(&known.entity.file_path);
+                    NewFact {
+                        outcome: MemoryFactOutcome::Known,
+                        category: known.observation.category,
+                        text: known.observation.content,
+                        previous: None,
+                        note: note_name(fm, &path),
+                        path: path.to_string_lossy().into_owned(),
+                        undo: None,
+                    }
+                }
+                Choice::New | Choice::Replace(_) => {
+                    let old = match choice {
+                        Choice::Replace(n) => observations.into_iter().nth(n),
+                        _ => None,
+                    };
+                    let previous = old.as_ref().map(|old| old.observation.content.clone());
+                    let (category, text) = (candidate.category.clone(), candidate.fact.clone());
+                    let (path, undo) = self
+                        .apply_candidate(fm, candidate, old, date.clone(), job.session_id.clone())
+                        .await?;
+                    NewFact {
+                        outcome: if previous.is_some() {
+                            MemoryFactOutcome::Updated
+                        } else {
+                            MemoryFactOutcome::New
+                        },
+                        category,
+                        text,
+                        previous,
+                        note: note_name(fm, &path),
+                        path: path.to_string_lossy().into_owned(),
+                        undo: Some(undo),
+                    }
+                }
             };
-            let replacing = old.is_some();
-            self.apply_candidate(fm, candidate, old, date.to_owned(), session_id.to_owned())
+            self.db(move |db| captures::add_fact(db, capture_id, fact))
                 .await?;
-            if replacing {
-                replaced += 1;
-            } else {
-                added += 1;
-            }
         }
         // Also sync chunks with no accepted candidates, without creating a bank directory.
         self.indexed(fm, vec![fm.bank.clone()], |_| Ok(())).await?;
         self.schedule_embedding();
-        Ok((added, replaced))
+        Ok(())
     }
 
     async fn apply_candidate(
@@ -400,7 +496,7 @@ impl MemoryService {
         old: Option<LocatedObservation>,
         date: String,
         session_id: String,
-    ) -> Result<()> {
+    ) -> Result<(PathBuf, Undo)> {
         let mut relative = PathBuf::new();
         for segment in candidate.page.split('/') {
             let segment = segment.trim();
@@ -436,19 +532,8 @@ impl MemoryService {
             .as_ref()
             .map(|hit| checked_path(&fm.bank, &fm.bank.dir.join(&hit.entity.file_path)))
             .transpose()?;
-        // The same process-wide per-file lock axo's `write` and `edit` hold, so the agent's
-        // edits through memory:// and these never interleave. Sorted: no lock-order cycles.
-        let mut paths: Vec<_> = [Some(path.clone()), old_path.clone()]
-            .into_iter()
-            .flatten()
-            .collect();
-        paths.sort();
-        paths.dedup();
-        let mut guards = Vec::with_capacity(paths.len());
-        for path in &paths {
-            guards.push(axo::tools::lock_file(path).await);
-        }
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let guards = lock_notes([Some(path.clone()), old_path.clone()].into_iter().flatten()).await;
+        tokio::task::spawn_blocking(move || -> Result<(PathBuf, Undo)> {
             let _guards = guards;
             let mut text = match std::fs::read_to_string(&path) {
                 Ok(text) => text,
@@ -458,6 +543,7 @@ impl MemoryService {
                 Err(error) => return Err(error.into()),
             };
             let mut closed_note = None;
+            let mut closed_line = None;
             let temporal = if let (Some(hit), Some(old_path)) = (old, old_path) {
                 let old_text = if old_path == path {
                     &text
@@ -477,6 +563,20 @@ impl MemoryService {
                     "Memory observation changed during capture"
                 );
                 let closed = edit::close_observation(old_text, line, &date);
+                if closed != *old_text {
+                    // What a revert restores: the closed line exactly as it read before.
+                    let before = old_text
+                        .lines()
+                        .nth(line - 1)
+                        .unwrap_or_default()
+                        .to_owned();
+                    let after = closed.lines().nth(line - 1).unwrap_or_default().to_owned();
+                    closed_line = Some(ClosedLine {
+                        path: old_path.to_string_lossy().into_owned(),
+                        before,
+                        after,
+                    });
+                }
                 if old_path == path {
                     text = closed;
                 } else if closed != *old_text {
@@ -497,9 +597,86 @@ impl MemoryService {
             if let Some((old_path, closed)) = closed_note {
                 atomic_write(&old_path, &closed)?;
             }
-            Ok(())
+            Ok((
+                path,
+                Undo {
+                    line,
+                    closed: closed_line,
+                },
+            ))
         })
         .await?
+    }
+
+    /// Removes a captured fact's line and, for an updated fact, reopens the observation it closed.
+    pub(crate) async fn revert_fact(self: &Arc<Self>, fact_id: i64) -> Result<MemoryCaptureRun> {
+        let (fact, run) = self
+            .db(move |db| {
+                let fact = captures::fact_edit(db, fact_id)?;
+                let run = captures::get(db, fact.capture_id)?;
+                Ok((fact, run))
+            })
+            .await?;
+        let undo = fact.undo.context("A known fact has nothing to revert")?;
+        ensure!(!fact.reverted, "This fact was already reverted");
+        let fm = self
+            .active(Path::new(&run.folder_path))
+            .context("Memory is disabled for this folder")?;
+        let bank = fm
+            .banks
+            .iter()
+            .find(|bank| bank.name == run.bank)
+            .with_context(|| format!("Memory bank {} is no longer configured", run.bank))?
+            .clone();
+        let path = checked_path(&bank, Path::new(&fact.path))?;
+        let previous = match undo.closed {
+            Some(closed) => Some((
+                checked_path(&bank, Path::new(&closed.path))?,
+                closed.before,
+                closed.after,
+            )),
+            None => None,
+        };
+        let guards = lock_notes(
+            [Some(path.clone()), previous.as_ref().map(|p| p.0.clone())]
+                .into_iter()
+                .flatten(),
+        )
+        .await;
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let _guards = guards;
+            const CHANGED: &str = "This note changed since the capture. Open the note to edit it.";
+            let removed = edit::replace_line(&std::fs::read_to_string(&path)?, &undo.line, None)
+                .context(CHANGED)?;
+            // Both edits are checked before either is written.
+            let (note, restored) = match previous {
+                Some((previous_path, before, after)) if previous_path == path => (
+                    edit::replace_line(&removed, &after, Some(&before)).context(CHANGED)?,
+                    None,
+                ),
+                Some((previous_path, before, after)) => {
+                    let text = std::fs::read_to_string(&previous_path)?;
+                    let restored =
+                        edit::replace_line(&text, &after, Some(&before)).context(CHANGED)?;
+                    (removed, Some((previous_path, restored)))
+                }
+                None => (removed, None),
+            };
+            // The old fact is back first: a failed second write leaves both, never neither.
+            if let Some((previous_path, restored)) = restored {
+                atomic_write(&previous_path, &restored)?;
+            }
+            atomic_write(&path, &note)?;
+            captures::mark_reverted(&db, fact_id)
+        })
+        .await??;
+        self.indexed(&fm, vec![bank], |_| Ok(())).await?;
+        self.schedule_embedding();
+        let id = run.id;
+        let run = self.db(move |db| captures::get(db, id)).await?;
+        self.emit(run.clone(), false);
+        Ok(run)
     }
 }
 
@@ -510,8 +687,31 @@ struct Candidate {
 }
 enum Choice {
     New,
+    Same(usize),
     Replace(usize),
     Skip,
+}
+
+/// Takes the same process-wide per-file lock axo's `write` and `edit` hold, so the agent's
+/// edits through memory:// and the writer's never interleave. Sorted: no lock-order cycles.
+async fn lock_notes(paths: impl IntoIterator<Item = PathBuf>) -> Vec<OwnedMutexGuard<()>> {
+    let mut paths: Vec<_> = paths.into_iter().collect();
+    paths.sort();
+    paths.dedup();
+    let mut guards = Vec::with_capacity(paths.len());
+    for path in &paths {
+        guards.push(axo::tools::lock_file(path).await);
+    }
+    guards
+}
+
+/// `Axome/Pause menu` for `<bank>/Axome/Pause menu.md`.
+fn note_name(fm: &FolderMemory, path: &Path) -> String {
+    let relative = path
+        .strip_prefix(&fm.bank.dir)
+        .unwrap_or(path)
+        .to_string_lossy();
+    relative.strip_suffix(".md").unwrap_or(&relative).to_owned()
 }
 
 fn classify(reply: &str, count: usize) -> Choice {
@@ -524,19 +724,15 @@ fn classify(reply: &str, count: usize) -> Choice {
     if &captures[1] == "NEW" {
         return Choice::New;
     }
-    if captures
-        .get(2)
-        .is_some_and(|kind| kind.as_str() == "REPLACES")
-    {
-        if let Some(n) = captures
-            .get(3)
-            .and_then(|n| n.as_str().parse::<usize>().ok())
-            .filter(|n| *n > 0 && *n <= count)
-        {
-            return Choice::Replace(n - 1);
-        }
+    let n = captures
+        .get(3)
+        .and_then(|n| n.as_str().parse::<usize>().ok())
+        .filter(|n| *n > 0 && *n <= count);
+    match (captures.get(2).map(|kind| kind.as_str()), n) {
+        (Some("REPLACES"), Some(n)) => Choice::Replace(n - 1),
+        (Some("SAME"), Some(n)) => Choice::Same(n - 1),
+        _ => Choice::Skip,
     }
-    Choice::Skip
 }
 
 async fn ask(session: &Session, text: String) -> Result<String> {

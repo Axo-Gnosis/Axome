@@ -1,3 +1,5 @@
+import { logicalKey } from '$lib/utils/keyboardEvent'
+
 export interface ShortcutStroke {
   ctrl: boolean
   shift: boolean
@@ -18,6 +20,8 @@ export function splitShortcutSequence(spec: string | undefined): string[][] {
 export function splitShortcutParts(spec: string): string[] {
   const trimmed = spec.trim()
   if (!trimmed) return []
+  // A lone `+` is the key itself, not a separator.
+  if (trimmed === '+') return [trimmed]
   const lastPlus = trimmed.lastIndexOf('+', trimmed.length - 2)
   if (lastPlus < 0) return [trimmed]
   const head = trimmed.slice(0, lastPlus)
@@ -55,16 +59,57 @@ export function normalizeShortcut(spec: string): string {
   return parseShortcut(spec).map(normalizeStroke).join(' ')
 }
 
+/** Aliases and display labels users may type, mapped to the stored key name. */
+const KEY_ALIASES: Record<string, string> = {
+  esc: 'escape',
+  return: 'enter',
+  plus: '+',
+  minus: '-',
+  up: 'arrowup',
+  down: 'arrowdown',
+  left: 'arrowleft',
+  right: 'arrowright',
+  '↑': 'arrowup',
+  '↓': 'arrowdown',
+  '←': 'arrowleft',
+  '→': 'arrowright',
+  pgup: 'pageup',
+  pgdn: 'pagedown'
+}
+
+const KEY_LABELS: Record<string, string> = {
+  escape: 'Esc',
+  enter: 'Enter',
+  space: 'Space',
+  arrowup: '↑',
+  arrowdown: '↓',
+  arrowleft: '←',
+  arrowright: '→',
+  pageup: 'PgUp',
+  pagedown: 'PgDn'
+}
+
 export function normalizeShortcutKey(key: string): string {
-  const trimmed = key.trim()
-  if (!trimmed) return ''
-  const lower = trimmed.toLowerCase()
-  if (lower === ' ') return 'space'
-  if (lower === 'esc') return 'escape'
-  if (lower === 'return') return 'enter'
-  if (lower === 'plus') return '+'
-  if (lower === 'minus') return '-'
-  return lower
+  // The space bar's `key` is ' ', which trimming would erase.
+  if (key === ' ') return 'space'
+  const lower = key.trim().toLowerCase()
+  return KEY_ALIASES[lower] ?? lower
+}
+
+/** The normalized stroke (`alt+ctrl+shift+key`) a keydown matches bindings by; null for a bare modifier. */
+export function eventStroke(e: KeyboardEvent): string | null {
+  // Resolve via `logicalKey` so WebKitGTK's `'Unidentified'` regression
+  // on Shift-modified non-character keys (Tab, Enter, …) doesn't drop
+  // user-bound shortcuts on the floor.
+  const raw = logicalKey(e)
+  if (raw === 'Control' || raw === 'Meta' || raw === 'Shift' || raw === 'Alt') return null
+  const mods: string[] = []
+  if (e.altKey) mods.push('alt')
+  if (e.ctrlKey || e.metaKey) mods.push('ctrl')
+  if (e.shiftKey && raw !== '+') mods.push('shift')
+  const key = normalizeShortcutKey(raw.length === 1 ? raw.toLowerCase() : raw)
+  if (!key) return null
+  return [...mods, key].join('+')
 }
 
 export function normalizeStroke(stroke: ShortcutStroke): string {
@@ -86,9 +131,8 @@ export function formatShortcutPart(part: string): string {
   if (lower === 'ctrl' || lower === 'control' || lower === 'cmd' || lower === 'meta') return 'Ctrl'
   if (lower === 'shift') return 'Shift'
   if (lower === 'alt' || lower === 'option') return 'Alt'
-  if (lower === 'escape') return 'Esc'
-  if (lower === 'enter') return 'Enter'
-  if (lower === 'space') return 'Space'
+  const label = KEY_LABELS[normalizeShortcutKey(part)]
+  if (label) return label
   if (/^f\d+$/i.test(part)) return part.toUpperCase()
   if (part.length === 1) return part.toUpperCase()
   return part[0].toUpperCase() + part.slice(1)

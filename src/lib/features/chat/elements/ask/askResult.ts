@@ -2,12 +2,11 @@ import type { ChatAnswer, ChatAskBlock } from '$lib/types/backend'
 import { partsText } from '../../parts/parts'
 import type { ToolStep } from '../../turns'
 import { record } from '../tool/payload'
-import { answerError, askKey, parseAskBlocks } from './askDocument'
+import { answerError, askAnswerText, askKey, parseAskBlocks } from './askDocument'
 
 export type AskOutcome = 'answered' | 'timedOut' | 'dismissed' | 'cancelled' | 'steered' | 'failed' | 'unavailable'
 
 export interface AskAnswerRow {
-  id: string
   /** False when the recorded answer is `null` (skipped, or no suggestion at timeout). */
   answered: boolean
   text: string
@@ -48,7 +47,7 @@ export function parseAskResult(call: ToolStep): AskResult {
     const raw = answers[id]
     if (raw === null) {
       if (!timedOut && !question.optional) return unavailable
-      rows[askKey(id)] = { id, answered: false, text: 'no answer', note: null, suggested: false }
+      rows[askKey(id)] = { answered: false, text: 'no answer', note: null, suggested: false }
       continue
     }
     const { value, other, note } = record(raw)
@@ -63,22 +62,9 @@ export function parseAskResult(call: ToolStep): AskResult {
       return unavailable
     const answer: ChatAnswer = { id, value, other, note }
     if (answerError(question, answer, true)) return unavailable
-
-    let text: string
-    if (question.type === 'choice') {
-      const picks = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
-      const labels = picks.flatMap((pick) =>
-        question.options.filter((option) => option.value === pick).map((option) => option.label)
-      )
-      if (other && /[^\p{White_Space}]/u.test(other)) labels.push(`"${other}"`)
-      text = labels.join(', ')
-    } else {
-      text = question.type === 'number' ? String(value) : `"${value}"`
-    }
     rows[askKey(id)] = {
-      id,
       answered: true,
-      text,
+      text: askAnswerText(question, answer),
       note: note && /[^\p{White_Space}]/u.test(note) ? note : null,
       suggested: timedOut
     }

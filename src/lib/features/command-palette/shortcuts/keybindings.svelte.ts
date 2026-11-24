@@ -9,8 +9,7 @@ import {
   loadShortcutOverrides,
   onOverridesChange
 } from '$lib/features/command-palette/shortcuts/overrides.svelte'
-import { normalizeShortcut, normalizeShortcutKey } from '$lib/features/command-palette/shortcuts/spec'
-import { logicalKey } from '$lib/utils/keyboardEvent'
+import { eventStroke, normalizeShortcut } from '$lib/features/command-palette/shortcuts/spec'
 import { closeTransientModals } from '$lib/utils/modalRegistry.svelte'
 
 const bindings = new Map<string, Pick<AppCommandDefinition, 'run' | 'terminalPolicy'>>()
@@ -26,22 +25,6 @@ export function suspendKeybindings(): () => void {
     released = true
     suspendCount = Math.max(0, suspendCount - 1)
   }
-}
-
-function normalizeEvent(e: KeyboardEvent): string | null {
-  // Resolve via `logicalKey` so WebKitGTK's `'Unidentified'` regression
-  // on Shift-modified non-character keys (Tab, Enter, …) doesn't drop
-  // user-bound shortcuts on the floor.
-  const raw = logicalKey(e)
-  const mods: string[] = []
-  if (e.altKey) mods.push('alt')
-  if (e.ctrlKey || e.metaKey) mods.push('ctrl')
-  if (e.shiftKey && raw !== '+') mods.push('shift')
-
-  if (raw === 'Control' || raw === 'Meta' || raw === 'Shift' || raw === 'Alt') return null
-  const key = normalizeShortcutKey(raw.length === 1 ? raw.toLowerCase() : raw)
-  if (!key) return null
-  return [...mods, key].join('+')
 }
 
 function clearPendingChord(): void {
@@ -75,7 +58,7 @@ function dispatchBinding(entry: Pick<AppCommandDefinition, 'run' | 'terminalPoli
 function installKeybindingListener(): () => void {
   function onKeyDown(e: KeyboardEvent) {
     if (suspendCount > 0) return
-    const stroke = normalizeEvent(e)
+    const stroke = eventStroke(e)
     if (!stroke) return
 
     const sequence = pendingChord ? `${pendingChord.sequence} ${stroke}` : stroke

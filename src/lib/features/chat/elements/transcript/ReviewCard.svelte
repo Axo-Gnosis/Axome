@@ -4,6 +4,9 @@
   import { Textarea } from '$lib/components/ui/input'
   import type { ChatReview } from '$lib/types/backend'
   import { KeyHint } from '../key-hint'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
+  import { getTranscriptNav } from '$lib/features/chat/keymap/nav.svelte'
+  import { getChatKeys } from '$lib/features/chat/keymap/router.svelte'
 
   type Action = () => Promise<string | null>
 
@@ -27,6 +30,9 @@
   } = $props()
 
   const id = $props.id()
+  const nav = getTranscriptNav()
+  const keys = getChatKeys()
+  let feedbackField = $state<HTMLTextAreaElement | null>(null)
   let feedback = $state('')
   let error = $state<string | null>(null)
   // Set while an action runs; a successful action resolves the review, which unmounts the card.
@@ -50,41 +56,23 @@
     if (canRevise) void run(() => onRevise(feedback.trim()))
   }
   const dismiss = () => run(onDismiss)
-
-  function keydown(event: KeyboardEvent) {
-    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      void dismiss()
-    } else if (event.key === 'Enter') {
-      event.stopPropagation()
-      // A focused button keeps native Enter activation; Shift+Enter keeps its newline in the feedback.
-      if (!(event.target instanceof HTMLElement) || event.target.closest('button')) return
-      if (event.target.closest('textarea')) {
-        if (event.shiftKey) return
-        event.preventDefault()
-        revise()
-      } else {
-        event.preventDefault()
-        void accept()
-      }
-    }
-  }
 </script>
 
-<!-- Delegated keys: Enter accepts (Request Changes from the feedback field), Esc dismisses; controls stay native. -->
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- One stop: Activate accepts, or requests changes from inside the feedback; typing starts the feedback. -->
 <section
   data-slot="review-card"
-  class="flex min-w-0 flex-col gap-3 rounded-lg border border-edge p-3 outline-none focus-visible:shadow-focus-ring"
+  class="flex min-w-0 flex-col gap-3 rounded-lg border border-edge p-3 data-[nav-active]:border-accent"
   aria-label={`Review ${review.mode} result`}
-  tabindex="-1"
+  {@attach nav.stop(`review:${review.callId}`, () => ({
+    activate: (editing) => (editing ? revise() : void accept()),
+    field: () => feedbackField,
+    submitOnEnter: true
+  }))}
+  {@attach keys.scope(() => ({ commands: { dismiss: () => void dismiss() } }))}
   {@attach (element) => {
-    // Never steal focus from text the user is typing; they can click or Tab into the card.
-    if (!document.activeElement?.closest('input, textarea, select, [contenteditable="true"]')) element.focus()
+    // Never steal focus from text the user is typing; they can click into the card instead.
+    if (!document.activeElement?.closest('input, textarea, select, [contenteditable="true"]')) nav.focus(element)
   }}
-  onkeydown={keydown}
 >
   <span class="text-sm text-muted">Review <span class="font-mono text-fg">{review.mode}</span> result</span>
   {#if typeof review.result === 'string'}
@@ -98,14 +86,21 @@
       )}</pre>
   {/if}
   <label for={`${id}-feedback`} class="sr-only">Requested changes</label>
-  <Textarea id={`${id}-feedback`} rows={3} placeholder="What should change?" bind:value={feedback} disabled={locked} />
+  <Textarea
+    id={`${id}-feedback`}
+    bind:ref={feedbackField}
+    rows={3}
+    placeholder="What should change?"
+    bind:value={feedback}
+    disabled={locked}
+  />
   <div class="flex flex-wrap items-center gap-2">
     <Button type="button" variant="accent" size="xs" disabled={locked} onclick={() => void accept()}>
-      Accept <KeyHint keys="Enter" />
+      Accept <KeyHint keys={chatShortcut('activate')} />
     </Button>
     <Button type="button" size="xs" disabled={!canRevise} onclick={revise}>Request Changes</Button>
     <Button type="button" variant="ghost" size="xs" disabled={locked} onclick={() => void dismiss()}>
-      Dismiss <KeyHint keys="Esc" />
+      Dismiss <KeyHint keys={chatShortcut('dismiss')} />
     </Button>
   </div>
   {#if error}

@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte'
   import { formatCount, formatList } from '$lib/features/chat/format'
   import { isActiveJob } from '$lib/features/chat/jobs'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
   import type { BlockView } from '$lib/features/chat/view'
   import type { ChatJob } from '$lib/types/backend'
   import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
@@ -63,6 +64,7 @@
     const ids = liveJobs.filter((job) => isActiveJob(job.status)).map((job) => job.id)
     return ids.length ? `waiting on ${formatList(ids)}` : 'waiting'
   })
+  const cycleKey = $derived(chatShortcut('cycleDetails'))
 </script>
 
 {#snippet rail(steps: TranscriptStep[])}
@@ -78,7 +80,7 @@
     <button
       type="button"
       aria-expanded={open}
-      title="Toggle work block (Alt+O cycles all)"
+      title={cycleKey ? `Toggle work block (${cycleKey} cycles all)` : 'Toggle work block'}
       onclick={() => onView(segment.id, open ? 'collapsed' : 'preview')}
       class={cn(
         'flex max-w-full min-w-0 cursor-pointer items-center gap-2 rounded text-sm text-muted transition-colors hover:text-fg focus-visible:shadow-focus-ring focus-visible:outline-none',

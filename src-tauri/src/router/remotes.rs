@@ -644,6 +644,12 @@ fn remote_host_event(server: &str, event: HostEventWire) -> Option<DesktopEvent>
                 server: server.into(),
             });
         }
+        HostEventWire::MemoryCaptureChanged(event) => {
+            return Some(DesktopEvent::MemoryCaptureChanged {
+                server: server.into(),
+                event,
+            });
+        }
         HostEventWire::ExtensionStopped {
             id,
             folder,

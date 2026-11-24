@@ -69,6 +69,7 @@ const eventNames: Record<string, string> = {
   models_changed: 'models-changed',
   extensions_changed: 'extensions-changed',
   extension_stopped: 'extension-stopped',
+  memory_capture_changed: 'memory-capture-changed',
   chat_summaries_changed: 'chat-summaries-changed'
 }
 
@@ -441,7 +442,7 @@ export function createWebHostTransport(options: WebHostTransportOptions): WebHos
             frame.event.kind === 'models_changed' ||
             frame.event.kind === 'extensions_changed'
               ? { server: null }
-              : frame.event.kind === 'extension_stopped'
+              : frame.event.kind === 'extension_stopped' || frame.event.kind === 'memory_capture_changed'
                 ? { ...(frame.event.payload as object), server: null }
                 : frame.event.kind === 'nix_changed' ||
                     frame.event.kind === 'sessions_changed' ||

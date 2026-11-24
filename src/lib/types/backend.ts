@@ -1095,6 +1095,7 @@ export interface MemoryBank {
 export interface MemoryCapture {
   compaction: boolean
   close: boolean
+  notify: boolean
 }
 
 export interface MemorySettings {
@@ -1115,13 +1116,46 @@ export interface MemoryStatus {
     error: string | null
   }
   banks: { name: string; path: string; exists: boolean; notes: number; default: boolean }[]
-  lastCapture: {
-    at: string
-    sessionId: string
-    added: number
-    replaced: number
-    error: string | null
-  } | null
+}
+
+export type MemoryCaptureTrigger = 'compaction' | 'close'
+export type MemoryFactOutcome = 'new' | 'updated' | 'known'
+
+export interface MemoryCaptureQuery {
+  sessionId: string | null
+  bank: string | null
+  limit: number
+}
+
+export interface MemoryCapturedFact {
+  id: number
+  outcome: MemoryFactOutcome
+  category: string
+  text: string
+  /** The observation an `updated` fact replaced. */
+  previous: string | null
+  /** Bank-relative note path without `.md`. */
+  note: string
+  /** Absolute note file on the host. */
+  path: string
+  reverted: boolean
+}
+
+export interface MemoryCaptureRun {
+  id: number
+  sessionId: string
+  /** Host-local folder path. */
+  folderPath: string
+  title: string | null
+  bank: string
+  trigger: MemoryCaptureTrigger
+  anchorEntryId: string | null
+  startedAt: string
+  /** `null` while the capture runs. */
+  endedAt: string | null
+  error: string | null
+  noModel: boolean
+  facts: MemoryCapturedFact[]
 }
 
 export interface EffectiveSettings {

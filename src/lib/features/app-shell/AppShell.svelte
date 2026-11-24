@@ -48,6 +48,7 @@
   import { initTransferService } from '$lib/features/workbench/transferService.svelte'
   import type { Snippet } from 'svelte'
   import { initDeepLinks } from '$lib/features/remotes/deepLink.svelte'
+  import { startMemoryCaptures } from '$lib/features/memory/captures.svelte'
 
   let { children }: { children: Snippet } = $props()
 
@@ -146,6 +147,7 @@
           ]
         })
       }),
+      startMemoryCaptures(),
       backend.issues.onChanged(({ folderPath }) => void refreshIssuesForFolder(folderPath)),
       backend.nix.onChanged(({ folderPath }) => {
         refreshNixForFolder(folderPath)
@@ -206,10 +208,10 @@
 </script>
 
 <Tooltip.Provider delayDuration={300}>
-  <div class="flex h-screen flex-col overflow-hidden">
+  <div class="flex h-screen flex-col overflow-clip">
     <TitleBar />
 
-    <main class="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <main class="flex min-h-0 flex-1 flex-col overflow-clip">
       {@render children()}
     </main>
   </div>

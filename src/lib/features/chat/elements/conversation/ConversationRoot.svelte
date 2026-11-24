@@ -9,24 +9,31 @@
   } from './scrollAnchor'
   import { IconButton } from '$lib/components/ui/button'
   import type { Turn } from '$lib/features/chat/turns'
-  import { focusAskControl } from '$lib/features/chat/elements/ask/askDocument'
+  import { getChatKeys } from '$lib/features/chat/keymap/router.svelte'
+  import { setTranscriptNav, type TranscriptNav } from '$lib/features/chat/keymap/nav.svelte'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
-  import { logicalKey } from '$lib/utils/keyboardEvent'
   import TurnRail from './TurnRail.svelte'
 
   let {
+    nav,
     turns = [],
     children,
     footer,
     onAskVisibility
   }: {
+    /** Keyboard position in this transcript; its owner also wires the composer it exits to. */
+    nav: TranscriptNav
     turns?: Turn[]
     children?: Snippet
     footer?: Snippet
     onAskVisibility?: (visibleCallIds: string[]) => void
   } = $props()
+
+  const keys = getChatKeys()
+  // svelte-ignore state_referenced_locally
+  setTranscriptNav(nav)
 
   let viewport: HTMLDivElement | undefined
   let transcript: HTMLDivElement | undefined
@@ -35,6 +42,11 @@
   let viewportWidth = $state(0)
   let viewportHeight = $state(0)
   const showRail = $derived(turns.length > 0 && viewportWidth >= 560 && viewportHeight >= 160)
+  // While moving with the keyboard the rail follows the highlight, not the scroll position.
+  const railTurnId = $derived.by(() => {
+    if (!nav.visible || nav.active === null) return activeTurnId
+    return nav.activeElement()?.closest<HTMLElement>('[data-turn-id]')?.dataset.turnId ?? activeTurnId
+  })
   // Holds justify-end's top offset during disclosures on short chats so expanding pushes down, not up.
   let lockedSpacer = $state<number | null>(null)
   // Overscroll headroom so Turn 1's end can always rest at the bottom of the viewport like an only message.
@@ -213,42 +225,59 @@
     const delta = target.getBoundingClientRect().bottom - (viewport.getBoundingClientRect().bottom - 8)
     const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
     const top = Math.max(0, Math.min(maxTop, viewport.scrollTop + delta))
-    expansionAnchor.reset()
-    lockedSpacer = null
-    anchor = null
-    atBottom = false
-    beginUserScroll()
+    releaseBottom()
     activeTurnId = turnId
     viewport.scrollTo({ top, behavior: 'smooth' })
   }
 
-  export function jumpToAsk(callId: string): void {
-    const scroller = viewport
-    const content = transcript
-    if (!scroller?.isConnected || !content?.isConnected) return
-    const target = Array.from(content.querySelectorAll<HTMLElement>('[data-ask-call-id]')).find(
-      (node) => node.dataset.askCallId === callId
-    )
-    if (!target) return
+  /** A deliberate move away from the bottom: stop following new output and drop held anchors. */
+  function releaseBottom(): void {
     expansionAnchor.reset()
     lockedSpacer = null
     anchor = null
     atBottom = false
-    changing = false
     beginUserScroll()
+  }
+
+  /**
+   * Brings a navigation stop into view. A turn moves exactly as clicking its rail dot does; anything
+   * else scrolls the least it takes: its top when it is taller than the view or above it, else its
+   * bottom. Only the transcript scrolls; nothing around it moves.
+   */
+  function reveal(element: HTMLElement): void {
+    if (element.dataset.turnId) return scrollToTurn(element.dataset.turnId)
+    if (!viewport?.isConnected) return
+    const margin = 12
+    const view = viewport.getBoundingClientRect()
+    const box = element.getBoundingClientRect()
+    const delta =
+      box.top < view.top + margin || box.height > view.height - 2 * margin
+        ? box.top - (view.top + margin)
+        : box.bottom > view.bottom - margin
+          ? box.bottom - (view.bottom - margin)
+          : 0
+    if (Math.abs(delta) < 1) return
+    releaseBottom()
+    viewport.scrollBy({ top: delta, behavior: 'instant' })
+    updateAtBottom()
+  }
+
+  /** Scroll to the block whose `data-view-id` is `viewId`; the caller opens it first. */
+  export function jumpToView(viewId: string): void {
+    const scroller = viewport
+    const content = transcript
+    if (!scroller?.isConnected || !content?.isConnected) return
+    const find = () => content.querySelector<HTMLElement>(`[data-view-id="${CSS.escape(viewId)}"]`)
+    const target = find()
+    if (!target) return
+    changing = false
+    releaseBottom()
     const current = revision
     void tick().then(() => {
-      if (
-        current !== revision ||
-        viewport !== scroller ||
-        !content.contains(target) ||
-        target.dataset.askCallId !== callId
-      )
-        return
+      if (current !== revision || viewport !== scroller || find() !== target) return
       const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       scroller.scrollTo({ top: scroller.scrollTop + delta, behavior: reducedMotion ? 'instant' : 'smooth' })
-      if (!focusAskControl(target)) target.focus({ preventScroll: true })
       updateAtBottom()
     })
   }
@@ -348,19 +377,6 @@
     }
     window.addEventListener('pointerup', release, options)
     window.addEventListener('pointercancel', release, options)
-    scroller.addEventListener(
-      'keydown',
-      (event) => {
-        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return
-        const key = logicalKey(event)
-        if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(key)) return
-        const target = event.target instanceof Element ? event.target : null
-        if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-        if (key === ' ' && target?.closest('button, a, [role="button"]')) return
-        beginUserScroll()
-      },
-      options
-    )
     untrack(() => {
       viewportWidth = scroller.clientWidth
       viewportHeight = scroller.clientHeight
@@ -414,10 +430,15 @@
       onscroll={updateAtBottom}
     >
       <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
+        <!-- Holds keyboard focus while moving through stops; the highlight is drawn by the stops. -->
         <div
           bind:this={transcript}
           {@attach observeAsks}
-          class={cn('flex flex-1 flex-col gap-4 pt-4 pb-2', lockedSpacer === null && 'justify-end')}
+          {@attach nav.mount(reveal)}
+          {@attach keys.scope(() => nav.keys)}
+          tabindex="-1"
+          aria-label="Transcript"
+          class={cn('flex flex-1 flex-col gap-4 pt-4 pb-2 outline-none', lockedSpacer === null && 'justify-end')}
           style:padding-top={`${lockedSpacer ?? overscrollTop}px`}
         >
           {#if children}{@render children()}{/if}
@@ -425,7 +446,7 @@
       </div>
     </div>
     {#if showRail}
-      <TurnRail {turns} {activeTurnId} onJump={scrollToTurn} />
+      <TurnRail {turns} activeTurnId={railTurnId} onJump={scrollToTurn} />
     {/if}
   </div>
 

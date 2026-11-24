@@ -36,9 +36,7 @@ function work(id: string, steps: TranscriptStep[]) {
 const times = { timestamp: null }
 const boundaries: Step[] = [
   { id: 'text', entryId: 'text', ...times, kind: 'text', text: 'Between calls' },
-  { id: 'notice', entryId: 'notice', ...times, kind: 'notice', notice: { kind: 'host', text: 'Notice' } },
-  { id: 'compaction', entryId: 'compaction', ...times, kind: 'compaction', summary: 'Summary', tokensBefore: 10 },
-  { id: 'branch', entryId: 'branch', ...times, kind: 'branchSummary', summary: 'Branch' }
+  { id: 'notice', entryId: 'notice', ...times, kind: 'notice', notice: { kind: 'host', text: 'Notice' } }
 ]
 
 test('only adjacent same-name tools and adjacent thinking merge, preserving boundaries and order', () => {
@@ -112,7 +110,26 @@ test('visible messages end each work fold, preserving the entire turn sequence',
   assert.deepEqual(segmentSteps([intro, answer], none), [intro, answer])
 })
 
-test('notices and summaries stay visible at their original positions', () => {
+test('adjacent maintenance becomes one band between the work blocks around it', () => {
+  const first = tool('a')
+  const last = tool('b')
+  const compaction: Step = {
+    id: 'compaction',
+    entryId: 'compaction',
+    ...times,
+    kind: 'compaction',
+    summary: 'Summary',
+    tokensBefore: 10
+  }
+  const moved: Step = { id: 'moved', entryId: 'moved', ...times, kind: 'contextMoved', blocks: 2 }
+  assert.deepEqual(segmentSteps(groupSteps([first, compaction, moved, last]), none), [
+    work('work:a', [first]),
+    { kind: 'band', id: 'band:compaction', steps: [compaction, moved] },
+    work('work:b', [last])
+  ])
+})
+
+test('notices stay visible at their original positions', () => {
   for (const boundary of boundaries) {
     const first = tool('a')
     const last = tool('b')

@@ -21,6 +21,7 @@
   import { copyToClipboard } from '$lib/utils/clipboard'
   import { cn } from '$lib/utils/cn'
   import { KeyHint } from '../key-hint'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
 
   let {
     entry,
@@ -77,14 +78,14 @@
       />
       <div class="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="xs" onclick={() => controller.cancelEdit()}
-          >Cancel <KeyHint keys="Esc" /></Button
+          >Cancel <KeyHint keys={chatShortcut('leave')} /></Button
         >
         <Button
           type="button"
           variant="ghost"
           size="xs"
           disabled={!canBranch || !hasContent(controller.editing.parts)}
-          onclick={() => void controller.submitEdit()}>Send <KeyHint keys="Enter" /></Button
+          onclick={() => void controller.submitEdit()}>Send <KeyHint keys={chatShortcut('send')} /></Button
         >
       </div>
     {:else}

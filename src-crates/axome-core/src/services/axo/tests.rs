@@ -12,6 +12,7 @@ use axome_protocol::chat::{
     ChatEvent, ChatJobKind, ChatJobStatus, ChatLinkTarget, ChatLive, ChatOutputChunk,
     ChatOutputStream, ChatPart, ChatRunOutcome, ChatServiceTier, ChatThinking,
 };
+use axome_protocol::memory::{MemoryCaptureQuery, MemoryCaptureTrigger, MemoryFactOutcome};
 use base64::Engine as _;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -426,18 +427,35 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
     };
     fixture.service.close(&id).await.unwrap();
     wait_until(|| !fixture.service.memory.capture_pending()).await;
-    let status = fixture
-        .service
-        .memory
-        .last_capture
-        .lock()
-        .clone()
-        .expect("capture completed");
-    assert!(status.error.is_none(), "{status:?}");
     let note = dirs.data.join("memory/banks/main/proj/Icons.md");
     assert!(std::fs::read_to_string(&note)
         .unwrap()
         .contains("- [decision] The lazy icon loader stays."));
+    let runs = crate::services::memory::captures::list(
+        &fixture.service.db,
+        &MemoryCaptureQuery {
+            session_id: Some(id.clone()),
+            bank: None,
+            limit: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.trigger, MemoryCaptureTrigger::Close);
+    assert!(run.error.is_none(), "{run:?}");
+    assert!(run.ended_at.is_some());
+    assert_eq!(run.facts.len(), 1);
+    let fact = &run.facts[0];
+    assert_eq!(fact.outcome, MemoryFactOutcome::New);
+    assert_eq!(fact.note, "proj/Icons");
+    // Forget must remove exactly the captured line, once.
+    let reverted = fixture.service.memory.revert_fact(fact.id).await.unwrap();
+    assert!(reverted.facts[0].reverted);
+    assert!(!std::fs::read_to_string(&note)
+        .unwrap()
+        .contains("The lazy icon loader stays."));
+    assert!(fixture.service.memory.revert_fact(fact.id).await.is_err());
     let (_, entries) = axo.open_session_read(&path).await.unwrap();
     let last_seq = entries.last().unwrap().seq;
     let cursor: u64 = fixture
@@ -483,6 +501,14 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
         )
         .unwrap();
     assert_eq!(fork_cursors, 1);
+    // A chat only viewed, never conversed in, must not capture even without a cursor.
+    fixture
+        .service
+        .db
+        .write()
+        .conn()
+        .execute("DELETE FROM memory_cursors WHERE session_id = ?1", [&id])
+        .unwrap();
     fixture.service.close(&id).await.unwrap();
     wait_until(|| !fixture.service.memory.capture_pending()).await;
     assert_eq!(fixture.api.requests().len(), 3);

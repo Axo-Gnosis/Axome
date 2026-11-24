@@ -1,6 +1,6 @@
 <!--
   @component
-  KeyboardShortcutsView: command keybinding editor for stable app and editor commands.
+  KeyboardShortcutsView: command keybinding editor for app, editor and chat commands.
 -->
 
 <script lang="ts">
@@ -186,6 +186,7 @@
     commandId={rebindTarget.id}
     commandLabel={rebindTarget.label}
     defaultKeybindings={rebindTarget.defaultKeybindings}
+    plainKeys={rebindTarget.source === 'chat'}
     onClose={() => (rebindTarget = null)}
   />
 {/if}

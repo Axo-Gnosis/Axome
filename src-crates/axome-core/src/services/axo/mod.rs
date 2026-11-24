@@ -32,6 +32,7 @@ use axome_protocol::axo::AxoKeywordInfo;
 use axome_protocol::axo_settings::AxoSettings;
 use axome_protocol::chat::*;
 use axome_protocol::git::DiffFileContent;
+use axome_protocol::memory::MemoryCaptureTrigger;
 use axome_protocol::server_config::Supervision;
 use axome_protocol::session::{IndexedChildSession, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -264,8 +265,12 @@ impl AxoService {
             ));
             let web = web::WebTools::new(dirs.clone(), Arc::clone(&credentials), this.clone());
             let browser = Arc::new(axome_browser::BrowserService::new());
-            let memory =
-                crate::services::memory::MemoryService::new(dirs.clone(), web.http.clone());
+            let memory = crate::services::memory::MemoryService::new(
+                dirs.clone(),
+                web.http.clone(),
+                Arc::clone(&db),
+                Arc::clone(&events),
+            );
             Self {
                 this: this.clone(),
                 db,
@@ -819,9 +824,9 @@ impl AxoService {
             let service = self.this.clone();
             let task = runtime.spawn(async move {
                 live.release().await;
-                if capture {
+                if capture && live.conversed() {
                     if let Some(service) = service.upgrade() {
-                        service.memory_capture(&live, false);
+                        service.memory_capture(&live, MemoryCaptureTrigger::Close, None);
                     }
                 }
             });
@@ -831,7 +836,12 @@ impl AxoService {
         }
     }
 
-    fn memory_capture(&self, live: &LiveSession, compaction: bool) {
+    fn memory_capture(
+        &self,
+        live: &LiveSession,
+        trigger: MemoryCaptureTrigger,
+        anchor_entry_id: Option<String>,
+    ) {
         if self.closed.load(Ordering::Acquire)
             || live.root_id.is_some()
             || !live.session.path().is_file()
@@ -843,10 +853,11 @@ impl AxoService {
                 folder: live.folder.clone(),
                 session_path: live.session.path().to_owned(),
                 session_id: live.id.clone(),
+                trigger,
+                anchor_entry_id,
+                title: live.title(),
             },
-            compaction,
             live.engine.axo.clone(),
-            self.db.clone(),
             vec![bundled::memory_writer().clone()],
         );
     }

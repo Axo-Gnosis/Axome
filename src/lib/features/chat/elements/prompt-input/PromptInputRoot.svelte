@@ -31,7 +31,8 @@
     invokedCommand,
     partsText
   } from '$lib/features/chat/parts/parts'
-  import { logicalKey } from '$lib/utils/keyboardEvent'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
+  import { getChatKeys, type KeyScope } from '$lib/features/chat/keymap/router.svelte'
   import { backend } from '$lib/api/backend'
   import { ensureProjectFiles, getProjectFilePaths } from '$lib/features/files/projectFiles.svelte'
   import { rankPaths } from '$lib/features/command-palette/commands/files.svelte'
@@ -71,6 +72,8 @@
     onCommand,
     onMode,
     onCancel,
+    onStop,
+    onLeaveUp,
     keywords = [],
     keywordMatches,
     start,
@@ -91,7 +94,12 @@
     onCommand?: (name: string, args: Record<string, unknown>) => Promise<string | null>
     /** Enters the mode, then submits `parts` (the message without its `/name`) when non-empty. */
     onMode?: (name: string, parts: ChatPart[]) => Promise<string | null>
+    /** Leave (Esc by default): abandons an inline edit. */
     onCancel?: () => void
+    /** Stop the run (Esc by default) for the session this input steers. */
+    onStop?: () => void
+    /** Previous (↑) with the caret at the very start: move up into the transcript. */
+    onLeaveUp?: () => void
     /** Names of the session's keywords; a text containing none skips the `keywordMatches` round trip. */
     keywords?: string[]
     keywordMatches?: (texts: string[]) => Promise<ChatKeywordMatch[][]>
@@ -101,6 +109,7 @@
     hint?: { title: string; text: string } | null
   } = $props()
   const id = $props.id()
+  const keys = getChatKeys()
   let host: HTMLDivElement
   let view: EditorView | undefined
   let lastParts: ChatPart[] = []
@@ -596,39 +605,53 @@
     }
     return DecorationSet.create(state.doc, decorations)
   }
-  function keydown(event: KeyboardEvent): boolean {
-    if (event.isComposing || disabled || event.defaultPrevented) return false
-    const key = logicalKey(event)
-    let handled = false
-    if (key === 'Escape' && open) {
-      if (view)
-        dismissed = `${view.state.selection.from}:${documentText(view.state.doc).slice(0, view.state.selection.from - 1)}`
-      query = null
-      handled = true
-    } else if (key === 'Escape' && onCancel) {
-      onCancel()
-      handled = true
-    } else if (
-      open &&
-      items.length &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !(key === 'Tab' && event.shiftKey) &&
-      ['ArrowDown', 'ArrowUp', 'Enter', 'Tab'].includes(key)
-    ) {
-      if (key === 'Enter' || key === 'Tab') choose(active, key === 'Tab')
-      else active = (active + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-      handled = true
-    } else if (key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-      void submit(event.altKey)
-      handled = true
+  // Chat keymap commands for this input (handlers return false to pass a key on). An open
+  // suggestion list takes the navigation commands, so Enter picks rather than sends.
+  const listing = () => !disabled && open && items.length > 0
+  const scope: KeyScope = {
+    text: true,
+    commands: {
+      send: () => {
+        if (disabled || listing()) return false
+        void submit(false)
+      },
+      followUp: () => {
+        if (disabled || listing()) return false
+        void submit(true)
+      },
+      newline: () => {
+        if (disabled || !view) return false
+        view.dispatch(view.state.tr.insertText('\n'))
+      },
+      activate: () => {
+        if (!listing()) return false
+        choose(active)
+      },
+      complete: () => {
+        if (!listing()) return false
+        choose(active, true)
+      },
+      previous: () => {
+        if (listing()) active = (active - 1 + items.length) % items.length
+        else if (onLeaveUp && view?.state.selection.empty && view.state.selection.from <= 1) onLeaveUp()
+        else return false
+      },
+      next: () => {
+        if (!listing()) return false
+        active = (active + 1) % items.length
+      },
+      leave: () => {
+        if (open && view) {
+          dismissed = `${view.state.selection.from}:${documentText(view.state.doc).slice(0, view.state.selection.from - 1)}`
+          query = null
+        } else if (onCancel) onCancel()
+        else return false
+      },
+      stop: () => {
+        if (open || !onStop) return false
+        onStop()
+      }
     }
-    if (handled) {
-      event.preventDefault()
-      event.stopPropagation()
-    }
-    return handled
   }
   /** Steps over, or deletes, the chip beside the caret in one keypress, as with a character. */
   function chipKey(direction: -1 | 1, remove = false): boolean {
@@ -683,11 +706,7 @@
             ArrowLeft: () => chipKey(-1),
             ArrowRight: () => chipKey(1),
             Backspace: (state, dispatch) => chipKey(-1, true) || deleteSelection(state, dispatch),
-            Delete: (state, dispatch) => chipKey(1, true) || deleteSelection(state, dispatch),
-            'Shift-Enter': (state, dispatch) => {
-              dispatch?.(state.tr.insertText('\n'))
-              return true
-            }
+            Delete: (state, dispatch) => chipKey(1, true) || deleteSelection(state, dispatch)
           })
         ]
       }),
@@ -715,11 +734,7 @@
         }
         updateQuery()
       },
-      handleKeyDown: (_view, event) => keydown(event),
-      // ProseMirror prevents every Escape; one no composer layer consumes must reach the chat
-      // keymap (stop the run), so skip ProseMirror's handling for it. An edit's Escape (onCancel)
-      // and an open suggestion list's stay with `keydown`.
-      handleDOMEvents: { keydown: (_view, event) => event.key === 'Escape' && !open && !onCancel },
+      // Chat commands (send, newline, suggestions) reach `scope` through ChatKeys before ProseMirror.
       handlePaste: (_view, event) => {
         if (!event.clipboardData) return false
         // Text copied from this composer carries its chips; let ProseMirror paste that slice as-is.
@@ -875,7 +890,7 @@
     </div>
   {/if}
   <div class="relative">
-    <div bind:this={host}></div>
+    <div bind:this={host} {@attach keys.scope(() => scope)}></div>
     {#if !parts.length}<span class="pointer-events-none absolute top-3 left-4 text-base text-subtle">{placeholder}</span
       >{/if}
   </div>
@@ -886,7 +901,7 @@
       <IconButton
         size="md"
         tooltip={sendMode === 'send' ? 'Send' : sendMode === 'steer' ? 'Steer' : 'Follow-up'}
-        shortcut={sendMode === 'followUp' ? 'Alt+Enter' : 'Enter'}
+        shortcut={chatShortcut(sendMode === 'followUp' ? 'followUp' : 'send')}
         tooltipSide="top"
         disabled={!canSend}
         class={canSend ? 'bg-accent-dim text-ground hover:bg-accent hover:text-ground' : ''}

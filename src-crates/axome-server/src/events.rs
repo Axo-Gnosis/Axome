@@ -22,6 +22,7 @@ pub(crate) fn to_wire(event: HostEvent) -> Option<HostEventWire> {
         HostEvent::ChatSummariesChanged(event) => Some(HostEventWire::ChatSummariesChanged(event)),
         HostEvent::ModelsChanged => Some(HostEventWire::ModelsChanged(())),
         HostEvent::ExtensionsChanged => Some(HostEventWire::ExtensionsChanged(())),
+        HostEvent::MemoryCaptureChanged(event) => Some(HostEventWire::MemoryCaptureChanged(event)),
         HostEvent::ExtensionStopped {
             id,
             folder,
@@ -117,6 +118,7 @@ pub(crate) async fn claimed(session: &Mutex<Session>, event: &HostEventWire) -> 
         | HostEventWire::WorkbenchesChanged(())
         | HostEventWire::ModelsChanged(())
         | HostEventWire::ExtensionsChanged(())
+        | HostEventWire::MemoryCaptureChanged(_)
         | HostEventWire::ExtensionStopped { .. } => return true,
         HostEventWire::FilesChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::GitChanged(event) => Some(event.folder_path.as_str()),

@@ -28,6 +28,10 @@ pub enum DesktopEvent {
     ExtensionsChanged {
         server: String,
     },
+    MemoryCaptureChanged {
+        server: String,
+        event: axome_protocol::memory::MemoryCaptureChangedEvent,
+    },
     ExtensionStopped {
         server: String,
         id: String,
@@ -60,6 +64,10 @@ pub fn desktop_event_sink(
                 app.emit("extensions-changed", json!({ "server": server })),
             DesktopEvent::Host(HostEvent::ExtensionsChanged) =>
                 app.emit("extensions-changed", json!({ "server": null })),
+            DesktopEvent::MemoryCaptureChanged { server, event } =>
+                app.emit("memory-capture-changed", json!({ "server": server, "capture": event.capture, "notify": event.notify })),
+            DesktopEvent::Host(HostEvent::MemoryCaptureChanged(event)) =>
+                app.emit("memory-capture-changed", json!({ "server": null, "capture": event.capture, "notify": event.notify })),
             DesktopEvent::ExtensionStopped { server, id, folder, problem } =>
                 app.emit("extension-stopped", json!({ "server": server, "id": id, "folder": folder, "problem": problem })),
             DesktopEvent::Host(HostEvent::ExtensionStopped { id, folder, problem }) =>

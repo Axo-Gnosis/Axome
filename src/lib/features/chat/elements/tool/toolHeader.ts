@@ -1,5 +1,6 @@
 import {
   BookOpen01Icon,
+  BrainIcon,
   FileCodeIcon,
   FileDiffIcon,
   FilePlusCornerIcon,
@@ -17,6 +18,8 @@ import { parseExtensionOrigin, type ExtensionOrigin } from '$lib/features/chat/e
 import { formatCount, formatDuration } from '$lib/features/chat/format'
 import { contentLines } from '$lib/features/chat/lineDiff'
 import type { ToolStep } from '$lib/features/chat/turns'
+import { memoryNote } from '$lib/features/memory/notes'
+import { parseMemorySearch } from './memoryOutput'
 import { parseAskBlocks } from '../ask/askDocument'
 import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
@@ -27,6 +30,7 @@ import { parseSearchDocs, parseWebFetch, parseWebSearch, urlDisplay } from './we
 
 export type ToolHeader = {
   name: string
+  icon: IconData
   /** Rail verb: past tense when done, progressive while running; the raw name for unknown tools. */
   verb: string
   /** Whether the verb is a word rather than the tool's name. */
@@ -56,7 +60,7 @@ const tools: Record<string, { verbs: [done: string, running: string]; icon: Icon
   web_search: { verbs: ['Searched the web', 'Searching the web'], icon: Globe02Icon },
   web_fetch: { verbs: ['Fetched', 'Fetching'], icon: Link01Icon, noun: 'page' },
   browser: { verbs: ['Browsed', 'Browsing'], icon: Globe02Icon },
-  memory_search: { verbs: ['Searched memory', 'Searching memory'], icon: Search01Icon },
+  memory_search: { verbs: ['Searched memory', 'Searching memory'], icon: BrainIcon },
   ask: { verbs: ['Asked', 'Asking'], icon: MessageSquareIcon }
 }
 
@@ -83,28 +87,43 @@ function searchCount(call: ToolStep): number | null {
   return count || null
 }
 
+/** The one file a call is about; null for calls over several files or none. */
+function callPath(call: ToolStep, records: ToolFileRecord[]): string | null {
+  if (records.length > 1) return null
+  if (call.name === 'read') return readPath(call, records)
+  if (records.length === 1) return records[0].change?.url ?? records[0].ledger.path
+  const path = record(call.arguments).path
+  const search = call.name === 'grep' || call.name === 'find'
+  return typeof path === 'string' && (!search || path) ? path : search ? '.' : null
+}
+
+function noteAt(call: ToolStep, path: string | null) {
+  return path !== null && ['read', 'edit', 'write'].includes(call.name) ? memoryNote(path) : null
+}
+
+/** The memory note a read, edit, or write call is about; null for any other call. */
+export function memoryNoteCall(
+  call: ToolStep,
+  records: ToolFileRecord[] = fileRecords(call.result?.details)
+): { url: string; bank: string; note: string } | null {
+  const url = callPath(call, records)
+  const note = noteAt(call, url)
+  return url !== null && note ? { url, ...note } : null
+}
+
 export function toolHeader(
   call: ToolStep,
   folderPath: string,
   records: ToolFileRecord[] = fileRecords(call.result?.details)
 ): ToolHeader {
   const args = record(call.arguments)
-  const search = call.name === 'grep' || call.name === 'find'
   const single = records.length === 1 ? records[0] : null
   const multi = records.length > 1
-  const path = multi
-    ? null
-    : call.name === 'read'
-      ? readPath(call, records)
-      : single
-        ? (single.change?.url ?? single.ledger.path)
-        : typeof args.path === 'string' && (!search || args.path)
-          ? args.path
-          : search
-            ? '.'
-            : null
+  const path = callPath(call, records)
+  const note = noteAt(call, path)
   let summary = ''
-  let pathLabel = path === null ? '' : path === single?.change?.url ? path : displayFilePath(path, folderPath)
+  let pathLabel =
+    note?.note ?? (path === null ? '' : path === single?.change?.url ? path : displayFilePath(path, folderPath))
   let command: string | null = null
   let detail = ''
   let lines: ToolHeader['lines'] = null
@@ -181,9 +200,12 @@ export function toolHeader(
         detail = call.name === 'grep' ? `${count} ${count === 1 ? 'match' : 'matches'}` : formatCount(count, 'file')
       break
     }
-    case 'memory_search':
+    case 'memory_search': {
       summary = typeof args.query === 'string' ? JSON.stringify(args.query) : ''
+      const parsed = call.status === 'done' ? parseMemorySearch(call) : null
+      if (parsed) detail = formatCount(parsed.notes, 'note')
       break
+    }
     case 'web_search': {
       summary = typeof args.query === 'string' ? JSON.stringify(args.query) : ''
       const parsed = parseWebSearch(call)
@@ -235,7 +257,7 @@ export function toolHeader(
       if (!multi) summary = JSON.stringify(call.arguments) ?? ''
   }
   const name = call.name || 'tool'
-  const verb = tools[name]?.verbs
+  const verb = tools[name]?.verbs?.[call.status === 'running' ? 1 : 0]
   if (multi) summary = [`${records.length} files`, summary].filter(Boolean).join(' · ')
   if (marker && (!verb || (!summary && path === null && !command))) {
     summary = summary ? `${name} · ${summary}` : name
@@ -260,7 +282,8 @@ export function toolHeader(
   const reason = marker ? call.output.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n') : ''
   return {
     name,
-    verb: marker ? 'Blocked' : stoppedEdit ? 'Edit stopped' : verb ? verb[call.status === 'running' ? 1 : 0] : name,
+    icon: note ? BrainIcon : toolIcon(name),
+    verb: marker ? 'Blocked' : stoppedEdit ? 'Edit stopped' : note ? `${verb} memory note` : (verb ?? name),
     known: marker !== null || verb !== undefined,
     summary: summary.replace(/[\r\n]+/g, ' '),
     path,

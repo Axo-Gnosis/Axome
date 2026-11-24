@@ -27,7 +27,11 @@ export type JobStep = {
   /** A later work block of the same turn has events for this job too. */
   continues: boolean
 }
-export type GroupedStep = Exclude<Step, { kind: 'thinking' }> | ThoughtStep | ToolGroupStep | ReceiptStep
+/** Background work the host did between model calls; adjacent ones share one band. */
+export type MaintenanceStep = Extract<Step, { kind: 'compaction' | 'branchSummary' | 'contextMoved' }>
+export type BandStep = { kind: 'band'; id: string; steps: MaintenanceStep[] }
+export type GroupedStep =
+  Exclude<Step, { kind: 'thinking' } | MaintenanceStep> | ThoughtStep | ToolGroupStep | ReceiptStep | BandStep
 export type TranscriptStep = GroupedStep | JobStep
 
 export const REDACTED_THINKING = 'Thinking is redacted.'
@@ -35,6 +39,10 @@ export const REDACTED_THINKING = 'Thinking is redacted.'
 // Ask documents and policy blocks stay visible at their original transcript position.
 function standaloneTool(call: ToolStep): boolean {
   return call.name === 'ask' || blockedToolResult(call.result) !== null
+}
+
+function maintenance(step: Step | undefined): step is MaintenanceStep {
+  return step?.kind === 'compaction' || step?.kind === 'branchSummary' || step?.kind === 'contextMoved'
 }
 
 export function groupSteps(steps: Step[]): GroupedStep[] {
@@ -71,6 +79,10 @@ export function groupSteps(steps: Step[]): GroupedStep[] {
         if (thought.entryId === null) streaming = true
       }
       grouped.push({ kind: 'thinking', id: first.id, text: text.join('\n\n'), streaming })
+    } else if (maintenance(first)) {
+      const band: BandStep = { kind: 'band', id: `band:${first.id}`, steps: [first] }
+      while (maintenance(steps[index + 1])) band.steps.push(steps[++index] as MaintenanceStep)
+      grouped.push(band)
     } else {
       grouped.push(first)
     }
@@ -178,14 +190,14 @@ export function segmentSteps(steps: GroupedStep[], jobs: ReadonlyMap<string, Tra
   for (const step of steps) {
     if (foldable(step)) {
       const previous = runs.at(-1)
-      if (previous && 'steps' in previous) previous.steps.push(step)
+      if (previous && !('kind' in previous)) previous.steps.push(step)
       else runs.push({ id: `work:${step.id}`, steps: [step] })
     } else {
       runs.push(step)
     }
   }
   const segments = runs.map((run): TranscriptSegment =>
-    'steps' in run ? { kind: 'work', id: run.id, steps: foldJobs(run.id, run.steps, jobs) } : run
+    'kind' in run ? run : { kind: 'work', id: run.id, steps: foldJobs(run.id, run.steps, jobs) }
   )
   const later = new Set<string>()
   for (let index = segments.length - 1; index >= 0; index--) {

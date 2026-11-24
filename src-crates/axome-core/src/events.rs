@@ -38,6 +38,7 @@ pub enum HostEvent {
     /// The model registry changed: models, providers, or credentials.
     ModelsChanged,
     ExtensionsChanged,
+    MemoryCaptureChanged(axome_protocol::memory::MemoryCaptureChangedEvent),
     ExtensionStopped {
         id: String,
         folder: Option<String>,

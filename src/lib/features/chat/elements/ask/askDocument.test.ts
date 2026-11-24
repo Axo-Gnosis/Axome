@@ -7,6 +7,7 @@ import {
   askKey,
   askNumberStep,
   askRefusal,
+  askSections,
   buildAskAnswers,
   createAskDraft,
   parseAskBlocks
@@ -158,7 +159,6 @@ test('rejects malformed documents and invalid defaults', () => {
     [{ ...number, max: Infinity }]
   ])
     assert.equal(parseAskBlocks({ blocks }), null)
-  assert.equal(buildAskAnswers([], {}).error, 'This question document is unavailable.')
   assert.equal(parseAskBlocks({ questions: [choice] }), null)
 })
 
@@ -184,7 +184,6 @@ test('reads only typed recorded answers and recognizes terminal outcomes', () =>
   const result = parseAskResult({ ...call, details: { answers } })
   assert.equal(result.outcome, 'answered')
   assert.deepEqual(result.rows.$layout, {
-    id: 'layout',
     answered: true,
     text: 'Replace the HUD, Overlay the game, "Mine"',
     note: 'because',
@@ -197,7 +196,6 @@ test('reads only typed recorded answers and recognizes terminal outcomes', () =>
   assert.equal(timedOut.outcome, 'timedOut')
   assert.equal(timedOut.rows.$layout.suggested, true)
   assert.deepEqual(timedOut.rows[askKey('__proto__')], {
-    id: '__proto__',
     answered: false,
     text: 'no answer',
     note: null,
@@ -221,4 +219,15 @@ test('reads only typed recorded answers and recognizes terminal outcomes', () =>
     assert.equal(result.outcome, expected)
     if (expected === 'failed') assert.equal(result.message, text)
   }
+})
+
+test('groups back-to-back questions into one section, split by Markdown', () => {
+  const blocks = parseAskBlocks({ blocks: [choice, number, { type: 'markdown', text: 'Then' }, title] })
+  assert.ok(blocks)
+  assert.deepEqual(
+    askSections(blocks).map((section) =>
+      section.type === 'markdown' ? section.text : section.questions.map((question) => question.id)
+    ),
+    [['layout', 'countdown'], 'Then', ['title']]
+  )
 })

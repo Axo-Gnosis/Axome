@@ -483,7 +483,7 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 - **Q78. Ask documents.** In scope (`9c1b4ad`). UI defined by Toph's mockup `/home/toph/Projects/ask.html`, handed off in [`handoff/ui-deda8e6.md`](handoff/ui-deda8e6.md) §7. Axome replaces its whole ask path:
   - `convert::question`/`answer`;
   - `ChatQuestion*`/`ChatAnswer` in the protocol;
-  - `AskPanel`, `AskSummary` and `askResult.ts`.
+  - `AskPanel` (now `AskDocument`), `AskSummary` and `askResult.ts`.
 
   Old chats' ask cards lose their answers (P32).
 - **Q79. Local images in chat Markdown.** Toph: show them on local desktop folders, including files outside the folder; leave remote as is ([P37](design.md#decisions)). This is Axome's own bug, but ask documents render Markdown with the same renderer, so it's part of this plan.

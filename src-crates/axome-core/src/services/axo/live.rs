@@ -13,6 +13,7 @@ use axo::{LiveSnapshot, MaintenanceKind, PromptRequest, SessionEvent};
 use axo_agent::{AgentEvent, AgentMessage};
 use axo_ai::{AssistantBlock, AssistantEvent, Message};
 use axome_protocol::chat::*;
+use axome_protocol::memory::MemoryCaptureTrigger;
 use parking_lot::Mutex;
 use tokio::sync::{broadcast, oneshot, watch, Notify};
 
@@ -131,6 +132,9 @@ pub(crate) struct LiveSession {
     idle: Notify,
     /// Set when the relay stops; no idle notification follows.
     retired: AtomicBool,
+    /// Set once a user or assistant message lands while this session is open;
+    /// closing a chat that was only viewed must not run a memory capture.
+    conversed: AtomicBool,
 }
 
 struct RelayState {
@@ -987,6 +991,7 @@ impl LiveSession {
             pins: AtomicUsize::new(0),
             idle: Notify::new(),
             retired: AtomicBool::new(false),
+            conversed: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&live);
         let session = live.session.clone();
@@ -1006,7 +1011,10 @@ impl LiveSession {
                                 // for delivery and successful withdrawals. Invalidate only:
                                 // axo's current queue still owns the order and provenance.
                                 Entry::SubmissionWithdrawn { submission_id, .. }
-                                | Entry::Message { submission_id: Some(submission_id), .. } => live
+                                | Entry::Message {
+                                    submission_id: Some(submission_id),
+                                    ..
+                                } => live
                                     .state
                                     .lock()
                                     .live
@@ -1025,7 +1033,10 @@ impl LiveSession {
                             None
                         };
                         let started = matches!(event, SessionEvent::MaintenanceStart { .. });
-                        let compacted = matches!(event, SessionEvent::Entry(seq) if matches!(seq.entry, Entry::Compaction { .. }));
+                        let compaction = match &event {
+                            SessionEvent::Entry(seq) => live.landed(std::iter::once(seq)),
+                            _ => None,
+                        };
                         let (refresh, unload, summary_changed) = {
                             let mut state = live.state.lock();
                             let (refresh, unload) =
@@ -1033,9 +1044,13 @@ impl LiveSession {
                             let summary_changed = state.take_summary_change(&live.id);
                             (refresh, unload, summary_changed)
                         };
-                        if compacted {
+                        if let Some(anchor) = compaction {
                             if let Some(service) = service.upgrade() {
-                                service.memory_capture(&live, true);
+                                service.memory_capture(
+                                    &live,
+                                    MemoryCaptureTrigger::Compaction,
+                                    anchor,
+                                );
                             }
                         }
                         if started {
@@ -1049,7 +1064,7 @@ impl LiveSession {
                         };
                         let last_seq = live.state.lock().entries.last().map(|seq| seq.seq);
                         let attach = session.attach(last_seq).await;
-                        let compacted = attach.missed.iter().any(|seq| matches!(seq.entry, Entry::Compaction { .. }));
+                        let compaction = live.landed(attach.missed.iter());
                         let (maintaining, summary_changed) = {
                             let mut state = live.state.lock();
                             state.entries.extend(attach.missed);
@@ -1063,9 +1078,12 @@ impl LiveSession {
                                 &session,
                             );
                             for pending in &mut rebuilt.live.questions {
-                                if let Some(previous) = state.live.questions.iter().find(|previous| {
-                                    previous.call_id == pending.call_id && previous.blocks == pending.blocks
-                                }) {
+                                if let Some(previous) =
+                                    state.live.questions.iter().find(|previous| {
+                                        previous.call_id == pending.call_id
+                                            && previous.blocks == pending.blocks
+                                    })
+                                {
                                     pending.deadline_ms = previous.deadline_ms;
                                 }
                             }
@@ -1091,9 +1109,13 @@ impl LiveSession {
                             state.broadcast_snapshot(&live.id);
                             (maintaining, summary_changed)
                         };
-                        if compacted {
+                        if let Some(anchor) = compaction {
                             if let Some(service) = service.upgrade() {
-                                service.memory_capture(&live, true);
+                                service.memory_capture(
+                                    &live,
+                                    MemoryCaptureTrigger::Compaction,
+                                    anchor,
+                                );
                             }
                         }
                         if maintaining {
@@ -1215,6 +1237,10 @@ impl LiveSession {
 
     pub(super) fn summary(&self) -> ChatLiveSummary {
         self.state.lock().summary(&self.id)
+    }
+
+    pub(super) fn title(&self) -> Option<String> {
+        self.state.lock().live.title.clone()
     }
 
     pub(super) fn is_active(&self) -> bool {
@@ -1349,6 +1375,34 @@ impl LiveSession {
 
     pub(super) fn unpin(&self) {
         self.pins.fetch_sub(1, Ordering::AcqRel);
+    }
+
+    pub(super) fn conversed(&self) -> bool {
+        self.conversed.load(Ordering::Acquire)
+    }
+
+    /// What memory needs from entries that landed: marks the session conversed when any is a
+    /// user or assistant message, and returns the last compaction's anchor, if one landed.
+    fn landed<'a>(
+        &self,
+        entries: impl DoubleEndedIterator<Item = &'a SeqEntry> + Clone,
+    ) -> Option<Option<String>> {
+        let exchange = |seq: &SeqEntry| {
+            matches!(
+                seq.entry,
+                Entry::Message {
+                    message: AgentMessage::Llm(Message::User(_) | Message::Assistant(_)),
+                    ..
+                }
+            )
+        };
+        if entries.clone().any(exchange) {
+            self.conversed.store(true, Ordering::Release);
+        }
+        entries
+            .rev()
+            .find(|seq| matches!(seq.entry, Entry::Compaction { .. }))
+            .map(|seq| seq.entry.id().map(str::to_owned))
     }
 
     pub(super) fn idle_and_unattached(&self) -> bool {

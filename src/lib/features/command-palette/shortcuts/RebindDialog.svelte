@@ -5,6 +5,7 @@
   @param commandId - stable command id to update
   @param commandLabel - visible command label
   @param defaultKeybindings - default shortcut list
+  @param plainKeys - record any single key, unmodified ones and Esc/Enter included (chat commands)
   @param onClose - close callback
 -->
 
@@ -28,11 +29,13 @@
     commandId,
     commandLabel,
     defaultKeybindings,
+    plainKeys = false,
     onClose
   }: {
     commandId: string
     commandLabel: string
     defaultKeybindings: string[]
+    plainKeys?: boolean
     onClose: () => void
   } = $props()
 
@@ -92,6 +95,14 @@
     if (key === 'Control' || key === 'Meta' || key === 'Shift' || key === 'Alt') return
     e.preventDefault()
     e.stopPropagation()
+
+    // Every key is bindable here, so recording takes exactly one stroke and nothing cancels it.
+    if (plainKeys) {
+      rejectedHint = null
+      captured = formatShortcut(strokeFromEvent(e))
+      stopRecording()
+      return
+    }
 
     if (key === 'Escape') {
       stopRecording()
@@ -170,7 +181,7 @@
     if (!v) close()
   }}
 >
-  <Dialog.Content class="max-w-lg">
+  <Dialog.Content class="max-w-lg" escapeKeydownBehavior={recording && plainKeys ? 'ignore' : 'close'}>
     <Dialog.Title>{commandLabel}</Dialog.Title>
 
     <div class="space-y-3 pt-4">
@@ -217,7 +228,9 @@
             <ShortcutPreview spec={captured} large={true} />
             <span class="text-xs text-subtle">Press another combo for a chord, or Enter to keep this.</span>
           {:else}
-            <span class="font-mono text-base tracking-wide text-accent">Press a combo&hellip; (Esc to cancel)</span>
+            <span class="font-mono text-base tracking-wide text-accent"
+              >{plainKeys ? 'Press a key or combo…' : 'Press a combo… (Esc to cancel)'}</span
+            >
           {/if}
         {:else if captured}
           <ShortcutPreview spec={captured} large={true} />

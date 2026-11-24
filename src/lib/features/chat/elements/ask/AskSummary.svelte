@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { MinusSignIcon, Tick02Icon } from '@hugeicons/core-free-icons'
   import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
   import { StatusDot } from '$lib/components/ui/status-dot'
   import * as Message from '$lib/features/chat/elements/message'
-  import Icon from '$lib/icons/Icon.svelte'
   import { formatCount, formatDuration, formatTime } from '../../format'
   import type { ToolStep } from '../../turns'
-  import { askKey } from './askDocument'
+  import AskAnswerRow from './AskAnswerRow.svelte'
+  import { askKey, askSections } from './askDocument'
   import { parseAskResult } from './askResult'
 
   let {
@@ -57,25 +56,23 @@
       <p class="text-sm wrap-anywhere whitespace-pre-wrap text-danger-bright">{result.message}</p>
     {/if}
   {:else if result.outcome === 'answered' || result.outcome === 'timedOut'}
-    {#each result.blocks as block, index (index)}
-      {#if block.type === 'markdown'}
-        <Message.Response text={block.text} streaming={false} {folderPath} {sessionId} />
+    {#each askSections(result.blocks) as section, index (index)}
+      {#if section.type === 'markdown'}
+        <Message.Response text={section.text} streaming={false} {folderPath} {sessionId} />
       {:else}
-        {@const row = result.rows[askKey(block.id)]}
-        <div class="flex min-w-0 items-start gap-2.5 rounded-lg border border-edge px-3 py-2">
-          <Icon
-            icon={row.answered ? Tick02Icon : MinusSignIcon}
-            size={12}
-            class={row.answered ? 'mt-1 shrink-0 text-success' : 'mt-1 shrink-0 text-subtle'}
-          />
-          <div class="flex min-w-0 flex-col gap-0.5">
-            <span class="text-sm wrap-anywhere text-muted">{block.question}</span>
-            <span class="wrap-anywhere whitespace-pre-wrap {row.answered ? 'text-bright' : 'text-muted'}"
-              >{row.text}{#if row.suggested}<span class="ms-2 font-mono text-xs text-subtle">suggested · no answer</span
-                >{/if}</span
-            >
-            {#if row.note}<span class="text-sm wrap-anywhere whitespace-pre-wrap text-fg">Note: {row.note}</span>{/if}
-          </div>
+        <div class="flex min-w-0 flex-col divide-y divide-edge rounded-lg border border-edge">
+          {#each section.questions as question (question.id)}
+            {@const row = result.rows[askKey(question.id)]}
+            <div class="flex min-w-0 items-start gap-2.5 px-3 py-2">
+              <AskAnswerRow
+                question={question.question}
+                answered={row.answered}
+                text={row.text}
+                note={row.note}
+                suggested={row.suggested}
+              />
+            </div>
+          {/each}
         </div>
       {/if}
     {/each}

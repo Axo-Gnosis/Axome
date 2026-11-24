@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Button, IconButton, iconButtonVariants } from '$lib/components/ui/button'
   import * as Tooltip from '$lib/components/ui/tooltip'
-  import { StatusDot } from '$lib/components/ui/status-dot'
   import { Separator } from '$lib/components/ui/separator'
   import * as Alert from '$lib/components/ui/alert'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
@@ -14,11 +13,11 @@
     formatCost,
     formatDuration,
     formatList,
-    formatRetry,
     formatTokens,
     modelName
   } from '$lib/features/chat/format'
-  import { compactionTokensAfter, turnDurationMs, turnEndNotice, type Step, type Turn } from '$lib/features/chat/turns'
+  import { compactionTokensAfter, turnDurationMs, turnEndNotice, type Turn } from '$lib/features/chat/turns'
+  import type { CaptureRun } from '$lib/features/memory/captures.svelte'
   import { isActiveJob, type TranscriptJob } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { notify } from '$lib/features/notifications/state.svelte'
@@ -46,15 +45,16 @@
   import ToolBlock from './ToolBlock.svelte'
   import YieldReceipt from './YieldReceipt.svelte'
   import ReceiptRow from './ReceiptRow.svelte'
+  import RetryRow from './RetryRow.svelte'
   import JobCard from './JobCard.svelte'
   import CommandJobRow from './CommandJobRow.svelte'
-  import SummaryBlock from './SummaryBlock.svelte'
+  import BackgroundBand from './BackgroundBand.svelte'
   import ReviewCard from './ReviewCard.svelte'
   import TurnChangesCard from './TurnChangesCard.svelte'
   import ToolGroup from './ToolGroup.svelte'
   import WorkBlock from './WorkBlock.svelte'
   import WorkingIndicator from './WorkingIndicator.svelte'
-  import { groupSteps, segmentSteps, type TranscriptStep } from './groupSteps'
+  import { groupSteps, segmentSteps, type BandStep, type TranscriptStep } from './groupSteps'
 
   let {
     turn,
@@ -70,7 +70,9 @@
     overrides,
     onView,
     onOpenJob,
-    onOpenPlan
+    onOpenPlan,
+    captures = [],
+    onOpenMemory
   }: {
     turn: Turn
     turns: Turn[]
@@ -87,6 +89,9 @@
     onView: (stepId: string, view: BlockView) => void
     onOpenJob?: (ref?: string) => void
     onOpenPlan?: () => void
+    /** Capture runs anchored to this turn's compactions. */
+    captures?: CaptureRun[]
+    onOpenMemory?: () => void
   } = $props()
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
@@ -97,10 +102,14 @@
     return first === 'standard' ? null : TIER_LABELS[first]
   })
   const duration = $derived(turnDurationMs(turn, now))
-  const compactionSteps = $derived(
-    turn.steps.filter((step): step is Extract<Step, { kind: 'compaction' }> => step.kind === 'compaction')
-  )
-  const segments = $derived(segmentSteps(groupSteps(turn.steps.filter((step) => step.kind !== 'compaction')), jobs))
+  const segments = $derived(segmentSteps(groupSteps(turn.steps), jobs))
+  // A band that ends a finished turn renders after its footer.
+  const tail = $derived.by(() => {
+    const last = segments.at(-1)
+    return !turn.running && last?.kind === 'band' ? last : null
+  })
+  const flow = $derived(tail ? segments.slice(0, -1) : segments)
+  const maintenance = $derived(turnIndex === turns.length - 1 ? (controller.state?.live.maintenance ?? null) : null)
   const liveJobs = $derived(controller.state?.live.jobs ?? [])
   const reviews = $derived(controller.state?.live.reviews ?? [])
   const canReview = $derived(controller.connection === 'live' && !controller.readOnly)
@@ -273,8 +282,8 @@
     {/if}
   {:else if step.kind === 'notice' && step.notice.kind !== 'jobWake'}
     <NoticeBlock notice={step.notice} timestamp={step.timestamp} {folderPath} {sessionId} />
-  {:else if step.kind === 'branchSummary'}
-    <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
+  {:else if step.kind === 'band'}
+    {@render band(step, turn.running && maintenance !== null && step === flow.at(-1))}
   {:else if step.kind === 'thinkingChange' || step.kind === 'serviceTierChange'}
     <div class="flex items-start gap-2 text-sm text-muted" data-command={step.kind}>
       <Icon icon={InfoIcon} size={14} class="shrink-0" />
@@ -290,28 +299,45 @@
         {/if}
       </div>
     </div>
-  {:else if step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
+  {:else if step.kind === 'agentChange' || step.kind === 'modeChange'}
     <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
       <Icon icon={InfoIcon} size={14} />
       <span
         >{step.kind === 'agentChange'
           ? `Persona → ${step.agent ?? 'Default'}`
-          : step.kind === 'modeChange'
-            ? step.mode
-              ? `Mode → ${step.mode}`
-              : 'Exited mode'
-            : `Moved ${step.blocks} ${step.blocks === 1 ? 'block' : 'blocks'} out of context`}</span
+          : step.mode
+            ? `Mode → ${step.mode}`
+            : 'Exited mode'}</span
       >
     </div>
   {/if}
 {/snippet}
 
+<!-- `live`: the session's running maintenance joins this band. -->
+{#snippet band(step: BandStep | null, live: boolean)}
+  {@const id = step?.id ?? `band:live:${turn.id}`}
+  <BackgroundBand
+    {id}
+    steps={step?.steps}
+    captures={step ? captures.filter((run) => step.steps.some((s) => s.id === run.anchorEntryId)) : []}
+    maintenance={live ? maintenance : null}
+    contextTokens={live ? (controller.state?.live.stats.contextTokens ?? null) : null}
+    tokensAfter={(stepId) =>
+      compactionTokensAfter(turns, turnIndex, stepId, controller.state?.live.stats.contextTokens)}
+    view={overrides[id] ?? (detailView === 'full' ? 'preview' : 'collapsed')}
+    {onView}
+    {folderPath}
+    {sessionId}
+    {onOpenMemory}
+  />
+{/snippet}
+
 <div data-slot="agent-block" class="flex min-w-0 flex-col gap-3 py-2">
-  {#each segments as segment, index (segment.id)}
+  {#each flow as segment, index (segment.id)}
     {#if segment.kind === 'work'}
       <WorkBlock
         {segment}
-        running={turn.running && index === segments.length - 1}
+        running={turn.running && index === flow.length - 1}
         {duration}
         {liveJobs}
         {expansion}
@@ -324,21 +350,16 @@
       {@render render(segment)}
     {/if}
   {/each}
+  {#if turn.running && maintenance && flow.at(-1)?.kind !== 'band'}
+    {@render band(null, true)}
+  {/if}
   {#if turn.running && segments.at(-1)?.kind !== 'work'}
     <div class="flex min-w-0 items-center gap-3">
       <WorkingIndicator {duration} />
       {@render stopControl()}
     </div>
   {/if}
-  {#if retry}
-    <div class="flex min-w-0 items-center gap-2 text-sm text-warning">
-      <StatusDot tone="waiting" size="sm" />
-      <span class="shrink-0 tabular-nums">{formatRetry(retry)}</span>
-      {#if retry.error}
-        <span class="min-w-0 truncate text-muted" title={retry.error}>{retry.error}</span>
-      {/if}
-    </div>
-  {/if}
+  {#if retry}<RetryRow {retry} dot />{/if}
   {#if endNotice?.kind === 'stopped'}
     <div class="flex items-center gap-2 text-sm text-muted">
       <span class="size-2 shrink-0 rounded-xs bg-muted"></span>
@@ -471,14 +492,9 @@
       {/if}
     </div>
   {/if}
-  {#each compactionSteps as step (step.id)}
-    <SummaryBlock
-      {step}
-      tokensAfter={compactionTokensAfter(turns, turnIndex, step.id, controller.state?.live.stats.contextTokens)}
-      view={overrides[step.id] ?? (detailView === 'full' ? 'preview' : 'collapsed')}
-      {onView}
-      {folderPath}
-      {sessionId}
-    />
-  {/each}
+  {#if tail}
+    {@render band(tail, maintenance !== null)}
+  {:else if !turn.running && maintenance}
+    {@render band(null, true)}
+  {/if}
 </div>

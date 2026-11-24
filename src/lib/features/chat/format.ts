@@ -27,6 +27,11 @@ export function formatTime(timestamp: string | null): string | null {
     : null
 }
 
+/** `HH:MM`, 24-hour. */
+export function formatClock(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1).replace(/\.0$/, '')}s`

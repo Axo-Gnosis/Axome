@@ -338,6 +338,7 @@ pub struct MemoryBank {
 pub struct MemoryCapture {
     pub compaction: bool,
     pub close: bool,
+    pub notify: bool,
 }
 
 impl Default for MemoryCapture {
@@ -345,6 +346,7 @@ impl Default for MemoryCapture {
         Self {
             compaction: true,
             close: true,
+            notify: true,
         }
     }
 }

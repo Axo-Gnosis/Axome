@@ -16,6 +16,7 @@
   import BashOutput from '../tool/BashOutput.svelte'
   import BrowserOutput from '../tool/BrowserOutput.svelte'
   import DocsSearchOutput from '../tool/DocsSearchOutput.svelte'
+  import MemorySearchOutput from '../tool/MemorySearchOutput.svelte'
   import ReadOutput from '../tool/ReadOutput.svelte'
   import SearchOutput from '../tool/SearchOutput.svelte'
   import ToolDiff from '../tool/ToolDiff.svelte'
@@ -24,7 +25,8 @@
   import WebFetchOutput from '../tool/WebFetchOutput.svelte'
   import WebSearchOutput from '../tool/WebSearchOutput.svelte'
   import { openReferenceResult } from '../tool/referenceNavigation'
-  import { toolHeader, toolIcon } from '../tool/toolHeader'
+  import { parseMemorySearch } from '../tool/memoryOutput'
+  import { toolHeader } from '../tool/toolHeader'
   import { parseBrowserOutput } from '../tool/browserOutput'
   import { fileRecords } from '../tool/payload'
   import { parseSearchDocs, parseWebFetch, parseWebSearch } from '../tool/webOutput'
@@ -74,11 +76,14 @@
   // Bulk expansion opens calls; only their More control reveals unabridged output.
   const view = $derived(overrides[call.id] ?? (expansion === 'collapsed' ? 'collapsed' : 'preview'))
   const showFields = $derived(
-    !['bash', 'read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser'].includes(call.name)
+    !['bash', 'read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser', 'memory_search'].includes(
+      call.name
+    )
   )
   const hasBody = $derived(
     !header.blocked || header.command !== null || showFields || records.length > 0 || !!header.unfinished
   )
+  const memory = $derived(!failed && call.name === 'memory_search' ? parseMemorySearch(call) : null)
   const webSearch = $derived(!failed && call.name === 'web_search' ? parseWebSearch(call) : null)
   const webFetch = $derived(!failed && call.name === 'web_fetch' ? parseWebFetch(call) : null)
   const browser = $derived(!failed && call.name === 'browser' ? parseBrowserOutput(call) : null)
@@ -171,7 +176,7 @@
   {@render fileOutput()}
 {:else}
   <RailRow
-    icon={toolIcon(call.name)}
+    icon={header.icon}
     tone={header.tone}
     verb={header.verb}
     mono={!header.known}
@@ -196,6 +201,8 @@
         onExpand={expand}
         onOpenResult={(path, line) => void openReferenceResult(call, { folderPath, sessionId }, path, line)}
       />
+    {:else if memory}
+      <MemorySearchOutput data={memory} {view} onExpand={expand} {folderPath} {sessionId} />
     {:else if webSearch}
       <WebSearchOutput data={webSearch} running={call.status === 'running'} {view} onExpand={expand} />
     {:else if webFetch}

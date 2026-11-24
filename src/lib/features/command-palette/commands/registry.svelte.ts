@@ -1,4 +1,5 @@
 import type { IconData } from '$lib/icons/Icon.svelte'
+import type { ChatContext } from '$lib/features/chat/keymap/commands'
 import type { Command, CommandGroup } from './types'
 import { getGitCommandDefinitions } from './git.svelte'
 import { getTextEditorActions } from '$lib/features/editor/renderers/monaco/text/actions.svelte'
@@ -24,6 +25,7 @@ import {
   toggleIndentRainbow
 } from '$lib/features/editor/renderers/monaco/text/indentRainbow.svelte'
 import { splitRemotePath } from '$lib/utils/paths'
+import { setSettingsOpen, setSettingsPage } from '$lib/features/settings/dialog/state.svelte'
 import {
   closeActiveTab,
   closeCurrentWorkbench,
@@ -61,6 +63,7 @@ import {
 } from '$lib/features/workbench/surfaces/diff/compare.svelte'
 import {
   BellIcon,
+  BrainIcon,
   ClipboardPasteIcon,
   CompassIcon,
   FilePlusCornerIcon,
@@ -85,7 +88,7 @@ import {
   ZoomOutIcon
 } from '@hugeicons/core-free-icons'
 
-export type ShortcutCommandSource = 'app' | 'editor'
+export type ShortcutCommandSource = 'app' | 'editor' | 'chat'
 export type TerminalPolicy = 'skip-shell' | 'skip-shell-keeps-modals'
 
 type Dynamic<T> = T | (() => T)
@@ -107,16 +110,18 @@ export interface AppCommandDefinition {
   run: () => void | Promise<unknown>
 }
 
+/** A rebindable command as Settings lists it; each source dispatches its own. */
 export interface ShortcutCommandDefinition {
   id: string
   label: string
   group: string
   keywords: string[]
   source: ShortcutCommandSource
+  /** Chat commands only: where in the chat view the binding applies (see `chatBindingsOverlap`). */
+  chatContext?: ChatContext
   dangerous?: boolean
   defaultKeybindings: string[]
   terminalPolicy?: TerminalPolicy
-  run: () => void | Promise<unknown>
 }
 
 function resolve<T>(value: Dynamic<T>): T {
@@ -307,6 +312,17 @@ export function getAppCommandDefinitions(): AppCommandDefinition[] {
       defaultKeybindings: ['Ctrl+,'],
       terminalPolicy: 'skip-shell',
       run: openSettings
+    }),
+    appCommand({
+      id: 'memory-settings',
+      label: 'Memory Settings',
+      group: 'General',
+      icon: BrainIcon,
+      keywords: ['memory', 'capture', 'notes', 'bank'],
+      run: () => {
+        setSettingsPage('memory')
+        setSettingsOpen(true)
+      }
     }),
     appCommand({
       id: 'open-global-settings',
@@ -562,8 +578,7 @@ export function getAppShortcutCommands(): ShortcutCommandDefinition[] {
     source: 'app',
     dangerous: definition.dangerous,
     defaultKeybindings: definition.defaultKeybindings ?? [],
-    terminalPolicy: definition.terminalPolicy,
-    run: definition.run
+    terminalPolicy: definition.terminalPolicy
   }))
 }
 
@@ -574,8 +589,7 @@ export function getEditorShortcutCommands(): ShortcutCommandDefinition[] {
     group: 'Editor',
     keywords: action.id.split('.'),
     source: 'editor',
-    defaultKeybindings: action.defaultKeybindings,
-    run: action.run
+    defaultKeybindings: action.defaultKeybindings
   }))
 }
 
@@ -610,12 +624,12 @@ export function getAppCommandGroups(): CommandGroup[] {
 }
 
 export function getEditorCommandGroups(): CommandGroup[] {
-  const commands = getEditorShortcutCommands().map(({ id, label, keywords, defaultKeybindings, run }) => ({
-    id,
-    label,
-    keywords,
-    defaultKeybindings,
-    onSelect: run
+  const commands = getTextEditorActions().map((action) => ({
+    id: `editor:${action.id}`,
+    label: action.label,
+    keywords: action.id.split('.'),
+    defaultKeybindings: action.defaultKeybindings,
+    onSelect: action.run
   }))
   return commands.length ? [{ heading: 'Editor', commands }] : []
 }

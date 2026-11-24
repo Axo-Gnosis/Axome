@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import FolderHero from '$lib/components/layout/FolderHero.svelte'
   import * as Alert from '$lib/components/ui/alert'
   import { BlurFade } from '$lib/components/ui/blur-fade'
@@ -8,12 +8,26 @@
   import { TidalStipple, type StippleParams } from '$lib/components/ui/tidal-stipple'
   import * as chats from '$lib/features/chat/registry'
   import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
-  import { resolveChatKey } from '$lib/features/chat/chatKeymap'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
+  import { ChatKeys, setChatKeys, type KeyScope } from '$lib/features/chat/keymap/router.svelte'
+  import { TranscriptNav } from '$lib/features/chat/keymap/nav.svelte'
+  import { ASK_ENTRY } from '$lib/features/chat/elements/ask/askDocument'
   import { transcriptTurns } from '$lib/features/chat/turns'
   import { isActiveJob, transcriptJobs } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
-  import { UserBlock, AgentBlock, MaintenanceLine } from '$lib/features/chat/elements/transcript'
+  import { UserBlock, AgentBlock } from '$lib/features/chat/elements/transcript'
+  import { groupSteps, segmentSteps } from '$lib/features/chat/elements/transcript/groupSteps'
+  import BackgroundBand from '$lib/features/chat/elements/transcript/BackgroundBand.svelte'
+  import RetryRow from '$lib/features/chat/elements/transcript/RetryRow.svelte'
+  import {
+    isShown,
+    loadCaptures,
+    reveal,
+    revealsIn,
+    sessionCaptures,
+    type CaptureRun
+  } from '$lib/features/memory/captures.svelte'
   import ExtensionDiagnostics from '$lib/features/chat/elements/transcript/ExtensionDiagnostics.svelte'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
@@ -31,7 +45,6 @@
   import { PaperclipIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { logicalKey } from '$lib/utils/keyboardEvent'
   import SessionSidebar from '$lib/features/chat/sidebar/SessionSidebar.svelte'
   import { SessionSidebarState } from '$lib/features/chat/sidebar/state.svelte'
 
@@ -44,6 +57,26 @@
   const available = $derived(catalog?.models ?? [])
   const turns = $derived(chat ? transcriptTurns(chat.entries, chat.streaming, chat.live) : [])
   const jobIndex = $derived(transcriptJobs(turns))
+  const captures = $derived(sessionCaptures(tab.folderPath, tab.sessionId).filter(isShown))
+  // Compaction captures join their compaction's band; the rest sit after the last turn that started before them.
+  const placedCaptures = $derived.by(() => {
+    const compactions = new Map<string, string>()
+    for (const turn of turns)
+      for (const step of turn.steps) if (step.kind === 'compaction') compactions.set(step.id, turn.id)
+    const anchored = new Map<string, CaptureRun[]>()
+    const after = new Map<string, CaptureRun[]>()
+    for (const run of captures) {
+      const anchor = run.trigger === 'compaction' && run.anchorEntryId ? compactions.get(run.anchorEntryId) : undefined
+      if (anchor) {
+        anchored.set(anchor, [...(anchored.get(anchor) ?? []), run])
+        continue
+      }
+      const started = Date.parse(run.startedAt)
+      const turn = turns.findLast((turn) => turn.startedAt && Date.parse(turn.startedAt) <= started) ?? turns[0]
+      if (turn) after.set(turn.id, [...(after.get(turn.id) ?? []), run])
+    }
+    return { anchored, after }
+  })
   const running = $derived(chat?.live.running ?? false)
   const model = $derived(chat?.live.model ?? null)
   const current = $derived(available.find((item) => item.selector === model))
@@ -78,6 +111,8 @@
   let overrides = $state<Record<string, BlockView>>({})
   let conversation = $state<Conversation>()
   let composer = $state<PromptInput>()
+  const keys = setChatKeys(new ChatKeys())
+  const nav = new TranscriptNav(() => composer?.focus())
   let visibleAskIds = $state<string[]>([])
   const pendingAsks = $derived(chat?.live.questions ?? [])
   const orderedAsks = $derived.by(() => {
@@ -118,6 +153,10 @@
 
   onMount(() => {
     if (controller.connection === 'detached') void reconnect()
+  })
+
+  $effect(() => {
+    if (tab.sessionId) void loadCaptures(tab.folderPath, { sessionId: tab.sessionId, bank: null, limit: 500 })
   })
 
   $effect(() => {
@@ -165,6 +204,50 @@
     if (picked) composer?.insertPart({ type: 'file', path: fileReference(picked.path, tab.folderPath, picked.folder) })
   }
 
+  function onOpenMemory() {
+    sidebar.view = 'memory'
+  }
+
+  // Review of one of this chat's captures: open its band and scroll to it. A request that can't resolve to a band
+  // yet (turns or captures still loading) stays pending until it can.
+  $effect(() => {
+    const captureId = revealsIn(tab.folderPath, tab.sessionId)
+    const run = captureId === null ? undefined : captures.find((run) => run.id === captureId)
+    const id = run && bandOf(run)
+    if (!id) return
+    reveal.current = null
+    overrides[id] = 'preview'
+    void tick().then(() => conversation?.jumpToView(id))
+  })
+
+  /** The id of the band showing a capture run, mirroring where `placedCaptures` puts it. */
+  function bandOf(run: CaptureRun): string | null {
+    for (const [turnId, runs] of placedCaptures.after) if (runs.includes(run)) return `band:after:${turnId}`
+    for (const turn of turns)
+      for (const step of groupSteps(turn.steps))
+        if (step.kind === 'band' && step.steps.some((s) => s.id === run.anchorEntryId)) return step.id
+    return null
+  }
+
+  /** Open the work block and tool group holding a step, then scroll to it. */
+  async function revealStep(stepId: string) {
+    for (const turn of turns) {
+      for (const segment of segmentSteps(groupSteps(turn.steps), jobIndex)) {
+        if (segment.kind !== 'work') continue
+        for (const step of segment.steps) {
+          const group = step.kind === 'toolGroup' && step.calls.some((call) => call.id === stepId) ? step : null
+          if (step.id !== stepId && !group) continue
+          overrides[segment.id] = 'preview'
+          if (group) overrides[`tool-group:${group.id}`] = 'preview'
+          overrides[stepId] = 'preview'
+          await tick()
+          conversation?.jumpToView(stepId)
+          return
+        }
+      }
+    }
+  }
+
   function onView(stepId: string, view: BlockView) {
     const change = () => {
       overrides[stepId] = view
@@ -173,71 +256,63 @@
     else change()
   }
 
-  function onKeyAction(event: KeyboardEvent) {
-    const target = event.target instanceof HTMLElement ? event.target : null
-    const inComposer = !!target?.closest('[data-slot="prompt-input-root"] [contenteditable="true"]')
-    const inEditable = !!target?.closest(
-      'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"]'
-    )
-    const action = resolveChatKey(event, { inComposer, inEditable, running, asking: pendingAsks.length > 0 })
-    if (!action) return
-    event.preventDefault()
-    event.stopPropagation()
-    switch (action) {
-      case 'stop':
-        void stop()
-        break
-      case 'cycleThinking':
-        if (!disabled && levels.length) {
-          configure('thinking', { level: levels[(levels.indexOf(thinking) + 1) % levels.length] })
-        }
-        break
-      case 'openModel':
-        if (!modelDisabled) modelOpen = true
-        break
-      case 'cycleExpansion': {
+  /** Moves the keyboard to an ask's first open question. */
+  function enterAsk(callId: string) {
+    nav.enter(`[data-ask-call-id="${CSS.escape(callId)}"]`, ASK_ENTRY)
+  }
+
+  // Commands that work anywhere in the chat view; inner scopes (composer, transcript) go first.
+  const surface: KeyScope = {
+    commands: {
+      cycleThinking: () => {
+        if (disabled || !levels.length) return false
+        configure('thinking', { level: levels[(levels.indexOf(thinking) + 1) % levels.length] })
+      },
+      pickModel: () => {
+        if (modelDisabled) return false
+        modelOpen = true
+      },
+      cycleDetails: (event) => {
+        if (event.repeat) return
         const change = () => {
           expansion = expansion === 'collapsed' ? 'preview' : expansion === 'preview' ? 'full' : 'collapsed'
           overrides = {}
         }
         if (conversation) void conversation.preserveScroll(change)
         else change()
-        break
-      }
-      case 'pageUp':
-        conversation?.scrollPage(-1)
-        break
-      case 'pageDown':
-        conversation?.scrollPage(1)
-        break
-      case 'focusComposer':
-        composer?.focus(logicalKey(event))
-        break
-      case 'answer': {
+      },
+      jumpToQuestion: (event) => {
         const ask = hiddenAsk ?? orderedAsks[0]
-        if (ask) conversation?.jumpToAsk(ask.callId)
-        break
-      }
+        if (!ask) return false
+        if (!event.repeat) enterAsk(ask.callId)
+      },
+      enterTranscript: () => nav.enter(),
+      pageUp: () => conversation?.scrollPage(-1),
+      pageDown: () => conversation?.scrollPage(1)
+    },
+    type: (key) => {
+      if (!composer) return false
+      composer.focus(key)
     }
   }
 </script>
 
-<!-- Surface keymap (chatKeymap.ts) delegates from here; every control inside stays native. -->
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- The chat view's one keyboard listener (ChatKeys); scopes inside register their own commands. -->
 <div
   data-slot="chat-surface"
   role="region"
   aria-label="Axo agent"
   tabindex="-1"
-  onkeydown={onKeyAction}
+  {@attach keys.listen}
+  {@attach keys.scope(() => surface)}
   class="relative flex min-h-0 flex-1 flex-col bg-ground"
 >
-  <div class="relative flex min-h-0 flex-1 flex-row overflow-hidden">
+  <div class="relative flex min-h-0 flex-1 flex-row overflow-clip">
     <!-- isolate scopes the background's negative z-index so it paints above this bg but under the transcript. -->
     <div class="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
       <TidalStipple class="-z-10" params={turns.length ? ACTIVE_STIPPLE : undefined} transitionMs={900} />
       <ExtensionDiagnostics {controller} />
-      <Conversation bind:this={conversation} {turns} {onAskVisibility}>
+      <Conversation bind:this={conversation} {nav} {turns} {onAskVisibility}>
         {#if !turns.length}
           <div class="flex flex-1 flex-col items-center justify-center gap-6 py-10">
             <FolderHero folderPath={tab.folderPath}>
@@ -255,7 +330,7 @@
           </div>
         {/if}
         {#each turns as turn, turnIndex (turn.id)}
-          <div data-turn-id={turn.id} class="flex min-w-0 flex-col gap-4">
+          <div data-turn-id={turn.id} {@attach nav.stop(`turn:${turn.id}`)} class="flex min-w-0 flex-col gap-4">
             {#if turn.user}<UserBlock
                 entry={turn.user}
                 {controller}
@@ -280,11 +355,38 @@
                 {onView}
                 onOpenJob={(ref) => sidebar.openJob(ref)}
                 onOpenPlan={() => (sidebar.view = 'plan')}
+                captures={placedCaptures.anchored.get(turn.id) ?? []}
+                {onOpenMemory}
+              />
+            {/if}
+            {#if placedCaptures.after.has(turn.id)}
+              {@const id = `band:after:${turn.id}`}
+              <BackgroundBand
+                {id}
+                captures={placedCaptures.after.get(turn.id)}
+                view={overrides[id] ?? (expansion === 'full' ? 'preview' : 'collapsed')}
+                {onView}
+                folderPath={tab.folderPath}
+                sessionId={tab.sessionId}
+                {onOpenMemory}
               />
             {/if}
           </div>
         {/each}
-        {#if chat}<MaintenanceLine live={chat.live} turnRunning={turns.at(-1)?.running ?? false} />{/if}
+        {#if chat && !turns.length && chat.live.maintenance}
+          <BackgroundBand
+            id="band:live"
+            maintenance={chat.live.maintenance}
+            contextTokens={chat.live.stats.contextTokens}
+            view="collapsed"
+            {onView}
+            folderPath={tab.folderPath}
+            sessionId={tab.sessionId}
+          />
+        {/if}
+        {#if chat && chat.live.maintenance !== null && chat.live.retry && !(turns.at(-1)?.running ?? false)}
+          <RetryRow retry={chat.live.retry} class="py-2" />
+        {/if}
         {#snippet footer()}
           {#if controller.readOnly}
             <div
@@ -317,7 +419,7 @@
                     ></span
                   >
                 {/if}
-                <Button variant="accent" size="xs" class="ms-auto" onclick={() => conversation?.jumpToAsk(callId)}
+                <Button variant="accent" size="xs" class="ms-auto" onclick={() => enterAsk(callId)}
                   >Jump to questions</Button
                 >
               </div>
@@ -333,7 +435,8 @@
               onMode={(name, parts) => controller.setMode(name, parts)}
               keywords={keywordNames}
               {keywordMatches}
-              onCancel={running ? () => void stop() : undefined}
+              onStop={running ? () => void stop() : undefined}
+              onLeaveUp={() => nav.enter()}
               {disabled}
               blocked={modelUnavailable ? `${model} is no longer available. Pick another model to continue.` : null}
               placeholder={pendingAsks.length ? 'Or reply here to steer instead…' : running ? 'Steer axo…' : 'Ask axo…'}
@@ -371,7 +474,7 @@
                 {/if}
                 <ModelPicker
                   variant="ghost"
-                  label="Model (Alt+M)"
+                  label={chatShortcut('pickModel') ? `Model (${chatShortcut('pickModel')})` : 'Model'}
                   value={model ?? ''}
                   models={available}
                   loaded={!!catalog}
@@ -385,7 +488,7 @@
                 <EffortPicker
                   variant="ghost"
                   label="Model options"
-                  shortcutHint="Shift+Tab"
+                  shortcutHint={chatShortcut('cycleThinking')}
                   tier={chat?.live.serviceTier}
                   effectiveTier={chat?.live.effectiveServiceTier}
                   serviceTiers={current?.serviceTiers}
@@ -414,6 +517,6 @@
         {/snippet}
       </Conversation>
     </div>
-    <SessionSidebar {controller} {sidebar} {owner} {now} />
+    <SessionSidebar {controller} {sidebar} {owner} {now} {turns} onJump={(stepId) => void revealStep(stepId)} />
   </div>
 </div>

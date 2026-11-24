@@ -1,12 +1,16 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { Button } from '$lib/components/ui/button'
-  import { Kbd, KbdGroup } from '$lib/components/ui/kbd'
   import { StatusDot } from '$lib/components/ui/status-dot'
   import * as Message from '$lib/features/chat/elements/message'
+  import { Kbd, KbdGroup } from '$lib/components/ui/kbd'
+  import { splitShortcut } from '$lib/features/command-palette/shortcuts/spec'
+  import { chatBindings } from '$lib/features/chat/keymap/bindings.svelte'
+  import { getTranscriptNav, NAV_ACTIVE } from '$lib/features/chat/keymap/nav.svelte'
+  import { getChatKeys } from '$lib/features/chat/keymap/router.svelte'
   import type { ChatController } from '../../controller.svelte'
   import type { ChatQuestions } from '$lib/types/backend'
-  import { askCountdown, askKey, askRefusal, buildAskAnswers, focusAskControl } from './askDocument'
+  import { askCountdown, askKey, askRefusal, askSections, buildAskAnswers } from './askDocument'
   import AskQuestionField from './AskQuestionField.svelte'
 
   let {
@@ -23,11 +27,15 @@
     now: number
   } = $props()
 
-  let section: HTMLElement
+  const nav = getTranscriptNav()
+  const keys = getChatKeys()
+  let section = $state<HTMLElement | null>(null)
   const draft = $derived(controller.askDrafts[askKey(pending.callId)])
   const validation = $derived(draft && buildAskAnswers(draft.blocks, draft.questions))
   const disabled = $derived(!draft || draft.busy || controller.readOnly || controller.connection !== 'live')
-  const canSend = $derived(!disabled && !!validation && !validation.error && validation.ready === validation.total)
+  const canSend = $derived(!disabled && !!validation && validation.ready === validation.total)
+  const stopBase = (id: string) => `ask:${pending.callId}:${askKey(id)}`
+  const sendKeys = $derived(splitShortcut(chatBindings('sendAnswers')[0]))
 
   async function submit() {
     if (!draft || !canSend || !validation) return
@@ -48,12 +56,11 @@
       submitted.busy = false
     }
     if (refusedId !== null) {
+      submitted.questions[askKey(refusedId)].collapsed = false
       await tick()
-      if (controller !== owner || draft !== submitted || !section?.isConnected) return
-      const field = Array.from(section.querySelectorAll<HTMLElement>('[data-ask-question-id]')).find(
-        (node) => node.dataset.askQuestionId === refusedId
-      )
-      if (field) focusAskControl(field)
+      if (controller !== owner || draft !== submitted) return
+      const stop = field(refusedId)?.querySelector<HTMLElement>('[data-nav-stop]')
+      if (stop) nav.focus(stop)
     }
   }
 
@@ -68,49 +75,80 @@
     }
   }
 
-  function handleKey(event: KeyboardEvent) {
-    if (event.defaultPrevented || event.isComposing || disabled) return
-    if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      void dismiss()
-    } else if (event.key === 'Enter' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      void submit()
+  const fields = () => Array.from(section?.querySelectorAll<HTMLElement>('[data-ask-question-id]') ?? [])
+  const field = (id: string) => fields().find((node) => node.dataset.askQuestionId === id)
+
+  /**
+   * Collapses a question whose answer is complete. With `advance` the highlight moves to the next
+   * open question (wrapping), else to Send; without it, it rests quietly on the collapsed row.
+   */
+  async function settle(id: string, advance: boolean) {
+    const key = askKey(id)
+    const state = draft?.questions[key]
+    if (!state || validation?.errors[key]) return
+    state.collapsed = true
+    await tick()
+    const all = fields()
+    const at = all.findIndex((node) => node.dataset.askQuestionId === id)
+    const row = all[at]?.querySelector<HTMLElement>('[data-nav-stop]')
+    if (!advance) {
+      if (row) nav.focus(row, { quiet: true })
+      return
     }
+    const next = [...all.slice(at + 1), ...all.slice(0, at)].find((node) => !('collapsed' in node.dataset))
+    const stop =
+      next?.querySelector<HTMLElement>('[data-nav-stop]') ??
+      section?.querySelector<HTMLElement>(`[data-nav-stop="${CSS.escape(`ask:${pending.callId}:send`)}"]`)
+    if (stop) nav.focus(stop)
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section
   bind:this={section}
   data-ask-call-id={pending.callId}
   data-slot="ask-document"
   aria-label="Answer questions"
-  tabindex="-1"
-  onkeydown={handleKey}
-  class="flex min-w-0 flex-col gap-3 rounded-lg focus-visible:shadow-focus-ring focus-visible:outline-none"
+  {@attach keys.scope(() => ({
+    commands: {
+      sendAnswers: () => {
+        if (!canSend) return false
+        void submit()
+      },
+      dismiss: () => {
+        if (disabled) return false
+        void dismiss()
+      }
+    }
+  }))}
+  class="flex min-w-0 flex-col gap-3"
 >
   {#if draft && validation}
-    {#each draft.blocks as block, index (block.type === 'markdown' ? `markdown:${index}` : askKey(block.id))}
-      {#if block.type === 'markdown'}
-        <Message.Response text={block.text} streaming={false} {folderPath} {sessionId} />
+    {#each askSections(draft.blocks) as part, index (index)}
+      {#if part.type === 'markdown'}
+        <Message.Response text={part.text} streaming={false} {folderPath} {sessionId} />
       {:else}
-        {@const key = askKey(block.id)}
-        <AskQuestionField
-          question={block}
-          draft={draft.questions[key]}
-          {disabled}
-          error={draft.errors[key] ?? validation.errors[key] ?? null}
-          onChange={() => {
-            delete draft.errors[key]
-          }}
-        />
+        <div
+          class="flex min-w-0 flex-col divide-y divide-edge overflow-hidden rounded-lg border border-edge bg-surface"
+        >
+          {#each part.questions as question (askKey(question.id))}
+            {@const key = askKey(question.id)}
+            <AskQuestionField
+              {question}
+              draft={draft.questions[key]}
+              {disabled}
+              base={stopBase(question.id)}
+              error={draft.errors[key] ?? validation.errors[key] ?? null}
+              onChange={() => {
+                delete draft.errors[key]
+              }}
+              onSettle={(advance) => void settle(question.id, advance)}
+            />
+          {/each}
+        </div>
       {/if}
     {/each}
-    {#if draft.error || validation.error}
-      <p role="alert" class="text-sm text-danger-bright">{draft.error ?? validation.error}</p>
+    {#if draft.error}
+      <p role="alert" class="text-sm text-danger-bright">{draft.error}</p>
     {/if}
     {@const missing = validation.total - validation.ready}
     <div
@@ -133,8 +171,20 @@
       </div>
       <div class="ms-auto flex items-center gap-2">
         <Button variant="text" size="xs" {disabled} onclick={() => void dismiss()}>Dismiss</Button>
-        <Button variant="accent" size="xs" disabled={!canSend} onclick={() => void submit()}>
-          Send answers <KbdGroup><Kbd>Ctrl</Kbd><Kbd>Enter</Kbd></KbdGroup>
+        <Button
+          variant="accent"
+          size="xs"
+          disabled={!canSend}
+          onclick={() => void submit()}
+          {@attach nav.stop(`ask:${pending.callId}:send`, () => ({ activate: () => void submit() }))}
+          class={NAV_ACTIVE}
+        >
+          Send answers
+          {#if sendKeys.length}
+            <KbdGroup
+              >{#each sendKeys as key (key)}<Kbd>{key}</Kbd>{/each}</KbdGroup
+            >
+          {/if}
         </Button>
       </div>
     </div>

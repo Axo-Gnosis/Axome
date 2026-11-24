@@ -109,7 +109,12 @@ mod tests {
         )
         .unwrap();
         let folder = root.join("project");
-        let memory = MemoryService::new(dirs.clone(), reqwest::Client::new());
+        let memory = MemoryService::new(
+            dirs.clone(),
+            reqwest::Client::new(),
+            Arc::new(crate::services::db::DatabaseService::new(root.join("test.db")).unwrap()),
+            Arc::new(|_| Ok(())),
+        );
         let scheme = MemoryScheme::new(Arc::clone(&memory), memory.active(&folder).unwrap());
         let cx = SchemeContext {
             session_id: "s".into(),

@@ -1,3 +1,4 @@
+pub(crate) mod captures;
 pub mod embed;
 pub(crate) mod scheme;
 pub mod tools;
@@ -12,16 +13,20 @@ use std::{
 use anyhow::{anyhow, ensure, Context, Result};
 use axome_memory::{index::EMBED_MODEL, links, search, sync, Index};
 use axome_protocol::{
-    memory::{
-        MemoryBankStatus, MemoryCaptureStatus, MemoryEmbedState, MemoryEmbedStatus, MemoryStatus,
-    },
+    memory::{MemoryBankStatus, MemoryEmbedState, MemoryEmbedStatus, MemoryStatus},
     settings::{MemorySettings, MEMORY_BANK_NAME_PATTERN},
 };
 use parking_lot::Mutex;
 use regex::Regex;
 use tokio::{runtime::Handle, sync::watch};
 
-use crate::{services::settings_resolution::resolve_effective_settings_for_folder_path, HostDirs};
+use crate::{
+    events::{EventSink, HostEvent},
+    services::{
+        db::DatabaseService, settings_resolution::resolve_effective_settings_for_folder_path,
+    },
+    HostDirs,
+};
 use embed::{EmbedState, Embedder};
 
 #[derive(Clone, Debug)]
@@ -87,10 +92,11 @@ struct EmbeddingWork {
 pub struct MemoryService {
     dirs: HostDirs,
     http: reqwest::Client,
+    db: Arc<DatabaseService>,
+    events: EventSink<HostEvent>,
     runtime: OnceLock<Handle>,
     index: Mutex<Option<Index>>,
     pub(crate) embedder: Mutex<Option<Arc<Embedder>>>,
-    pub(crate) last_capture: Mutex<Option<MemoryCaptureStatus>>,
     pub embed_state: watch::Sender<EmbedState>,
     lifecycle: Mutex<Lifecycle>,
     embedding_work: Mutex<EmbeddingWork>,
@@ -98,15 +104,24 @@ pub struct MemoryService {
 }
 
 impl MemoryService {
-    pub fn new(dirs: HostDirs, http: reqwest::Client) -> Arc<Self> {
+    pub fn new(
+        dirs: HostDirs,
+        http: reqwest::Client,
+        db: Arc<DatabaseService>,
+        events: EventSink<HostEvent>,
+    ) -> Arc<Self> {
+        if let Err(error) = captures::interrupt_unfinished(&db) {
+            tracing::warn!(%error, "Could not close interrupted memory captures");
+        }
         let (embed_state, _) = watch::channel(EmbedState::Disabled);
         let service = Arc::new(Self {
             dirs,
             http,
+            db,
+            events,
             runtime: OnceLock::new(),
             index: Mutex::new(None),
             embedder: Mutex::new(None),
-            last_capture: Mutex::new(None),
             embed_state,
             lifecycle: Mutex::new(Lifecycle::default()),
             embedding_work: Mutex::new(EmbeddingWork::default()),
@@ -567,12 +582,10 @@ impl MemoryService {
                 }
             }
             service.schedule_embedding();
-            let last_capture = service.last_capture.lock().clone();
             Ok(MemoryStatus {
                 enabled: settings.enabled,
                 embed,
                 banks: rows,
-                last_capture,
             })
         })
         .await?

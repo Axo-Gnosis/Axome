@@ -44,11 +44,22 @@
   import { contextUsage, formatCost } from '$lib/features/chat/format'
   import { jobsStatus } from '$lib/features/chat/jobs'
   import Icon from '$lib/icons/Icon.svelte'
-  import { AiFile01Icon, TaskEdit01Icon, TerminalIcon, UserGroupIcon, ToolCaseIcon } from '@hugeicons/core-free-icons'
+  import {
+    AiFile01Icon,
+    BrainIcon,
+    TaskEdit01Icon,
+    TerminalIcon,
+    UserGroupIcon,
+    ToolCaseIcon
+  } from '@hugeicons/core-free-icons'
+  import { backend } from '$lib/api/backend'
+  import type { Turn } from '$lib/features/chat/turns'
+  import { sessionCaptures } from '$lib/features/memory/captures.svelte'
   import AgentsPanel from './AgentsPanel.svelte'
   import ContextPanel from './ContextPanel.svelte'
   import FilesPanel from './FilesPanel.svelte'
   import JobsPanel from './JobsPanel.svelte'
+  import MemoryPanel from './MemoryPanel.svelte'
   import PlanPanel from './PlanPanel.svelte'
   import ToolboxPanel from './ToolboxPanel.svelte'
   import type { SessionSidebarState } from './state.svelte'
@@ -57,13 +68,42 @@
     controller,
     sidebar,
     owner,
-    now
+    now,
+    turns,
+    onJump
   }: {
     controller: ChatController
     sidebar: SessionSidebarState
     owner: { folderPath: string; sessionId: string | null }
     now: number
+    turns: Turn[]
+    /** Reveal a transcript step. */
+    onJump: (stepId: string) => void
   } = $props()
+
+  let memoryBank = $state<string | null>(null)
+  $effect(() => {
+    const folder = owner.folderPath
+    let stale = false
+    memoryBank = null
+    backend.memory.folder(folder).then(
+      (bank) => !stale && (memoryBank = bank),
+      () => {}
+    )
+    return () => {
+      stale = true
+    }
+  })
+  const memoryStatus = $derived.by((): ToneStatus | null => {
+    const runs = sessionCaptures(owner.folderPath, owner.sessionId)
+    const running = runs.find((run) => run.endedAt === null)
+    if (running)
+      return {
+        tone: 'working',
+        text: running.trigger === 'compaction' ? 'Saving after compaction' : 'Saving after closing'
+      }
+    return runs.at(-1)?.error ? { tone: 'danger', text: 'Last save failed' } : null
+  })
 
   const chat = $derived(controller.state)
   const jobs = $derived(chat?.live.jobs ?? [])
@@ -128,6 +168,17 @@
   >
     <Icon icon={AiFile01Icon} size={16} />
   </RailButton>
+  {#if memoryBank || sidebar.view === 'memory'}
+    <RailButton
+      tooltipSide="left"
+      label="Memory"
+      active={sidebar.view === 'memory'}
+      status={memoryStatus}
+      onclick={() => sidebar.toggle('memory')}
+    >
+      <Icon icon={BrainIcon} size={16} />
+    </RailButton>
+  {/if}
   <RailButton
     tooltipSide="left"
     label="Subagents & Teams"
@@ -176,6 +227,8 @@
       <FilesPanel state={chat ?? null} {owner} />
     {:else if sidebar.view === 'plan'}
       <PlanPanel {controller} {owner} />
+    {:else if sidebar.view === 'memory'}
+      <MemoryPanel {owner} {turns} bank={memoryBank} {onJump} />
     {/if}
   </div>
 {/if}

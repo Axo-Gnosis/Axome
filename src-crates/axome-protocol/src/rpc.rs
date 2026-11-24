@@ -683,6 +683,12 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             MemoryStatus => memory_status() -> $crate::memory::MemoryStatus;
             #[route(server)]
+            MemoryCaptures => memory_captures(query: $crate::memory::MemoryCaptureQuery) -> Vec<$crate::memory::MemoryCaptureRun>;
+            #[route(server)]
+            MemoryCaptureRevert => memory_capture_revert(fact_id: i64) -> $crate::memory::MemoryCaptureRun;
+            #[route(server)]
+            MemoryFolder => memory_folder(scope_folder: String) -> Option<String>;
+            #[route(server)]
             MemoryRetryDownload => memory_retry_download() -> ();
             #[route(server)]
             MemoryEnsureBank => memory_ensure_bank(name: String) -> String;
@@ -1093,6 +1099,7 @@ pub enum HostEventWire {
     /// The model registry changed: models, providers, or credentials.
     ModelsChanged(()),
     ExtensionsChanged(()),
+    MemoryCaptureChanged(crate::memory::MemoryCaptureChangedEvent),
     ExtensionStopped {
         id: String,
         folder: Option<String>,

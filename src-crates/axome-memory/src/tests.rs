@@ -17,6 +17,20 @@ fn put(dir: &Path, name: &str, text: &str) {
     fs::write(dir.join(name), text).unwrap();
 }
 #[test]
+fn replace_line_edits_only_the_first_exact_match() {
+    let text = "other old\r\nold\r\nold";
+    assert_eq!(
+        edit::replace_line(text, "old", None).as_deref(),
+        Some("other old\r\nold")
+    );
+    assert_eq!(
+        edit::replace_line(text, "old", Some("new")).as_deref(),
+        Some("other old\r\nnew\r\nold")
+    );
+    assert_eq!(edit::replace_line(text, "other", None), None);
+}
+
+#[test]
 fn format_fixture() {
     let text="---\ntitle: Example\ntype: project\ntags: [rust]\ncustom: {keep: true}\n---\n## Observations\n- [fact] @valid[2026-01-01,2026-02-01) Uses Rust #a#b (source)\n* [decision] @2026-11 Good choice\n+ [fact] @due:2026-12-01 Deadline\n- [fact] @unknown:tomorrow keep qualifier\n- [ ] task\n- [x] done\n- [X] done\n- [-] cancelled\n- [01:02:03] timestamp\n> - [fact] quoted\n```\n- [fact] code [[Hidden]]\n```\n~~~\n[[Also Hidden]]\n~~~\n- depends_on [[Other]] (reason)\n- 'related to' [[Third]]\nProse [[Fourth]] `[[Code]]` \\[[Escaped]]\n- [fact] Links [[Fifth]]\n";
     let note = format::parse(text);

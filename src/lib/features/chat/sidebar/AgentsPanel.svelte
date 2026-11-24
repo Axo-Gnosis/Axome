@@ -16,6 +16,7 @@
   import { isActiveJob, jobTone, pickJob, transcriptJobs } from '$lib/features/chat/jobs'
   import { getChatModels } from '$lib/features/chat/models.svelte'
   import { transcriptTurns } from '$lib/features/chat/turns'
+  import { TranscriptNav } from '$lib/features/chat/keymap/nav.svelte'
   import type { BlockView } from '$lib/features/chat/view'
   import { modelName } from '$lib/features/chat/format'
   import { openChatSession } from '$lib/features/sessions/service.svelte'
@@ -52,6 +53,7 @@
   const collapsedTeams = new SvelteSet<string>()
   let overrides = $state<Record<string, BlockView>>({})
   let childComposer = $state<PromptInput>()
+  const childNav = new TranscriptNav(() => childComposer?.focus())
   let childAskTime = $state<number | null>(null)
 
   const childJobs = $derived((controller.state?.live.jobs ?? []).filter((j): j is ChildJob => j.kind.kind === 'child'))
@@ -114,7 +116,7 @@
   )
   const jobIndex = $derived(transcriptJobs(childTurns))
 
-  // Consume Esc here even while idle, so a child's composer never stops the root chat.
+  // Claim the Stop command here even while idle, so a child's composer never stops the root chat.
   function stopChild(): void {
     if (!childState?.live.running || !childController) return
     void childController.stop().catch((error) => notify.error('Stop chat failed', getErrorMessage(error)))
@@ -187,7 +189,7 @@
             </div>
           </div>
           <ExtensionDiagnostics controller={childController} />
-          <Conversation>
+          <Conversation nav={childNav}>
             {#if !childState}
               <div class="py-4 text-center text-xs text-muted">
                 {childController.connection === 'closed'
@@ -196,32 +198,38 @@
               </div>
             {/if}
             {#each childTurns as turn, turnIndex (turn.id)}
-              {#if turn.user}
-                <UserBlock
-                  entry={turn.user}
-                  controller={childController}
-                  canBranch={false}
-                  owner={{ folderPath, sessionId: selectedChild.kind.sessionId }}
-                  commands={childState?.commands ?? []}
-                  models={available}
-                />
-              {/if}
-              {#if turn.steps.length || turn.running || turn.end}
-                <AgentBlock
-                  {turn}
-                  turns={childTurns}
-                  jobs={jobIndex}
-                  {turnIndex}
-                  controller={childController}
-                  {folderPath}
-                  sessionId={selectedChild.kind.sessionId}
-                  canBranch={false}
-                  now={childAskTime ?? now}
-                  expansion="collapsed"
-                  {overrides}
-                  {onView}
-                />
-              {/if}
+              <div
+                {@attach childNav.stop(`turn:${turn.id}`)}
+                data-turn-id={turn.id}
+                class="flex min-w-0 flex-col gap-4"
+              >
+                {#if turn.user}
+                  <UserBlock
+                    entry={turn.user}
+                    controller={childController}
+                    canBranch={false}
+                    owner={{ folderPath, sessionId: selectedChild.kind.sessionId }}
+                    commands={childState?.commands ?? []}
+                    models={available}
+                  />
+                {/if}
+                {#if turn.steps.length || turn.running || turn.end}
+                  <AgentBlock
+                    {turn}
+                    turns={childTurns}
+                    jobs={jobIndex}
+                    {turnIndex}
+                    controller={childController}
+                    {folderPath}
+                    sessionId={selectedChild.kind.sessionId}
+                    canBranch={false}
+                    now={childAskTime ?? now}
+                    expansion="collapsed"
+                    {overrides}
+                    {onView}
+                  />
+                {/if}
+              </div>
             {/each}
             {#snippet footer()}
               {#if !controller.readOnly && !childController.readOnly}
@@ -247,7 +255,8 @@
                   onCommand={(n, a) => childController.runCommand(n, a)}
                   onSubmit={() => childController.send()}
                   onFollowUp={() => childController.followUp()}
-                  onCancel={stopChild}
+                  onStop={stopChild}
+                  onLeaveUp={() => childNav.enter()}
                 />
               {/if}
             {/snippet}
