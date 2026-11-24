@@ -12,8 +12,9 @@ use playwright_rs::protocol::Page;
 use playwright_rs::{GotoOptions, ScreenshotOptions};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use url::Url;
 
-use crate::policy::BrowserPolicy;
+use crate::policy::validate_navigation_url;
 use crate::service::{BrowserConfig, BrowserService, ManagedTabInfo};
 use crate::tab::{
     cap_or_spill_text, capture_aria_snapshot, parse_wait_until, resolve_locator, save_spill_target,
@@ -352,9 +353,11 @@ impl BrowserTool {
 
         match action.as_str() {
             "open" => {
-                if let Some(ref url) = step.url {
-                    self.service.policy().validate_navigation_url(url)?;
-                }
+                let parsed = step
+                    .url
+                    .as_deref()
+                    .map(validate_navigation_url)
+                    .transpose()?;
                 let handle = self
                     .service
                     .open_or_get_tab(
@@ -372,15 +375,10 @@ impl BrowserTool {
                     .get_mut(&tab_name)
                     .ok_or_else(|| format!("Tab '{tab_name}' not found"))?;
                 tab.touch();
-                if let Some(ref url) = step.url {
-                    navigate_page(
-                        &tab.page,
-                        self.service.policy(),
-                        url,
-                        step.wait_until.as_deref(),
-                    )
-                    .await
-                    .map_err(|err| format!("Failed to open '{url}': {err}"))?;
+                if let Some(ref url) = parsed {
+                    navigate_page(&tab.page, url, step.wait_until.as_deref())
+                        .await
+                        .map_err(|err| format!("Failed to open '{url}': {err}"))?;
                 }
                 let landed = tab.page.url();
                 let title = if need_title {
@@ -504,18 +502,15 @@ impl BrowserTool {
         let res: Result<String, String> = async {
             let text = match action.as_str() {
                 "goto" => {
-                    let url = step
+                    let raw = step
                         .url
                         .as_deref()
                         .ok_or_else(|| "goto requires `url`".to_owned())?;
-                    navigate_page(
-                        &tab.page,
-                        self.service.policy(),
-                        url,
-                        step.wait_until.as_deref(),
-                    )
-                    .await
-                    .map_err(|err| format!("goto failed: {err}"))?;
+                    let url = validate_navigation_url(raw)
+                        .map_err(|err| format!("goto failed: {err}"))?;
+                    navigate_page(&tab.page, &url, step.wait_until.as_deref())
+                        .await
+                        .map_err(|err| format!("goto failed: {err}"))?;
                     format!("Navigated to {}", tab.page.url())
                 }
 
@@ -917,13 +912,11 @@ fn require_target_locator<'a>(
 
 async fn navigate_page(
     page: &Page,
-    policy: &BrowserPolicy,
-    url: &str,
+    url: &Url,
     wait_until: Option<&str>,
 ) -> Result<(), String> {
-    policy.validate_navigation_url(url)?;
     let opts = GotoOptions::new().wait_until(parse_wait_until(wait_until));
-    page.goto(url, Some(opts))
+    page.goto(url.as_str(), Some(opts))
         .await
         .map(|_| ())
         .map_err(|err| err.to_string())

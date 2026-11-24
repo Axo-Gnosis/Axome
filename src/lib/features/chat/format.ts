@@ -14,6 +14,19 @@ export function formatCost(usd: number | null): string {
   return usd === null ? 'unknown' : `$${usd.toFixed(2)}`
 }
 
+export function formatTime(timestamp: string | null): string | null {
+  if (timestamp === null) return null
+  const date = new Date(timestamp)
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString([], {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    : null
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1).replace(/\.0$/, '')}s`

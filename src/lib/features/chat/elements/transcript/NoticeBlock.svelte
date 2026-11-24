@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Chip } from '$lib/components/ui/chip'
   import * as Message from '$lib/features/chat/elements/message'
+  import { formatTime } from '$lib/features/chat/format'
   import Icon from '$lib/icons/Icon.svelte'
   import type { ChatNotice } from '$lib/types/backend'
   import { Mail01Icon, TriangleAlertIcon } from '@hugeicons/core-free-icons'
@@ -17,16 +18,7 @@
     folderPath: string
     sessionId: string | null
   } = $props()
-  const time = $derived(
-    timestamp && Number.isFinite(Date.parse(timestamp))
-      ? new Date(timestamp).toLocaleTimeString([], {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
-      : null
-  )
+  const time = $derived(formatTime(timestamp))
 </script>
 
 {#if notice.kind === 'mail'}

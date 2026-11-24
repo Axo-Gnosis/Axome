@@ -30,7 +30,7 @@
   import { cn } from '$lib/utils/cn'
   import { splitTokens } from '$lib/utils/queryTokens'
   import { ArrowDown01Icon, CheckIcon } from '@hugeicons/core-free-icons'
-  import { modelForSelector, splitSelector, TIER_LABELS, type SelectorParts } from './selector'
+  import { resolveSelector, TIER_LABELS, type SelectorParts } from './selector'
 
   let {
     value,
@@ -68,11 +68,12 @@
 
   const providers = $derived([...Map.groupBy(models, (model) => model.provider)])
 
-  const parts = $derived(splitSelector(value, models))
-  const current = $derived(modelForSelector(value, models, roles))
-  const currentRole = $derived(roles?.find((role) => `@${role.name}` === parts?.model))
+  const resolved = $derived(resolveSelector(value, models, roles))
+  const parts = $derived(resolved?.parts ?? null)
+  const current = $derived(resolved?.model)
+  const currentRole = $derived(resolved?.role)
   const typed = $derived(search.trim())
-  const typedParts = $derived(splitSelector(typed, models))
+  const typedParts = $derived(resolveSelector(typed, models)?.parts ?? null)
   const invalidTyped = $derived(
     custom && !!typed && (!typedParts || (typedParts.model.startsWith('@') && roles === undefined))
   )
@@ -85,11 +86,10 @@
   )
 
   function roleTarget(role: ChatModelRole, overrides?: SelectorParts): string {
-    const target = role.model ? splitSelector(role.model, models) : null
-    const model = role.model ? modelForSelector(role.model, models) : undefined
-    const effort = overrides?.effort ?? target?.effort
-    const tier = overrides?.tier ?? target?.tier
-    const name = model?.name ?? (target ? target.model || "Chat's model" : (role.model ?? 'Not set'))
+    const target = role.model ? resolveSelector(role.model, models) : null
+    const effort = overrides?.effort ?? target?.parts.effort
+    const tier = overrides?.tier ?? target?.parts.tier
+    const name = target?.model?.name ?? (target ? target.parts.model || "Chat's model" : (role.model ?? 'Not set'))
     return `${name}${effort ? ` · ${effort}` : ''}${tier && tier !== 'standard' ? ` · ${TIER_LABELS[tier]}` : ''}`
   }
 
@@ -224,7 +224,7 @@
           </Command.Group>
         {/if}
         {#each providers as [provider, list] (provider)}
-          <Command.Group heading={provider}>
+          <Command.Group>
             {#snippet headingContent()}
               <span class="uppercase">{provider}</span>
               {#if list[0].origin}<span class="ms-2 font-mono">{list[0].origin}</span>{/if}

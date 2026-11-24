@@ -38,10 +38,7 @@
   let { tab }: { tab: ChatTab } = $props()
   const controller = $derived(chats.getOrCreate(tab.id))
   const chat = $derived(controller.state)
-  const liveExtensions = $derived(!!chat && !chat.readOnly)
-  $effect(() => {
-    if (liveExtensions) return controller.holdExtensions(tab.folderPath)
-  })
+  $effect(() => controller.holdExtensions())
   const models = $derived(getChatModels(tab.folderPath))
   const catalog = $derived(models.catalog)
   const available = $derived(catalog?.models ?? [])
@@ -239,7 +236,7 @@
     <!-- isolate scopes the background's negative z-index so it paints above this bg but under the transcript. -->
     <div class="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
       <TidalStipple class="-z-10" params={turns.length ? ACTIVE_STIPPLE : undefined} transitionMs={900} />
-      <ExtensionDiagnostics {controller} folderPath={tab.folderPath} />
+      <ExtensionDiagnostics {controller} />
       <Conversation bind:this={conversation} {turns} {onAskVisibility}>
         {#if !turns.length}
           <div class="flex flex-1 flex-col items-center justify-center gap-6 py-10">
@@ -387,6 +384,8 @@
                 />
                 <EffortPicker
                   variant="ghost"
+                  label="Model options"
+                  shortcutHint="Shift+Tab"
                   tier={chat?.live.serviceTier}
                   effectiveTier={chat?.live.effectiveServiceTier}
                   serviceTiers={current?.serviceTiers}
@@ -399,7 +398,13 @@
                   {disabled}
                   onSelect={(level) => configure('thinking', { level })}
                   onTierSelect={(tier) => configure('tier', { tier: tier ?? 'standard' })}
-                />
+                >
+                  {#snippet tierNote()}
+                    <p class="text-xs text-muted">
+                      Applies from the next request. Also <span class="font-mono">/tier fast</span>.
+                    </p>
+                  {/snippet}
+                </EffortPicker>
               {/snippet}
             </PromptInput>
             {#if imageWarning}

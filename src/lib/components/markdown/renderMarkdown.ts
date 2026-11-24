@@ -9,7 +9,7 @@ import rehypeSlug from 'rehype-slug'
 import rehypeSanitize, { defaultSchema, type Options } from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
 import { SKIP, visit } from 'unist-util-visit'
-import { markdownImageSrc, URL_SCHEME_RE } from '$lib/utils/mediaAssets'
+import { markdownImageSrc } from '$lib/utils/mediaAssets'
 import { normalizeNestedMarkdownFences } from './markdownBlocks'
 
 export interface MarkdownCodeBlock {
@@ -17,10 +17,7 @@ export interface MarkdownCodeBlock {
   code: string
 }
 
-export interface MarkdownImage {
-  url: Promise<string | null>
-  local: boolean
-}
+export type MarkdownImage = Promise<{ url: string | null; local: boolean }>
 
 function collectText(nodes: ElementContent[]): string {
   let out = ''
@@ -115,10 +112,9 @@ export async function renderMarkdown(
             node.properties.dataAxomeImage = String(images.length)
             node.properties.ariaBusy = 'true'
             delete node.properties.src
-            images.push({
-              url: markdownImageSrc(src, folderPath, filePath, loadLocalImage).catch(() => null),
-              local: /^file:/i.test(src) || (!URL_SCHEME_RE.test(src) && !src.startsWith('//'))
-            })
+            images.push(
+              markdownImageSrc(src, folderPath, filePath, loadLocalImage).catch(() => ({ url: null, local: true }))
+            )
           }
           return
         }

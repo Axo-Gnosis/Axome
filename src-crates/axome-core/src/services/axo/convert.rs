@@ -136,6 +136,15 @@ pub(super) fn service_tier_to_wire(tier: ServiceTier) -> ChatServiceTier {
     }
 }
 
+pub(super) fn service_tier_from_wire(tier: ChatServiceTier) -> ServiceTier {
+    match tier {
+        ChatServiceTier::Standard => ServiceTier::Standard,
+        ChatServiceTier::Flex => ServiceTier::Flex,
+        ChatServiceTier::Fast => ServiceTier::Fast,
+        ChatServiceTier::Ultrafast => ServiceTier::Ultrafast,
+    }
+}
+
 pub(super) fn thinking_from_wire(level: ChatThinking) -> ThinkingLevel {
     match level {
         ChatThinking::Off => ThinkingLevel::Off,
@@ -234,11 +243,12 @@ pub(super) fn team_ref(team: &axo::TeamRef) -> ChatTeamRef {
     }
 }
 
-/// Job start/end positions, indexed on first use so converting a whole
-/// transcript scans it once instead of once per job reference.
-struct JobLookup<'a> {
+/// Transcript lookup tables, lazily built once per conversion pass.
+struct TranscriptIndex<'a> {
     entries: &'a [SeqEntry],
-    index: std::cell::OnceCell<JobIndex<'a>>,
+    jobs: std::cell::OnceCell<JobIndex<'a>>,
+    submissions: std::cell::OnceCell<HashMap<&'a str, &'a Entry>>,
+    siblings: std::cell::OnceCell<SiblingIndex<'a>>,
 }
 
 struct JobIndex<'a> {
@@ -246,16 +256,23 @@ struct JobIndex<'a> {
     starts: HashMap<&'a str, usize>,
 }
 
-impl<'a> JobLookup<'a> {
+struct SiblingIndex<'a> {
+    by_id: HashMap<&'a str, &'a Entry>,
+    siblings_by_anchor: HashMap<Option<&'a str>, Vec<&'a str>>,
+}
+
+impl<'a> TranscriptIndex<'a> {
     fn new(entries: &'a [SeqEntry]) -> Self {
         Self {
             entries,
-            index: std::cell::OnceCell::new(),
+            jobs: std::cell::OnceCell::new(),
+            submissions: std::cell::OnceCell::new(),
+            siblings: std::cell::OnceCell::new(),
         }
     }
 
-    fn index(&self) -> &JobIndex<'a> {
-        self.index.get_or_init(|| {
+    fn jobs(&self) -> &JobIndex<'a> {
+        self.jobs.get_or_init(|| {
             let mut index = JobIndex {
                 ends: HashMap::new(),
                 starts: HashMap::new(),
@@ -275,9 +292,81 @@ impl<'a> JobLookup<'a> {
         })
     }
 
+    fn submission(&self, value: &Entry) -> Option<&'a Entry> {
+        let Entry::Message {
+            submission_id: Some(id),
+            ..
+        } = value
+        else {
+            return None;
+        };
+        let submissions = self.submissions.get_or_init(|| {
+            let mut map = HashMap::new();
+            for seq in self.entries {
+                if let Entry::Submission { submission_id, .. } = &seq.entry {
+                    map.entry(submission_id.as_str()).or_insert(&seq.entry);
+                }
+            }
+            map
+        });
+        submissions.get(id.as_str()).copied()
+    }
+
+    fn siblings(&self) -> &SiblingIndex<'a> {
+        self.siblings.get_or_init(|| {
+            let mut by_id = HashMap::new();
+            let mut notices = HashSet::new();
+            for seq in self.entries {
+                if let Some(id) = seq.entry.id() {
+                    by_id.insert(id, &seq.entry);
+                }
+                if let Entry::Submission {
+                    submission_id,
+                    kind: SubmissionKind::Quiet | SubmissionKind::Mail,
+                    ..
+                } = &seq.entry
+                {
+                    notices.insert(submission_id.as_str());
+                }
+            }
+            let mut grouped: HashMap<Option<&'a str>, Vec<(u64, &'a str)>> = HashMap::new();
+            for seq in self.entries {
+                if let Entry::Message {
+                    message: AgentMessage::Llm(Message::User(_)),
+                    submission_id,
+                    ..
+                } = &seq.entry
+                {
+                    if !submission_id
+                        .as_deref()
+                        .is_some_and(|id| notices.contains(id))
+                    {
+                        if let Some(id) = seq.entry.id() {
+                            grouped
+                                .entry(anchor(&seq.entry, &by_id))
+                                .or_default()
+                                .push((seq.seq, id));
+                        }
+                    }
+                }
+            }
+            let siblings_by_anchor = grouped
+                .into_iter()
+                .map(|(key, mut bucket)| {
+                    bucket.sort_by_key(|(seq, _)| *seq);
+                    (key, bucket.into_iter().map(|(_, id)| id).collect())
+                })
+                .collect();
+            SiblingIndex {
+                by_id,
+                siblings_by_anchor,
+            }
+        })
+    }
+
     fn deliverable(&self, msg_ref: &str) -> Option<ChatDeliverable> {
         let job_id = msg_ref.split('/').next().unwrap_or(msg_ref);
-        let index = self.index();
+        let index = self.jobs();
         let Entry::JobEnd {
             text,
             is_error,
@@ -312,9 +401,9 @@ impl<'a> JobLookup<'a> {
     }
 }
 
-fn deliverables(jobs: &JobLookup<'_>, refs: &[String]) -> Vec<ChatDeliverable> {
+fn deliverables(index: &TranscriptIndex<'_>, refs: &[String]) -> Vec<ChatDeliverable> {
     refs.iter()
-        .filter_map(|job_ref| jobs.deliverable(job_ref))
+        .filter_map(|job_ref| index.deliverable(job_ref))
         .collect()
 }
 
@@ -342,7 +431,7 @@ fn custom_extension_id(custom_type: &str) -> Option<&str> {
 }
 
 fn notice_from_custom(
-    jobs: &JobLookup<'_>,
+    index: &TranscriptIndex<'_>,
     custom_type: &str,
     text: String,
     details: Option<&serde_json::Value>,
@@ -358,7 +447,7 @@ fn notice_from_custom(
     match custom_type {
         "job_result" => {
             let refs = job_refs(details, delivered_jobs);
-            let deliverables = deliverables(jobs, &refs);
+            let deliverables = deliverables(index, &refs);
             ChatNotice::JobWake {
                 jobs: refs,
                 deliverables,
@@ -368,23 +457,6 @@ fn notice_from_custom(
         "yield_nudge" => ChatNotice::YieldNudge { text },
         _ => ChatNotice::Host { text },
     }
-}
-
-fn submission<'a>(value: &Entry, entries: &'a [SeqEntry]) -> Option<&'a Entry> {
-    let Entry::Message {
-        submission_id: Some(id),
-        ..
-    } = value
-    else {
-        return None;
-    };
-    entries.iter().find_map(|seq| {
-        if let Entry::Submission { submission_id, .. } = &seq.entry {
-            (submission_id == id).then_some(&seq.entry)
-        } else {
-            None
-        }
-    })
 }
 
 fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&'a str> {
@@ -548,17 +620,17 @@ fn context_moved(entries: &[SeqEntry], at: usize) -> Option<ChatEntryBody> {
 }
 
 pub(super) fn entry(entries: &[SeqEntry], at: usize) -> Option<ChatEntry> {
-    entry_with(entries, at, &JobLookup::new(entries))
+    entry_with(entries, at, &TranscriptIndex::new(entries))
 }
 
 pub(super) fn path_entries(entries: &[SeqEntry], path: &[usize]) -> Vec<ChatEntry> {
-    let jobs = JobLookup::new(entries);
+    let index = TranscriptIndex::new(entries);
     path.iter()
-        .filter_map(|at| entry_with(entries, *at, &jobs))
+        .filter_map(|at| entry_with(entries, *at, &index))
         .collect()
 }
 
-fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<ChatEntry> {
+fn entry_with(entries: &[SeqEntry], at: usize, index: &TranscriptIndex<'_>) -> Option<ChatEntry> {
     let value = &entries.get(at)?.entry;
     let base = value.base()?;
     let body = match value {
@@ -566,7 +638,7 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
             message: AgentMessage::Llm(Message::User(user)),
             ..
         } => {
-            let submitted = submission(value, entries);
+            let submitted = index.submission(value);
             if let Some(Entry::Submission {
                 kind: kind @ (SubmissionKind::Quiet | SubmissionKind::Mail),
                 sender,
@@ -589,40 +661,13 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
                 };
                 ChatEntryBody::Notice { notice }
             } else {
-                let by_id: HashMap<_, _> = entries
-                    .iter()
-                    .filter_map(|seq| Some((seq.entry.id()?, &seq.entry)))
-                    .collect();
-                let notices: HashSet<&str> = entries
-                    .iter()
-                    .filter_map(|seq| {
-                        if let Entry::Submission {
-                            submission_id,
-                            kind: SubmissionKind::Quiet | SubmissionKind::Mail,
-                            ..
-                        } = &seq.entry
-                        {
-                            Some(submission_id.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let user_anchor = anchor(value, &by_id);
-                let mut siblings: Vec<_> = entries
-                    .iter()
-                    .filter(|seq| {
-                        matches!(
-                            &seq.entry,
-                            Entry::Message {
-                                message: AgentMessage::Llm(Message::User(_)),
-                                submission_id,
-                                ..
-                            } if !submission_id.as_deref().is_some_and(|id| notices.contains(id))
-                        ) && anchor(&seq.entry, &by_id) == user_anchor
-                    })
-                    .collect();
-                siblings.sort_by_key(|seq| seq.seq);
+                let siblings = index.siblings();
+                let user_anchor = anchor(value, &siblings.by_id);
+                let sibling_ids = siblings
+                    .siblings_by_anchor
+                    .get(&user_anchor)
+                    .map(|ids| ids.iter().map(|id| (*id).to_owned()).collect())
+                    .unwrap_or_default();
                 ChatEntryBody::User {
                     parts: match submitted {
                         Some(Entry::Submission { parts, .. }) => parts_to_wire(parts),
@@ -631,10 +676,7 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
                         }],
                     },
                     anchor: user_anchor.map(str::to_owned),
-                    siblings: siblings
-                        .into_iter()
-                        .filter_map(|seq| seq.entry.id().map(str::to_owned))
-                        .collect(),
+                    siblings: sibling_ids,
                     from: match submitted {
                         Some(Entry::Submission {
                             provenance: Some(provenance),
@@ -679,7 +721,7 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
             ..
         } => {
             let deliverables = if result.tool_name == "wait" {
-                deliverables(jobs, &job_refs(result.details.as_ref(), delivered_jobs))
+                deliverables(index, &job_refs(result.details.as_ref(), delivered_jobs))
             } else {
                 Vec::new()
             };
@@ -699,12 +741,12 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
             ..
         } if custom.display => ChatEntryBody::Notice {
             notice: notice_from_custom(
-                jobs,
+                index,
                 &custom.custom_type,
                 text(&custom.content),
                 custom.details.as_ref(),
                 delivered_jobs,
-                match submission(value, entries) {
+                match index.submission(value) {
                     Some(Entry::Submission {
                         provenance: Some(axo::SubmissionProvenance::Extension { id }),
                         ..
@@ -721,7 +763,7 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
             ..
         } => ChatEntryBody::Notice {
             notice: notice_from_custom(
-                jobs,
+                index,
                 custom_type,
                 text(content),
                 details.as_ref(),
@@ -1296,9 +1338,16 @@ mod tests {
                 commands: Vec::new(),
                 tool_origins: BTreeMap::new(),
                 diagnostics: Vec::new(),
+                toolbox: ChatToolbox::default(),
             })
             .unwrap(),
-            serde_json::json!({"type":"extensionCatalog","commands":[],"toolOrigins":{},"diagnostics":[]}),
+            serde_json::json!({
+                "type": "extensionCatalog",
+                "commands": [],
+                "toolOrigins": {},
+                "diagnostics": [],
+                "toolbox": {"skills": [], "agents": [], "modes": [], "keywords": [], "diagnostics": []}
+            }),
         );
     }
 

@@ -26,11 +26,9 @@
 
   let {
     state: chat,
-    folderPath,
     owner
   }: {
     state: ChatState | null
-    folderPath: string
     owner: { folderPath: string; sessionId: string | null }
   } = $props()
 
@@ -48,7 +46,7 @@
   // copy the whole prompt and context files on every step of a run.
   $effect(() => {
     const id = sessionId
-    const folder = folderPath
+    const folder = owner.folderPath
     void running
     detailsError = null
     if (!id) return

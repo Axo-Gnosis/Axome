@@ -97,10 +97,7 @@
   const models = $derived(getChatModels(folderPath))
   const available = $derived(models.catalog?.models ?? [])
   const childState = $derived(childController?.state ?? null)
-  const liveExtensions = $derived(!!childState && !childState.readOnly)
-  $effect(() => {
-    if (liveExtensions) return childController?.holdExtensions(folderPath)
-  })
+  $effect(() => childController?.holdExtensions())
   const childAsking = $derived(!!childState?.live.questions.length)
   const childHasDeadline = $derived(childState?.live.questions.some((ask) => ask.deadlineMs !== null) ?? false)
   $effect(() => {
@@ -189,7 +186,7 @@
               >
             </div>
           </div>
-          <ExtensionDiagnostics controller={childController} {folderPath} />
+          <ExtensionDiagnostics controller={childController} />
           <Conversation>
             {#if !childState}
               <div class="py-4 text-center text-xs text-muted">

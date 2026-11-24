@@ -233,10 +233,7 @@ impl AxoService {
                 match &result {
                     Ok(()) => {
                         if let Some(service) = service.upgrade() {
-                            if let Err(error) = service.reload_models().await {
-                                tracing::warn!(%error, "Reloading models after login failed");
-                            }
-                            service.emit_models_changed();
+                            service.sync_models_after_credential_change().await;
                         }
                     }
                     Err(error) => tracing::warn!(%error, %provider, "Provider login failed"),

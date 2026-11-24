@@ -7,7 +7,7 @@
   import Icon from '$lib/icons/Icon.svelte'
   import { XIcon } from '@hugeicons/core-free-icons'
 
-  let { controller, folderPath }: { controller: ChatController; folderPath: string } = $props()
+  let { controller }: { controller: ChatController } = $props()
 </script>
 
 {#if controller.extensionDiagnostics.length}
@@ -31,7 +31,11 @@
         <Button
           variant="text"
           size="xs"
-          onclick={() => openExtensionSettings(chatExtensionTarget(folderPath, clash?.origin ?? null))}
+          onclick={() => {
+            if (controller.folderPath) {
+              openExtensionSettings(chatExtensionTarget(controller.folderPath, clash?.origin ?? null))
+            }
+          }}
         >
           Open Extensions
         </Button>

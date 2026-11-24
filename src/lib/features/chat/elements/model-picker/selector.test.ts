@@ -1,7 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatModel } from '$lib/types/backend'
-import { joinSelector, levelsForSelector, modelForSelector, splitSelector, THINKING_LEVELS } from './selector'
+import {
+  canonicalSelector,
+  joinSelector,
+  levelsForSelector,
+  modelForSelector,
+  resolveSelector,
+  splitSelector,
+  THINKING_LEVELS
+} from './selector'
 
 test('effort and tier suffix orders resolve alike and join canonically', () => {
   const parts = { model: 'gpt-x', effort: 'high', tier: 'fast' } as const
@@ -78,4 +86,21 @@ test('model lookup follows a single role target and falls back when the model is
   assert.equal(modelForSelector('@tier-only', models, roles), undefined)
   assert.equal(modelForSelector('@absent', models, roles), undefined)
   assert.equal(levelsForSelector('@absent', models, roles), THINKING_LEVELS)
+  assert.deepEqual(resolveSelector('@review:standard', models, roles), {
+    parts: { model: '@review', effort: null, tier: 'standard' },
+    model: colonModel,
+    role: roles[0]
+  })
+  assert.equal(canonicalSelector({ model: 'p/m', effort: 'fast' as never, tier: null }, models), null)
+  assert.equal(
+    canonicalSelector({ model: 'p/m', effort: 'high', tier: 'fast' }, [{ ...model, selector: 'p/m:high' }]),
+    'p/m:fast:high'
+  )
+  assert.equal(
+    canonicalSelector({ model: 'p/m', effort: 'high', tier: 'fast' }, [
+      { ...model, selector: 'p/m:high' },
+      { ...model, selector: 'p/m:fast' }
+    ]),
+    null
+  )
 })

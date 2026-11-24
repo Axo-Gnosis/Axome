@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte'
-  import { backend } from '$lib/api/backend'
   import * as Alert from '$lib/components/ui/alert'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
@@ -9,12 +8,18 @@
   import { Switch } from '$lib/components/ui/switch'
   import type { AxoExtension, AxoProjectAccess } from '$lib/types/backend'
   import { splitRemotePath } from '$lib/utils/paths'
-  import { getExtensionSettingsTarget, openExtensionSettings, setSettingsPage } from '../dialog/state.svelte'
+  import {
+    clearExtensionProjectScroll,
+    closeExtensionDetail,
+    getExtensionDetail,
+    isExtensionProjectScroll,
+    setExtensionDetail,
+    setSettingsPage
+  } from '../dialog/state.svelte'
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
   import {
     createExtensionsState,
-    extensionBunUnavailable,
     extensionRuntimeAction,
     extensionStateText,
     needsExtensionAttention
@@ -25,7 +30,7 @@
   import ExtensionRunnerMemory from './ExtensionRunnerMemory.svelte'
   import ProviderCredentials, {
     credentialReminder,
-    isReady,
+    providerStatus,
     sourceDetail,
     sourceLabel
   } from './ProviderCredentials.svelte'
@@ -44,24 +49,23 @@
   const controls = untrack(() => createExtensionsState(host, folderPath))
   onDestroy(controls.release)
   const scopeFolder = $derived(folderPath ? (splitRemotePath(folderPath)?.path ?? folderPath) : null)
-  const target = $derived(getExtensionSettingsTarget())
-  const projectDetail = $derived(target?.projectFolder !== null && target?.projectFolder !== undefined)
+  const detailTarget = $derived(getExtensionDetail())
+  const projectDetail = $derived(detailTarget?.project ?? false)
   const detail = $derived(
-    target?.id
+    detailTarget
       ? ((projectDetail ? controls.payload?.project?.items : controls.payload?.host)?.find(
-          (item) => item.id === target.id
+          (item) => item.id === detailTarget.id
         ) ?? null)
       : null
   )
   const projectCatalog = $derived(controls.payload?.project)
   const attentionCount = $derived(controls.payload?.host.filter(needsExtensionAttention).length ?? 0)
-  const bunUnavailable = $derived(controls.payload === null || extensionBunUnavailable(controls.payload))
+  const bunUnavailable = $derived(controls.bunUnavailable)
   const disabled = $derived(controls.busy || controls.stale)
   let filter = $state<'all' | 'attention'>('all')
   let install = $state(false)
   let outputTarget = $state.raw<{ id: string; project: boolean } | null>(null)
   let projectHeading = $state<HTMLElement | null>(null)
-  let credentialClaimed = $state<string | null>(null)
 
   const scopedProviders = $derived.by(() => {
     if (projectCatalog?.access !== 'trust') return []
@@ -78,26 +82,26 @@
   })
 
   $effect(() => {
-    if (!target || target.id !== null || target.projectFolder === null || !projectHeading) return
-    const heading = projectHeading
-    void tick().then(() => heading.scrollIntoView({ block: 'start' }))
+    if (!detailTarget) outputTarget = null
   })
 
-  function claimCredentials(id: string) {
-    if (credentialClaimed !== null) return null
-    credentialClaimed = id
-    return () => {
-      credentialClaimed = null
-    }
-  }
+  $effect(() => {
+    if (detailTarget || !isExtensionProjectScroll() || !projectHeading) return
+    const heading = projectHeading
+    void tick().then(() => {
+      heading.scrollIntoView({ block: 'start' })
+      clearExtensionProjectScroll()
+    })
+  })
 
   function openDetail(item: AxoExtension, project: boolean, output = false) {
     outputTarget = output ? { id: item.id, project } : null
-    openExtensionSettings({ hostFolder: host, projectFolder: project ? folderPath : null, id: item.id })
+    setExtensionDetail({ id: item.id, project })
   }
 
   function back() {
-    openExtensionSettings({ hostFolder: host, projectFolder: target?.projectFolder ?? null, id: null })
+    outputTarget = null
+    closeExtensionDetail()
   }
 </script>
 
@@ -105,7 +109,6 @@
   <div class="divide-y divide-edge">
     {#each items as item (item.id)}
       {@const action = extensionRuntimeAction(item, access)}
-      {@const scope = project ? scopeFolder : null}
       <article class="flex items-center justify-between gap-4 py-2">
         <div class="flex min-w-0 items-start gap-2">
           <StatusDot
@@ -132,17 +135,14 @@
           {#if action === 'off'}
             <Button size="xs" {disabled} onclick={() => controls.setEnabled(item.id, project, false)}>Turn Off</Button>
           {:else if action === 'retry'}
-            <Button
-              size="xs"
-              disabled={disabled || bunUnavailable}
-              onclick={() => controls.run(() => backend.axo.retryExtension(item.id, scope, host))}>Retry</Button
+            <Button size="xs" disabled={disabled || bunUnavailable} onclick={() => controls.retry(item.id, project)}
+              >Retry</Button
             >
           {:else if action === 'dependencies'}
             <Button
               size="xs"
               disabled={disabled || bunUnavailable}
-              onclick={() => controls.run(() => backend.axo.installExtensionDependencies(item.id, scope, host))}
-              >Install Dependencies</Button
+              onclick={() => controls.installDependencies(item.id, project)}>Install Dependencies</Button
             >
           {/if}
           {#if item.failure || action === 'output'}
@@ -185,14 +185,12 @@
               'the bundled Bun binary and PATH'}.
           </p>
         </div>
-        <Button size="xs" {disabled} onclick={() => controls.run(() => backend.axo.checkExtensionsBun(host))}
-          >Check Again</Button
-        >
+        <Button size="xs" {disabled} onclick={() => controls.checkBun()}>Check Again</Button>
       </div>
     </Alert.Root>
   {/if}
 
-  {#if target?.id}
+  {#if detailTarget}
     {#if detail}
       {#key JSON.stringify([projectDetail, detail.id])}
         <ExtensionDetail
@@ -200,9 +198,9 @@
           item={detail}
           project={projectDetail}
           {host}
-          {folderPath}
           {hostLabel}
           initialOutput={outputTarget?.id === detail.id && outputTarget?.project === projectDetail}
+          onBack={back}
         />
       {/key}
     {:else}
@@ -290,44 +288,37 @@
                   </div>
                 </Alert.Root>
               {/if}
-              <div class="space-y-3">
-                {#each scopedProviders as provider (provider.id)}
-                  {@const label = sourceLabel(provider)}
-                  {@const detail = sourceDetail(provider)}
-                  {#snippet providerDescription()}
-                    <span
-                      >{provider.models}
-                      {provider.models === 1 ? 'model' : 'models'}{#if label}
-                        · <Badge>{label}</Badge>{/if}</span
-                    >
-                    {#if provider.status.kind === 'error'}<span class="block text-danger-bright"
-                        >{provider.status.message}</span
-                      >{/if}
-                    {#if detail}<span class="block font-mono">{detail}</span>{/if}
-                  {/snippet}
-                  <SettingRow as="div" label={provider.id} description={providerDescription}>
-                    <StatusDot
-                      tone={isReady(provider) ? 'success' : provider.status.kind === 'error' ? 'danger' : 'idle'}
-                      label={isReady(provider)
-                        ? 'Configured'
-                        : provider.status.kind === 'error'
-                          ? 'Needs attention'
-                          : 'Not configured'}
-                    />
-                    <ProviderCredentials
-                      {provider}
-                      {host}
-                      {scopeFolder}
-                      disabled={disabled ||
-                        (credentialClaimed !== null && credentialClaimed !== provider.id) ||
-                        controls.providerError !== null ||
-                        controls.loading}
-                      claimCredentials={() => claimCredentials(provider.id)}
-                      onChanged={() => void controls.refresh()}
-                    />
-                  </SettingRow>
-                {/each}
-              </div>
+              <ProviderCredentials
+                {host}
+                {scopeFolder}
+                disabled={disabled || controls.providerError !== null || controls.loading}
+                onChanged={() => void controls.refresh()}
+              >
+                {#snippet children(actions)}
+                  <div class="space-y-3">
+                    {#each scopedProviders as provider (provider.id)}
+                      {@const status = providerStatus(provider)}
+                      {@const label = sourceLabel(provider)}
+                      {@const detail = sourceDetail(provider)}
+                      {#snippet providerDescription()}
+                        <span
+                          >{provider.models}
+                          {provider.models === 1 ? 'model' : 'models'}{#if label}
+                            · <Badge>{label}</Badge>{/if}</span
+                        >
+                        {#if provider.status.kind === 'error'}<span class="block text-danger-bright"
+                            >{provider.status.message}</span
+                          >{/if}
+                        {#if detail}<span class="block font-mono">{detail}</span>{/if}
+                      {/snippet}
+                      <SettingRow as="div" label={provider.id} description={providerDescription}>
+                        <StatusDot tone={status.tone} label={status.label} />
+                        {@render actions(provider)}
+                      </SettingRow>
+                    {/each}
+                  </div>
+                {/snippet}
+              </ProviderCredentials>
               {#if scopedProviders.length}<p class="mt-3 text-xs text-muted">{credentialReminder}</p>{/if}
             </div>
           {/if}
@@ -339,20 +330,8 @@
   <p class="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading extensions…</p>
 {/if}
 
-<ExtensionRunnerMemory {host} {scopeFolder} catalog={controls.payload} active={!target?.id} />
+<ExtensionRunnerMemory {host} {scopeFolder} catalog={controls.payload} active={!detailTarget} />
 
 {#if install}
-  <ExtensionInstallDialog
-    open
-    {host}
-    {hostLabel}
-    update={null}
-    bunUnavailable={bunUnavailable || controls.stale}
-    busy={disabled}
-    actionError={controls.error}
-    run={controls.run}
-    onInstalled={controls.refresh}
-    onTurnOn={(id) => controls.setEnabled(id, false, true)}
-    onClose={() => (install = false)}
-  />
+  <ExtensionInstallDialog {host} {hostLabel} state={controls} update={null} onClose={() => (install = false)} />
 {/if}

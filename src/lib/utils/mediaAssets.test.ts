@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveMarkdownImagePath } from './mediaAssets'
+import { markdownImageSrc, resolveMarkdownImagePath } from './mediaAssets'
 
 const local = '/repo/rust/Axome'
 const remote = 'axome://server/repo'
@@ -61,5 +61,22 @@ test('file previews retain document and project-root resolution on every platfor
     for (const [file, href, expected] of cases) {
       assert.equal(resolveMarkdownImagePath(href, folder, file, native, home), expected, `${folder}: ${href}`)
     }
+  }
+})
+
+test('markdownImageSrc classifies external and local links before platform resolution', async () => {
+  for (const href of [null, undefined, '', '   ']) {
+    assert.deepEqual(await markdownImageSrc(href), { url: null, local: true })
+  }
+  for (const [href, expected] of [
+    ['//cdn.example.com/a.png', '//cdn.example.com/a.png'],
+    ['  //cdn.example.com/a.png  ', '//cdn.example.com/a.png'],
+    ['https://example.com/a.png', 'https://example.com/a.png'],
+    ['data:image/png;base64,abc', 'data:image/png;base64,abc']
+  ] as const) {
+    assert.deepEqual(await markdownImageSrc(href), { url: expected, local: false })
+  }
+  for (const href of ['file:///tmp/a.png', './local.png', '/abs/a.png']) {
+    assert.deepEqual(await markdownImageSrc(href), { url: null, local: true })
   }
 })

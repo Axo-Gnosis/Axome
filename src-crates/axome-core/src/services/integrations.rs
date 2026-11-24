@@ -334,10 +334,10 @@ impl IntegrationService {
         *CURRENT.write() = catalog.clone();
         catalog
     }
+}
 
-    pub fn server_definition_id(integration_id: &str, contribution_id: &str) -> String {
-        format!("{integration_id}::{contribution_id}")
-    }
+fn contribution_id(integration_id: &str, contribution_id: &str) -> String {
+    format!("{integration_id}::{contribution_id}")
 }
 
 fn installed_dir() -> Option<&'static Path> {
@@ -719,8 +719,7 @@ fn build(list: &[PreparedIntegration]) -> Result<LoadedIntegrationCatalog, Strin
                 &definition.document_selectors,
                 &known_languages,
             )?;
-            let server_definition_id =
-                IntegrationService::server_definition_id(&manifest.id, &definition.id);
+            let server_definition_id = contribution_id(&manifest.id, &definition.id);
             if !server_ids.insert(server_definition_id.clone()) {
                 return Err(format!(
                     "Duplicate server definition id {server_definition_id}"
@@ -742,8 +741,7 @@ fn build(list: &[PreparedIntegration]) -> Result<LoadedIntegrationCatalog, Strin
             });
         }
         for definition in &manifest.contributes.formatters {
-            let formatter_id =
-                IntegrationService::server_definition_id(&manifest.id, &definition.id);
+            let formatter_id = contribution_id(&manifest.id, &definition.id);
             for language in &definition.languages {
                 if !known_languages.contains(language.as_str()) {
                     return Err(format!(

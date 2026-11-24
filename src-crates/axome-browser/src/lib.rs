@@ -11,5 +11,5 @@ pub mod tab;
 pub mod tool;
 
 pub use discovery::{discover_browsers, resolve_executable, DetectedBrowser};
-pub use policy::BrowserPolicy;
+pub use policy::validate_navigation_url;
 pub use service::{BrowserConfig, BrowserService};

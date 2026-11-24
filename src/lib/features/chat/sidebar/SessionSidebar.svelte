@@ -169,16 +169,11 @@
     {:else if sidebar.view === 'agents'}
       <AgentsPanel {controller} {sidebar} folderPath={owner.folderPath} {now} />
     {:else if sidebar.view === 'toolbox'}
-      <ToolboxPanel
-        tools={chat?.sessionTools ?? []}
-        toolbox={chat?.toolbox ?? null}
-        folderPath={owner.folderPath}
-        {owner}
-      />
+      <ToolboxPanel tools={chat?.sessionTools ?? []} toolbox={chat?.toolbox ?? null} {owner} />
     {:else if sidebar.view === 'context'}
-      <ContextPanel state={chat ?? null} folderPath={owner.folderPath} {owner} />
+      <ContextPanel state={chat ?? null} {owner} />
     {:else if sidebar.view === 'files'}
-      <FilesPanel state={chat ?? null} folderPath={owner.folderPath} {owner} />
+      <FilesPanel state={chat ?? null} {owner} />
     {:else if sidebar.view === 'plan'}
       <PlanPanel {controller} {owner} />
     {/if}

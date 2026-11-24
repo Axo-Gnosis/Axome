@@ -4,7 +4,7 @@
   import { StatusDot } from '$lib/components/ui/status-dot'
   import * as Message from '$lib/features/chat/elements/message'
   import Icon from '$lib/icons/Icon.svelte'
-  import { formatCount, formatDuration } from '../../format'
+  import { formatCount, formatDuration, formatTime } from '../../format'
   import type { ToolStep } from '../../turns'
   import { askKey } from './askDocument'
   import { parseAskResult } from './askResult'
@@ -38,26 +38,13 @@
           ? 'You replied instead of answering.'
           : null
   )
-  const answeredAt = $derived(localTime(call.endedAt))
+  const answeredAt = $derived(formatTime(call.endedAt))
   const timeoutText = $derived.by(() => {
     const duration = call.result?.durationMs
     return duration != null && Number.isFinite(duration) && duration >= 0
       ? `No answer after ${formatDuration(duration)}. axo used the suggested answers.`
       : 'No answer in time. axo used the suggested answers.'
   })
-
-  function localTime(timestamp: string | null): string | null {
-    if (timestamp === null) return null
-    const date = new Date(timestamp)
-    return Number.isFinite(date.getTime())
-      ? date.toLocaleTimeString([], {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
-      : null
-  }
 </script>
 
 <section data-slot="ask-summary" aria-label="Ask" class="flex min-w-0 flex-col gap-3">

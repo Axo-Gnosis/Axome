@@ -351,13 +351,10 @@ pub enum AxoExtensionSource {
 pub struct AxoExtensionStage {
     pub stage_id: String,
     pub id: String,
-    pub compatible: bool,
-    pub sdk: Option<String>,
     pub adds: AxoExtensionAdds,
     pub origin: String,
     pub revision: Option<String>,
     pub subject: Option<String>,
-    pub installed_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -368,7 +365,7 @@ pub struct AxoExtensionStage {
 )]
 pub enum AxoInstallOutcome {
     Installed {
-        extension: AxoExtension,
+        id: String,
     },
     OriginChanged {
         installed: String,

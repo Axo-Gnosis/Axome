@@ -1,10 +1,17 @@
 <script lang="ts" module>
+  import type { StatusTone } from '$lib/components/ui/status-dot'
   import type { AxoProvider } from '$lib/types/backend'
 
   export const isReady = (provider: AxoProvider) => provider.status.kind === 'ready'
   export const isConfigured = (provider: AxoProvider) => provider.status.kind !== 'needsCredentials'
   export const credentialReminder =
     'Remove and Log Out delete stored credentials only. Keys in models.jsonc or the environment remain in effect.'
+
+  export function providerStatus(provider: AxoProvider): { tone: StatusTone; label: string } {
+    if (isReady(provider)) return { tone: 'success', label: 'Configured' }
+    if (provider.status.kind === 'error') return { tone: 'danger', label: 'Needs attention' }
+    return { tone: 'idle', label: 'Not configured' }
+  }
 
   export function sourceLabel(provider: AxoProvider): string | null {
     switch (provider.source.kind) {
@@ -31,7 +38,7 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import type { Snippet } from 'svelte'
   import { backend } from '$lib/api/backend'
   import { Button } from '$lib/components/ui/button'
   import { notify } from '$lib/features/notifications/state.svelte'
@@ -40,47 +47,31 @@
   import ProviderLoginDialog from './ProviderLoginDialog.svelte'
 
   let {
-    provider,
     host,
     scopeFolder,
     disabled,
-    claimCredentials,
-    onChanged
+    onChanged,
+    children
   }: {
-    provider: AxoProvider
     host: string | null
     scopeFolder: string | null
     disabled: boolean
-    claimCredentials: () => (() => void) | null
     onChanged: () => void
+    children: Snippet<[actions: Snippet<[AxoProvider]>]>
   } = $props()
 
-  let release: (() => void) | null = null
   let keyProvider = $state<string | null>(null)
   let loginProvider = $state<string | null>(null)
   let key = $state('')
   let busy = $state(false)
   let error = $state<string | null>(null)
-  const controlsDisabled = $derived(disabled || busy || keyProvider !== null || loginProvider !== null)
-
-  function claim() {
-    if (disabled || release) return false
-    release = claimCredentials()
-    error = null
-    return release !== null
-  }
-
-  function finish() {
-    release?.()
-    release = null
-  }
-  onDestroy(finish)
+  const active = $derived(disabled || busy || keyProvider !== null || loginProvider !== null)
 
   function closeKey() {
     if (busy) return
     keyProvider = null
     key = ''
-    finish()
+    error = null
   }
 
   async function saveKey() {
@@ -88,7 +79,7 @@
     busy = true
     error = null
     try {
-      await backend.axo.setProviderKey(keyProvider, key, host, scopeFolder)
+      await backend.axo.setProviderKey(keyProvider, key, scopeFolder, host)
       onChanged()
     } catch (cause) {
       error = getErrorMessage(cause)
@@ -99,51 +90,57 @@
     closeKey()
   }
 
-  async function remove() {
-    if (!claim()) return
+  async function remove(provider: AxoProvider) {
+    if (active) return
     busy = true
     try {
-      const warning = await backend.axo.removeProvider(provider.id, host, scopeFolder)
+      const warning = await backend.axo.removeProvider(provider.id, scopeFolder, host)
       if (warning !== null) notify.warning('Provider logout warning', warning)
       onChanged()
     } catch (cause) {
       notify.error('Could not remove stored credentials', getErrorMessage(cause))
     } finally {
       busy = false
-      finish()
     }
   }
 </script>
 
-{#if provider.login}
-  <Button
-    size="xs"
-    variant={isReady(provider) ? 'default' : 'accent'}
-    disabled={controlsDisabled}
-    onclick={() => {
-      if (claim()) loginProvider = provider.id
-    }}>Log In</Button
-  >
-{/if}
-{#if provider.requiresKey}
-  <Button
-    size="xs"
-    disabled={controlsDisabled}
-    onclick={() => {
-      if (claim()) keyProvider = provider.id
-    }}
-  >
-    {provider.source.kind === 'apiKey' ? 'Update Key' : 'Add Key'}
-  </Button>
-{/if}
-{#if provider.source.kind === 'apiKey' || provider.source.kind === 'oauth'}
-  <Button size="xs" disabled={controlsDisabled} onclick={remove}
-    >{provider.source.kind === 'oauth' ? 'Log Out' : 'Remove'}</Button
-  >
-{/if}
+{#snippet actions(provider: AxoProvider)}
+  {#if provider.login}
+    <Button
+      size="xs"
+      variant={isReady(provider) ? 'default' : 'accent'}
+      disabled={active}
+      onclick={() => {
+        error = null
+        loginProvider = provider.id
+      }}>Log In</Button
+    >
+  {/if}
+  {#if provider.requiresKey}
+    <Button
+      size="xs"
+      disabled={active}
+      onclick={() => {
+        error = null
+        keyProvider = provider.id
+      }}
+    >
+      {provider.source.kind === 'apiKey' ? 'Update Key' : 'Add Key'}
+    </Button>
+  {/if}
+  {#if provider.source.kind === 'apiKey' || provider.source.kind === 'oauth'}
+    <Button size="xs" disabled={active} onclick={() => remove(provider)}
+      >{provider.source.kind === 'oauth' ? 'Log Out' : 'Remove'}</Button
+    >
+  {/if}
+{/snippet}
+
+{@render children(actions)}
+
 <ApiKeyDialog
   open={keyProvider !== null}
-  title={`Set Key · ${keyProvider ?? provider.id}`}
+  title={keyProvider ? `Set Key · ${keyProvider}` : 'Set Key'}
   bind:key
   {busy}
   {disabled}
@@ -151,16 +148,4 @@
   onSave={saveKey}
   onClose={closeKey}
 />
-<ProviderLoginDialog
-  bind:provider={
-    () => loginProvider,
-    (value) => {
-      loginProvider = value
-      if (value === null) finish()
-    }
-  }
-  {host}
-  {scopeFolder}
-  {disabled}
-  onDone={onChanged}
-/>
+<ProviderLoginDialog bind:provider={loginProvider} {host} {scopeFolder} {disabled} onDone={onChanged} />

@@ -25,22 +25,6 @@ export function blockedToolResult(result: ToolStep['result']): BlockedCall | nul
   return result?.isError === true ? blockedCall(result.details) : null
 }
 
-export type ExtensionOrigin = { id: string; scoped: boolean }
-
-/** Mirrors axo_extensions::ExtensionOrigin::parse; the scope key isn't display data. */
-export function parseExtensionOrigin(label: string | null): ExtensionOrigin | null {
-  const prefix = 'extension '
-  if (!label?.startsWith(prefix)) return null
-  const rest = label.slice(prefix.length)
-  const delimiter = ' (scope '
-  const split = rest.indexOf(delimiter)
-  const id = split === -1 ? rest : rest.slice(0, split)
-  if (!id || id.includes(' ')) return null
-  if (split === -1) return { id, scoped: false }
-  const key = rest.slice(split + delimiter.length, -1)
-  return rest.endsWith(')') && key && !key.includes(' ') ? { id, scoped: true } : null
-}
-
 export type Truncation = Record<string, unknown> & { outputLines: number; outputBytes: number }
 
 /** axo's truncation record: the fields every capped tool output shares; null when any disagrees. */

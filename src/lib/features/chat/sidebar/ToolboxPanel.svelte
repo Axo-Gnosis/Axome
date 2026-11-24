@@ -22,12 +22,10 @@
   let {
     tools,
     toolbox,
-    folderPath,
     owner
   }: {
     tools: ChatSessionTool[]
     toolbox: ChatToolbox | null
-    folderPath: string
     owner: { folderPath: string; sessionId: string | null }
   } = $props()
 
@@ -267,7 +265,7 @@
                         <dt class="text-muted">Definition</dt>
                         <dd
                           class="mt-1 font-mono wrap-anywhere text-fg"
-                          title={item.path.startsWith('/') ? item.path : `${folderPath}/${item.path}`}
+                          title={item.path.startsWith('/') ? item.path : `${owner.folderPath}/${item.path}`}
                         >
                           {item.path}
                         </dd>

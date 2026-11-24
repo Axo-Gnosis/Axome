@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
-  import { backend } from '$lib/api/backend'
+  import { onDestroy, untrack } from 'svelte'
   import * as Alert from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
@@ -8,12 +7,10 @@
   import { Switch } from '$lib/components/ui/switch'
   import type { AxoExtension } from '$lib/types/backend'
   import { copyToClipboard } from '$lib/utils/clipboard'
-  import { splitRemotePath } from '$lib/utils/paths'
-  import { getExtensionSettingsTarget, openExtensionSettings, setSettingsPage } from '../dialog/state.svelte'
+  import { setSettingsPage } from '../dialog/state.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
   import SettingRow from '../dialog/SettingRow.svelte'
   import {
-    extensionBunUnavailable,
     extensionMissing,
     extensionRuntimeAction,
     extensionStateText,
@@ -29,20 +26,19 @@
     item,
     project,
     host,
-    folderPath,
     hostLabel,
-    initialOutput = false
+    initialOutput = false,
+    onBack
   }: {
     state: ExtensionsState
     item: AxoExtension
     project: boolean
     host: string | null
-    folderPath: string | null
     hostLabel: string
     initialOutput?: boolean
+    onBack: () => void
   } = $props()
 
-  const scopeFolder = $derived(project && folderPath ? (splitRemotePath(folderPath)?.path ?? folderPath) : null)
   const catalog = $derived(controls.payload)
   const owner = $derived(project ? catalog?.project : catalog)
   const access = $derived(project ? (catalog?.project?.access ?? null) : null)
@@ -62,7 +58,7 @@
   const authored = $derived(item.origin === 'userFolder' || item.origin === 'projectFolder')
   const installed = $derived(item.origin === 'installed' && !extensionMissing(item))
   const disabled = $derived(controls.busy || controls.stale)
-  const bunUnavailable = $derived(catalog === null || extensionBunUnavailable(catalog))
+  const bunUnavailable = $derived(controls.bunUnavailable)
   const transitional = $derived(item.phase === 'installing' || item.phase === 'starting' || item.phase === 'restarting')
   const codeDisabled = $derived(disabled || bunUnavailable || !item.enabled || (project && access !== 'trust'))
   const adds = $derived(item.adds)
@@ -77,8 +73,12 @@
   let groupError = $state<string | null>(null)
   let groupEpoch = $state(0)
   let update = $state.raw<AxoExtension | null>(null)
-  let uninstall = $state.raw<AxoExtension | null>(null)
+  let confirmUninstall = $state(false)
   let uninstallError = $state<string | null>(null)
+  let active = true
+  onDestroy(() => {
+    active = false
+  })
 
   $effect(() => {
     if (showOutput && panel) panel.scrollIntoView({ block: 'nearest' })
@@ -86,7 +86,7 @@
 
   function installDependencies() {
     if (codeDisabled || transitional || !authored) return
-    void controls.run(() => backend.axo.installExtensionDependencies(item.id, scopeFolder, host))
+    void controls.installDependencies(item.id, project)
   }
 
   function chooseGroup(value: string) {
@@ -108,16 +108,13 @@
   }
 
   async function remove(deleteData: boolean) {
-    if (!uninstall || disabled) return
-    const id = uninstall.id
-    const owner = host
-    const destination = getExtensionSettingsTarget()
+    if (!confirmUninstall || disabled) return
+    const id = item.id
     uninstallError = null
-    if (await controls.run(() => backend.axo.uninstallExtension(id, deleteData, owner))) {
-      uninstall = null
-      if (destination === getExtensionSettingsTarget()) {
-        openExtensionSettings({ hostFolder: owner, projectFolder: null, id: null })
-      }
+    if (await controls.uninstall(id, deleteData)) {
+      if (!active) return
+      confirmUninstall = false
+      onBack()
     } else uninstallError = controls.error
   }
 
@@ -253,17 +250,9 @@
       label="Code changes"
       description="Picks up edits without restarting chats. Calls in progress are cut off."
     >
-      <Button
-        size="xs"
-        disabled={codeDisabled}
-        onclick={() => controls.run(() => backend.axo.reloadExtension(item.id, scopeFolder, host))}>Reload Code</Button
-      >
+      <Button size="xs" disabled={codeDisabled} onclick={() => controls.reload(item.id, project)}>Reload Code</Button>
       {#if runtime === 'retry'}
-        <Button
-          size="xs"
-          disabled={codeDisabled}
-          onclick={() => controls.run(() => backend.axo.retryExtension(item.id, scopeFolder, host))}>Retry</Button
-        >
+        <Button size="xs" disabled={codeDisabled} onclick={() => controls.retry(item.id, project)}>Retry</Button>
       {/if}
     </SettingRow>
   {/if}
@@ -342,9 +331,7 @@
           · installed {previousAge}{/if}
       {/snippet}
       <SettingRow as="div" label="Previous copy" description={previousLabel}>
-        <Button size="xs" {disabled} onclick={() => controls.run(() => backend.axo.rollbackExtension(item.id, host))}
-          >Roll Back</Button
-        >
+        <Button size="xs" {disabled} onclick={() => controls.rollback(item.id)}>Roll Back</Button>
       </SettingRow>
     {/if}
   </SettingsSection>
@@ -360,7 +347,7 @@
         {disabled}
         onclick={() => {
           uninstallError = null
-          uninstall = item
+          confirmUninstall = true
         }}>Uninstall…</Button
       >
     </SettingRow>
@@ -368,27 +355,16 @@
 {/if}
 
 {#if update}
-  <ExtensionInstallDialog
-    open
-    {host}
-    {hostLabel}
-    {update}
-    bunUnavailable={bunUnavailable || controls.stale}
-    busy={disabled}
-    actionError={controls.error}
-    run={controls.run}
-    onInstalled={controls.refresh}
-    onTurnOn={(id) => controls.setEnabled(id, false, true)}
-    onClose={() => (update = null)}
-  />
+  <ExtensionInstallDialog {host} {hostLabel} state={controls} {update} onClose={() => (update = null)} />
 {/if}
-{#if uninstall}
+{#if confirmUninstall}
   <ExtensionUninstallDialog
-    item={uninstall}
+    {item}
     {hostLabel}
     busy={controls.busy}
+    disabled={controls.stale}
     error={uninstallError}
     onUninstall={remove}
-    onClose={() => (uninstall = null)}
+    onClose={() => (confirmUninstall = false)}
   />
 {/if}

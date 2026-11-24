@@ -13,21 +13,14 @@ import {
 } from '@hugeicons/core-free-icons'
 import type { IconData } from '$lib/icons/Icon.svelte'
 import type { StatusTone } from '$lib/components/ui/status-dot'
+import { parseExtensionOrigin, type ExtensionOrigin } from '$lib/features/chat/extensions'
 import { formatCount, formatDuration } from '$lib/features/chat/format'
 import { contentLines } from '$lib/features/chat/lineDiff'
 import type { ToolStep } from '$lib/features/chat/turns'
 import { parseAskBlocks } from '../ask/askDocument'
 import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
-import {
-  blockedToolResult,
-  displayFilePath,
-  fileRecords,
-  parseExtensionOrigin,
-  record,
-  type ExtensionOrigin,
-  type ToolFileRecord
-} from './payload'
+import { blockedToolResult, displayFilePath, fileRecords, record, type ToolFileRecord } from './payload'
 import { searchOutput } from './searchOutput'
 import { browserHeaderSummary } from './browserOutput'
 import { parseSearchDocs, parseWebFetch, parseWebSearch, urlDisplay } from './webOutput'

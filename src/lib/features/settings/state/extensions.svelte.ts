@@ -9,7 +9,7 @@ import type {
   AxoProvidersPayload
 } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
-import { splitRemotePath } from '$lib/utils/paths'
+import { hostRoot, splitRemotePath } from '$lib/utils/paths'
 
 interface ExtensionCatalog {
   readonly payload: AxoExtensions | null
@@ -17,6 +17,7 @@ interface ExtensionCatalog {
   readonly error: string | null
   readonly busy: boolean
   readonly stale: boolean
+  readonly bunUnavailable: boolean
   readonly providers: AxoProvidersPayload | null
   readonly providerError: string | null
   refresh(): Promise<void>
@@ -34,6 +35,12 @@ export interface ExtensionsState extends ExtensionCatalog {
   setEnabled(id: string, project: boolean, enabled: boolean): Promise<boolean>
   move(id: string, project: boolean, direction: -1 | 1): Promise<boolean>
   setGroup(id: string, project: boolean, group: string | null): Promise<boolean>
+  retry(id: string, project: boolean): Promise<boolean>
+  reload(id: string, project: boolean): Promise<boolean>
+  installDependencies(id: string, project: boolean): Promise<boolean>
+  checkBun(): Promise<boolean>
+  rollback(id: string): Promise<boolean>
+  uninstall(id: string, deleteData: boolean): Promise<boolean>
   release(): void
 }
 
@@ -79,7 +86,7 @@ function createEntry(host: string | null, scopeFolder: string | null, server: st
           loading = true
           const [next, nextProviders] = await Promise.allSettled([
             backend.axo.extensions(scopeFolder, host),
-            backend.axo.providers(host, scopeFolder)
+            backend.axo.providers(scopeFolder, host)
           ])
           if (disposed) return
           if (next.status === 'fulfilled') {
@@ -119,6 +126,9 @@ function createEntry(host: string | null, scopeFolder: string | null, server: st
     get stale() {
       return loadError !== null
     },
+    get bunUnavailable() {
+      return payload === null || extensionBunUnavailable(payload)
+    },
     get providerError() {
       return providerError
     },
@@ -155,10 +165,11 @@ function createEntry(host: string | null, scopeFolder: string | null, server: st
 const entries = new Map<string, ExtensionEntry>()
 
 export function createExtensionsState(host: string | null, folderPath: string | null): ExtensionsState {
-  const server = host ? (splitRemotePath(host)?.server ?? null) : null
+  const owner = hostRoot(host)
+  const server = owner ? (splitRemotePath(owner)?.server ?? null) : null
   const scopeFolder = folderPath ? (splitRemotePath(folderPath)?.path ?? folderPath) : null
   const key = JSON.stringify([server, scopeFolder])
-  const entry = entries.get(key) ?? createEntry(host, scopeFolder, server)
+  const entry = entries.get(key) ?? createEntry(owner, scopeFolder, server)
   entries.set(key, entry)
   entry.refs++
   let released = false
@@ -170,9 +181,14 @@ export function createExtensionsState(host: string | null, folderPath: string | 
     if (!change(enabled)) return Promise.resolve(false)
     return entry.run(() =>
       project && scopeFolder
-        ? backend.axo.setProjectExtensionsEnabled(scopeFolder, enabled, host)
-        : backend.axo.setExtensionsEnabled(enabled, host)
+        ? backend.axo.setProjectExtensionsEnabled(scopeFolder, enabled, owner)
+        : backend.axo.setExtensionsEnabled(enabled, owner)
     )
+  }
+
+  function scopeAction(project: boolean, action: (scope: string | null) => Promise<void>): Promise<boolean> {
+    if (released || (project && !scopeFolder)) return Promise.resolve(false)
+    return entry.run(() => action(project ? scopeFolder : null))
   }
 
   return {
@@ -190,6 +206,9 @@ export function createExtensionsState(host: string | null, folderPath: string | 
     },
     get stale() {
       return entry.stale
+    },
+    get bunUnavailable() {
+      return entry.bunUnavailable
     },
     get providerError() {
       return entry.providerError
@@ -224,6 +243,24 @@ export function createExtensionsState(host: string | null, folderPath: string | 
         item.group = group
         return true
       })
+    },
+    retry(id, project) {
+      return scopeAction(project, (scope) => backend.axo.retryExtension(id, scope, owner))
+    },
+    reload(id, project) {
+      return scopeAction(project, (scope) => backend.axo.reloadExtension(id, scope, owner))
+    },
+    installDependencies(id, project) {
+      return scopeAction(project, (scope) => backend.axo.installExtensionDependencies(id, scope, owner))
+    },
+    checkBun() {
+      return released ? Promise.resolve(false) : entry.run(() => backend.axo.checkExtensionsBun(owner))
+    },
+    rollback(id) {
+      return released ? Promise.resolve(false) : entry.run(() => backend.axo.rollbackExtension(id, owner))
+    },
+    uninstall(id, deleteData) {
+      return released ? Promise.resolve(false) : entry.run(() => backend.axo.uninstallExtension(id, deleteData, owner))
     },
     release() {
       if (released) return
@@ -295,7 +332,7 @@ export function extensionAddsText(adds: AxoExtensionAdds): string {
   return descriptions.join(', ')
 }
 
-export function extensionBunUnavailable(payload: AxoExtensions): boolean {
+function extensionBunUnavailable(payload: AxoExtensions): boolean {
   const missingBun = (item: AxoExtension) => item.problem?.kind === 'bun'
   return payload.bun.path === null || payload.host.some(missingBun) || !!payload.project?.items.some(missingBun)
 }

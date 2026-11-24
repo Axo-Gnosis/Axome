@@ -5,10 +5,8 @@
   import { Separator } from '$lib/components/ui/separator'
   import * as Alert from '$lib/components/ui/alert'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
-  import { backend } from '$lib/api/backend'
   import { chatExtensionTarget, findExtension } from '$lib/features/chat/extensions'
   import { openExtensionSettings } from '$lib/features/settings/dialog/state.svelte'
-  import { splitRemotePath } from '$lib/utils/paths'
   import * as Message from '$lib/features/chat/elements/message'
   import { TIER_LABELS } from '$lib/features/chat/elements/model-picker/selector'
   import {
@@ -160,17 +158,8 @@
       !providerExtension?.enabled
     )
       return
-    const target = chatExtensionTarget(folderPath, origin)
-    const project = target.projectFolder
-    const scope = project && (splitRemotePath(project)?.path ?? project)
-    await state.run(async () => {
-      try {
-        await backend.axo.retryExtension(origin.id, scope, target.hostFolder)
-      } catch (error) {
-        notify.error('Retry failed', getErrorMessage(error))
-        throw error
-      }
-    })
+    const ok = await state.retry(origin.id, origin.scoped)
+    if (!ok && state.error) notify.error('Retry failed', state.error)
   }
   // Jobs this turn started that outlive a stopped turn.
   const stillRunning = $derived.by(() => {

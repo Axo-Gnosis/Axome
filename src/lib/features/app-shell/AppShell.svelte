@@ -133,21 +133,14 @@
           label: 'View Details',
           run: () => openExtensionSettings({ hostFolder, projectFolder: folder, id })
         }
-        let retrying = false
         const notification = notify.error(`${id} stopped`, problem.message, {
           actions: [
             viewDetails,
             {
               label: 'Retry',
               async run() {
-                if (retrying) return
-                retrying = true
-                try {
-                  await backend.axo.retryExtension(id, scopeFolder, hostFolder)
-                  notify.update(notification, { actions: [viewDetails] })
-                } finally {
-                  retrying = false
-                }
+                await backend.axo.retryExtension(id, scopeFolder, hostFolder)
+                notify.update(notification, { actions: [viewDetails] })
               }
             }
           ]

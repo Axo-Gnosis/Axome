@@ -74,7 +74,10 @@
   // Bulk expansion opens calls; only their More control reveals unabridged output.
   const view = $derived(overrides[call.id] ?? (expansion === 'collapsed' ? 'collapsed' : 'preview'))
   const showFields = $derived(
-    !['read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser'].includes(call.name)
+    !['bash', 'read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser'].includes(call.name)
+  )
+  const hasBody = $derived(
+    !header.blocked || header.command !== null || showFields || records.length > 0 || !!header.unfinished
   )
   const webSearch = $derived(!failed && call.name === 'web_search' ? parseWebSearch(call) : null)
   const webFetch = $derived(!failed && call.name === 'web_fetch' ? parseWebFetch(call) : null)
@@ -174,16 +177,19 @@
     mono={!header.known}
     {nested}
     viewId={call.id}
-    open={view !== 'collapsed'}
+    open={hasBody && view !== 'collapsed'}
     label={`${view === 'collapsed' ? 'Expand' : 'Collapse'} ${header.name} output`}
-    onToggle={toggle}
+    onToggle={hasBody ? toggle : undefined}
     {target}
     {aside}
   >
-    {#if call.name === 'bash' && !header.blocked}
+    {#if header.blocked}
+      {#if header.command}<div class="px-3 py-2"><BashCommand command={header.command} /></div>{/if}
+      {#if showFields}<ToolFields {call} />{/if}
+    {:else if call.name === 'bash'}
       <div class="px-3 py-2"><BashCommand command={header.command ?? ''} /></div>
       <BashOutput {call} {view} failed={header.tone === 'danger'} onExpand={expand} {folderPath} {sessionId} />
-    {:else if !header.blocked && (call.name === 'grep' || call.name === 'find')}
+    {:else if call.name === 'grep' || call.name === 'find'}
       <SearchOutput
         {call}
         {view}
@@ -201,7 +207,6 @@
     {:else if call.name === 'read' && !failed}
       <ReadOutput {call} {folderPath} {view} onExpand={expand} />
     {:else}
-      {#if header.blocked && header.command}<div class="px-3 py-2"><BashCommand command={header.command} /></div>{/if}
       {#if showFields}<ToolFields {call} />{/if}
       {#if call.output.length}
         <ToolOutput parts={call.output} {view} {failed} onExpand={expand} />

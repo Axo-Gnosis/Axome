@@ -175,6 +175,7 @@ async fn pump(
                     }
                     match frame {
                         Ok(ChatDown::Event { event }) => {
+                            let event = *event;
                             if matches!(&event, ChatEvent::Snapshot { .. }) {
                                 attempt = 0;
                             }

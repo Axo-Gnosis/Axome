@@ -5,14 +5,14 @@ its manifest's `history` field. Axome only reads harness stores; it never writes
 
 ```jsonc
 "history": { "builtin": "omp" }                                   // a scanner shipped with Axome
-"history": { "command": "./history", "args": [], "env": {} }      // a process your extension ships
+"history": { "command": "./history", "args": [], "env": {} }      // a process your integration ships
 ```
 
 `builtin` and `command` are exclusive. Builtins are `omp`, `claude`, `codex` and `antigravity`.
 
 ## History commands
 
-`command` resolves like other contribution commands: `./name` from the extension folder, a bare
+`command` resolves like other contribution commands: `./name` from the integration folder, a bare
 name from the launch `PATH`.
 
 ### When it runs

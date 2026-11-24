@@ -452,6 +452,13 @@ impl AxoService {
         deliver(&self.events, HostEvent::ModelsChanged);
     }
 
+    pub(super) async fn sync_models_after_credential_change(&self) {
+        if let Err(error) = self.reload_models().await {
+            tracing::warn!(%error, "Reloading models after credential change failed");
+        }
+        self.emit_models_changed();
+    }
+
     async fn axo(&self) -> Result<Arc<Axo>, ApiError> {
         Ok(self.engine().await?.axo.clone())
     }
@@ -1146,12 +1153,7 @@ impl AxoService {
             .create_session(options)
             .await
             .map_err(axo_error)?;
-        let tier = match service_tier {
-            ChatServiceTier::Standard => ServiceTier::Standard,
-            ChatServiceTier::Flex => ServiceTier::Flex,
-            ChatServiceTier::Fast => ServiceTier::Fast,
-            ChatServiceTier::Ultrafast => ServiceTier::Ultrafast,
-        };
+        let tier = convert::service_tier_from_wire(service_tier);
         session
             .run_command(axo::Command::Tier { tier })
             .await
@@ -1246,7 +1248,10 @@ impl AxoService {
                         return Ok(());
                     }
                     let sent = state.and_then(|state| {
-                        sink(ChatEvent::Snapshot { state }).map_err(ApiError::Internal)
+                        sink(ChatEvent::Snapshot {
+                            state: Box::new(state),
+                        })
+                        .map_err(ApiError::Internal)
                     });
                     if sent.is_err() {
                         if let Some(subs) = readonly.get_mut(id) {

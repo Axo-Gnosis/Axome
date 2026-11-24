@@ -11,7 +11,6 @@ use playwright_rs::protocol::{
 use tokio::sync::Mutex;
 
 use crate::discovery::resolve_executable;
-use crate::policy::BrowserPolicy;
 use crate::tab::TabState;
 use crate::tool::BrowserTool;
 
@@ -172,7 +171,6 @@ pub struct BrowserService {
     pool: Mutex<BrowserPool>,
     sessions: Mutex<HashMap<String, Arc<Mutex<SessionBrowser>>>>,
     tool_refs: parking_lot::Mutex<HashMap<String, usize>>,
-    policy: BrowserPolicy,
 }
 
 impl Default for BrowserService {
@@ -187,12 +185,7 @@ impl BrowserService {
             pool: Mutex::new(BrowserPool::new()),
             sessions: Mutex::new(HashMap::new()),
             tool_refs: parking_lot::Mutex::new(HashMap::new()),
-            policy: BrowserPolicy,
         }
-    }
-
-    pub fn policy(&self) -> &BrowserPolicy {
-        &self.policy
     }
 
     /// Builds the deferred `browser` `HostTool` for one `axo` session.

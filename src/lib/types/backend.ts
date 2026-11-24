@@ -734,7 +734,13 @@ export type ChatEvent =
   | { type: 'entry'; entry: ChatEntry }
   | { type: 'live'; live: ChatLive }
   | { type: 'sessionTools'; tools: ChatSessionTool[] }
-  | { type: 'extensionCatalog'; commands: ChatCommand[]; toolOrigins: Record<string, string>; diagnostics: string[] }
+  | {
+      type: 'extensionCatalog'
+      commands: ChatCommand[]
+      toolOrigins: Record<string, string>
+      diagnostics: string[]
+      toolbox: ChatToolbox
+    }
   | { type: 'delta'; delta: ChatDelta }
   | { type: 'jobOutput'; jobId: string; reset: boolean; output: ChatJobOutput }
   | { type: 'error'; message: string }
@@ -1968,16 +1974,13 @@ export type AxoExtensionSource = { type: 'folder'; path: string } | { type: 'git
 export interface AxoExtensionStage {
   stageId: string
   id: string
-  compatible: boolean
-  sdk: string | null
   adds: AxoExtensionAdds
   origin: string
   revision: string | null
   subject: string | null
-  installedOrigin: string | null
 }
 
 export type AxoInstallOutcome =
-  | { type: 'installed'; extension: AxoExtension }
+  | { type: 'installed'; id: string }
   | { type: 'originChanged'; installed: string; offered: string }
   | { type: 'failed'; title: string; output: string | null }

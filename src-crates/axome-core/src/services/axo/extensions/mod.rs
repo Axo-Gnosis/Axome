@@ -109,7 +109,7 @@ pub(super) struct ExtensionState {
     stages: HashMap<String, install::Stage>,
     failures: HashMap<(Option<PathBuf>, String), AxoExtensionFailure>,
     diagnostics: Vec<AxoExtensionDiagnostic>,
-    phases: HashMap<Option<PathBuf>, HashMap<String, ExtensionPhase>>,
+    host_phases: HashMap<String, ExtensionPhase>,
     host_watch: Option<WatchTask>,
 }
 
@@ -117,6 +117,7 @@ struct ScopeState {
     scope: ExtensionScope,
     active: bool,
     enabled: Vec<AxoEnabledExtension>,
+    phases: HashMap<String, ExtensionPhase>,
     watches: [WatchTask; 2],
 }
 
@@ -415,7 +416,9 @@ impl ExtensionService {
                         Ok((typed, list)) if state.enabled != list => {
                             self.manager.configure(&typed).await.map_err(bridge_error)?;
                             state.enabled = list;
-                            state.prune_phases(None);
+                            state
+                                .host_phases
+                                .retain(|id, _| state.enabled.iter().any(|entry| entry.id == *id));
                             self.invalidate();
                         }
                         Ok(_) => {}
@@ -458,7 +461,7 @@ impl ExtensionService {
                 slot.scope.configure(&[]).await.map_err(bridge_error)?;
                 slot.active = false;
                 slot.enabled.clear();
-                state.phases.remove(&Some(folder.clone()));
+                slot.phases.clear();
                 self.invalidate();
             } else if slot.enabled != enabled {
                 slot.scope
@@ -466,9 +469,8 @@ impl ExtensionService {
                     .await
                     .map_err(bridge_error)?;
                 slot.enabled = enabled.to_owned();
-                if let Some(phases) = state.phases.get_mut(&Some(folder.clone())) {
-                    phases.retain(|id, _| enabled.iter().any(|entry| entry.id == *id));
-                }
+                slot.phases
+                    .retain(|id, _| enabled.iter().any(|entry| entry.id == *id));
                 self.invalidate();
             }
         }
@@ -561,6 +563,7 @@ impl ExtensionService {
                 scope: scope.clone(),
                 active: true,
                 enabled: enabled.to_owned(),
+                phases: HashMap::new(),
                 watches,
             },
         );
@@ -577,7 +580,7 @@ impl ExtensionService {
             slot.scope.configure(&[]).await.map_err(bridge_error)?;
             slot.active = false;
             slot.enabled.clear();
-            state.phases.remove(&Some(folder.to_owned()));
+            slot.phases.clear();
             self.invalidate();
         }
         Ok(())
@@ -608,20 +611,22 @@ impl ExtensionService {
                     let ExtensionState {
                         scopes,
                         enabled,
-                        phases,
+                        host_phases,
                         ..
                     } = &mut *state;
-                    let scope = folder.as_ref().and_then(|folder| scopes.get(folder));
-                    let enabled = match scope {
-                        Some(slot) => &slot.enabled,
-                        None if folder.is_none() => enabled,
-                        None => continue,
+                    let (enabled, phases, scope) = match folder.as_ref() {
+                        Some(folder) => {
+                            let Some(slot) = scopes.get_mut(folder) else {
+                                continue;
+                            };
+                            (&slot.enabled, &mut slot.phases, Some(&slot.scope))
+                        }
+                        None => (&*enabled, host_phases, None),
                     };
                     let mut publish = |item: ExtensionStatus| {
                         if !enabled.iter().any(|entry| entry.id == item.id) {
                             return;
                         }
-                        let phases = phases.entry(folder.clone()).or_default();
                         let previous = match phases.get_mut(&item.id) {
                             Some(phase) => Some(std::mem::replace(phase, item.phase)),
                             None => {
@@ -654,7 +659,7 @@ impl ExtensionService {
                         publish(status);
                     } else {
                         let current =
-                            scope.map_or_else(|| ext.manager.status(), |slot| slot.scope.status());
+                            scope.map_or_else(|| ext.manager.status(), |scope| scope.status());
                         for status in current {
                             publish(status);
                         }
@@ -688,14 +693,6 @@ impl ExtensionService {
             discard(stage).await;
         }
         drop(self.runtime.lock().take());
-    }
-}
-
-impl ExtensionState {
-    fn prune_phases(&mut self, folder: Option<PathBuf>) {
-        if let Some(phases) = self.phases.get_mut(&folder) {
-            phases.retain(|id, _| self.enabled.iter().any(|entry| entry.id == *id));
-        }
     }
 }
 
@@ -1341,30 +1338,18 @@ impl AxoService {
         };
         let stage = install::inspect(&ext.staging, source).await?;
         let mut state = ext.mutation.lock().await;
-        let response = async {
+        let response = (|| -> Result<AxoExtensionStage, ApiError> {
             self.ensure_open()?;
             let id = &stage.package.id;
-            let installed_origin = ext
-                .manager
-                .installed()
-                .await
-                .map_err(install_error)?
-                .into_iter()
-                .find(|entry| entry.id == *id)
-                .map(|entry| entry.origin);
             Ok(AxoExtensionStage {
                 stage_id: stage.id().to_owned(),
                 id: id.clone(),
-                compatible: true,
-                sdk: stage.package.sdk.clone(),
                 adds: project_adds(&stage.package)?,
                 origin: stage.origin.clone(),
                 revision: stage.revision.as_ref().map(|git| git.commit.clone()),
                 subject: stage.revision.as_ref().map(|git| git.subject.clone()),
-                installed_origin,
             })
-        }
-        .await;
+        })();
         let response = match response {
             Ok(response) => response,
             Err(error) => {
@@ -1432,33 +1417,10 @@ impl AxoService {
             discard(stage).await;
         }
         let key = (None, id.clone());
-        let installed = ext.manager.installed().await;
         match result {
-            Ok(record) => {
+            Ok(_record) => {
                 state.failures.remove(&key);
-                let installed = match installed {
-                    Ok(records) => records,
-                    Err(error) => {
-                        tracing::warn!(%error, "extension installed but store could not be reread");
-                        vec![record]
-                    }
-                };
-                let (items, _) = ext
-                    .project_items(
-                        &state,
-                        Some(ExtensionOwner::Host(&ext.manager)),
-                        None,
-                        &state.enabled,
-                        installed,
-                    )
-                    .await?;
-                let extension = items
-                    .into_iter()
-                    .find(|item| item.id == id)
-                    .ok_or_else(|| {
-                        ApiError::Internal(format!("Installed extension {id} missing from store"))
-                    })?;
-                Ok(AxoInstallOutcome::Installed { extension })
+                Ok(AxoInstallOutcome::Installed { id })
             }
             Err(error) => {
                 let title = error.to_string();
@@ -1466,9 +1428,6 @@ impl AxoService {
                     InstallError::InstallFailed { output, .. } => Some(output),
                     _ => None,
                 };
-                if let Err(error) = installed {
-                    tracing::warn!(%error, "extension store could not be reread");
-                }
                 state.failures.insert(
                     key,
                     AxoExtensionFailure {
@@ -1482,7 +1441,12 @@ impl AxoService {
     }
 
     pub(crate) async fn extension_rollback(&self, id: String) -> Result<(), ApiError> {
-        self.change_installed(id, InstalledAction::Rollback).await
+        let engine = self.engine().await?;
+        let ext = &engine.extensions;
+        let mut state = ext.mutation.lock().await;
+        self.ensure_open()?;
+        let result = ext.manager.rollback(&id).await.map(|_| ());
+        finish_installed_change(ext, &mut state, id, result)
     }
 
     pub(crate) async fn extension_uninstall(
@@ -1491,56 +1455,26 @@ impl AxoService {
         delete_data: bool,
         disable: impl FnOnce(&str) -> Result<(), ApiError>,
     ) -> Result<(), ApiError> {
-        self.change_installed(
-            id,
-            InstalledAction::Uninstall {
-                delete_data,
-                disable: Box::new(disable),
-            },
-        )
-        .await
-    }
-
-    async fn change_installed(
-        &self,
-        id: String,
-        action: InstalledAction<'_>,
-    ) -> Result<(), ApiError> {
         let engine = self.engine().await?;
         let ext = &engine.extensions;
         let mut state = ext.mutation.lock().await;
         self.ensure_open()?;
-        let result = match action {
-            InstalledAction::Rollback => ext.manager.rollback(&id).await.map(|_| ()),
-            InstalledAction::Uninstall {
-                delete_data,
-                disable,
-            } => {
-                if !id.contains('/') {
-                    return Err(ApiError::InvalidArgument(
-                        "Expected an installed extension ID".into(),
-                    ));
-                }
-                validate_enabled(
-                    &[AxoEnabledExtension {
-                        id: id.clone(),
-                        group: None,
-                    }],
-                    false,
-                )?;
-                disable(&id)?;
-                ext.apply_settings(&mut state, &self.dirs).await?;
-                ext.manager.uninstall(&id, delete_data).await
-            }
-        };
-        if result.is_ok() {
-            state.failures.remove(&(None, id));
+        if !id.contains('/') {
+            return Err(ApiError::InvalidArgument(
+                "Expected an installed extension ID".into(),
+            ));
         }
-        if let Err(error) = ext.manager.installed().await {
-            tracing::warn!(%error, "extension store could not be reread");
-        }
-        ext.invalidate();
-        result.map_err(install_error)
+        validate_enabled(
+            &[AxoEnabledExtension {
+                id: id.clone(),
+                group: None,
+            }],
+            false,
+        )?;
+        disable(&id)?;
+        ext.apply_settings(&mut state, &self.dirs).await?;
+        let result = ext.manager.uninstall(&id, delete_data).await;
+        finish_installed_change(ext, &mut state, id, result)
     }
 
     pub(crate) async fn extensions_memory(
@@ -1596,12 +1530,17 @@ enum ExtensionAction {
     Dependencies,
 }
 
-enum InstalledAction<'a> {
-    Rollback,
-    Uninstall {
-        delete_data: bool,
-        disable: Box<dyn FnOnce(&str) -> Result<(), ApiError> + 'a>,
-    },
+fn finish_installed_change(
+    ext: &ExtensionService,
+    state: &mut ExtensionState,
+    id: String,
+    result: Result<(), InstallError>,
+) -> Result<(), ApiError> {
+    if result.is_ok() {
+        state.failures.remove(&(None, id));
+    }
+    ext.invalidate();
+    result.map_err(install_error)
 }
 
 fn check_project_provider(scope: &ExtensionScope, provider: &str) -> Result<(), ApiError> {

@@ -1037,7 +1037,7 @@ pub enum LspDown {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatDown {
-    Event { event: crate::chat::ChatEvent },
+    Event { event: Box<crate::chat::ChatEvent> },
     Closed { error: WireError },
 }
 
@@ -1494,16 +1494,19 @@ mod tests {
             to_value(from_value::<AxoInstallOutcome>(failed.clone()).unwrap()).unwrap(),
             failed
         );
-        let installed = json!({"type": "installed", "extension": {
-            "id": "lab/scratch", "origin": "installed", "enabled": false, "position": null,
-            "group": null, "phase": null, "problem": null, "dataDir": "/data/lab/scratch", "failure": null,
-            "adds": {"providers": [], "tools": [], "commands": [], "toolPolicy": [], "spawnHook": false},
-            "install": {"origin": "example.test/repo", "revision": "abcdef", "gitRef": "main",
-                "url": "https://example.test/repo", "installedAt": 7, "previous": null}
-        }});
+        let installed = json!({"type": "installed", "id": "lab/scratch"});
         assert_eq!(
             to_value(from_value::<AxoInstallOutcome>(installed.clone()).unwrap()).unwrap(),
             installed
+        );
+        let stage = json!({
+            "stageId": "stage-1", "id": "lab/scratch",
+            "adds": {"providers": [], "tools": [], "commands": [], "toolPolicy": [], "spawnHook": false},
+            "origin": "example.test/repo", "revision": "abcdef", "subject": "feat: initial"
+        });
+        assert_eq!(
+            to_value(from_value::<AxoExtensionStage>(stage.clone()).unwrap()).unwrap(),
+            stage
         );
     }
 }

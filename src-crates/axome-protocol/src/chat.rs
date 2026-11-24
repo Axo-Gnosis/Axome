@@ -899,14 +899,14 @@ pub enum ChatDelta {
 pub enum ChatEvent {
     /// First event of every attach, and again whenever the active branch changes non-linearly.
     Snapshot {
-        state: ChatState,
+        state: Box<ChatState>,
     },
     /// Appended to the active branch. An `Assistant` entry also ends `streaming`.
     Entry {
         entry: ChatEntry,
     },
     Live {
-        live: ChatLive,
+        live: Box<ChatLive>,
     },
     SessionTools {
         tools: Vec<ChatSessionTool>,
@@ -915,6 +915,7 @@ pub enum ChatEvent {
         commands: Vec<ChatCommand>,
         tool_origins: BTreeMap<String, String>,
         diagnostics: Vec<String>,
+        toolbox: ChatToolbox,
     },
     Delta {
         delta: ChatDelta,

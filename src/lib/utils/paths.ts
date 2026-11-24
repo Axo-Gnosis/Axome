@@ -12,6 +12,12 @@ export function splitRemotePath(value: string): RemotePath | null {
   return match ? { server: match[1], path: match[2] || '/' } : null
 }
 
+/** Canonical `axome://<server>/` host URI for a remote path, or `null` for local. */
+export function hostRoot(folderPath: string | null | undefined): string | null {
+  const server = folderPath ? splitRemotePath(folderPath)?.server : null
+  return server ? `axome://${server}/` : null
+}
+
 function normalizeLocalAbsolutePath(path: string): string {
   const cleaned = normalizeSlashes(path).replace(/\/+/g, '/')
   if (cleaned === '/') return cleaned

@@ -5,17 +5,23 @@ export const URL_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 
 // Browser-relative URLs point at Vite/Tauri chrome; use the project loader
 // except for explicitly absolute paths in local desktop chat.
+export interface ResolvedMarkdownImage {
+  url: string | null
+  local: boolean
+}
+
 export async function markdownImageSrc(
   href: string | null | undefined,
   folderPath?: string,
   markdownPath?: string | null,
   loadLocalImage?: (filePath: string) => Promise<string | null>
-): Promise<string | null> {
-  if (!href) return ''
-  const trimmed = href.trim()
-  if (!trimmed || trimmed.startsWith('//')) return trimmed
-  if (URL_SCHEME_RE.test(trimmed) && !/^file:/i.test(trimmed)) return trimmed
-  if (!folderPath) return null
+): Promise<ResolvedMarkdownImage> {
+  const trimmed = href?.trim()
+  if (!trimmed) return { url: null, local: true }
+  if (trimmed.startsWith('//') || (URL_SCHEME_RE.test(trimmed) && !/^file:/i.test(trimmed))) {
+    return { url: trimmed, local: false }
+  }
+  if (!folderPath) return { url: null, local: true }
   const assets = platform.assets
   const nativeAssets = 'url' in assets
   let homePath: string | undefined
@@ -25,14 +31,14 @@ export async function markdownImageSrc(
       const { backend } = await import('$lib/api/backend')
       homePath = await backend.folders.home()
     } catch {
-      return null
+      return { url: null, local: true }
     }
   }
 
   const localPath = resolveMarkdownImagePath(trimmed, folderPath, markdownPath, nativeAssets, homePath)
-  if (!localPath) return null
-  if (nativeAssets) return assets.url(localPath.startsWith('/') ? '/' : folderPath, localPath)
-  return loadLocalImage ? loadLocalImage(localPath) : null
+  if (!localPath) return { url: null, local: true }
+  if (nativeAssets) return { url: assets.url(localPath.startsWith('/') ? '/' : folderPath, localPath), local: true }
+  return { url: loadLocalImage ? await loadLocalImage(localPath) : null, local: true }
 }
 
 function allowsHostImagePaths(

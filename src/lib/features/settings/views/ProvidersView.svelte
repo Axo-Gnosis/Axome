@@ -6,53 +6,33 @@
   import { SearchInput } from '$lib/components/ui/input'
   import { Spinner } from '$lib/components/ui/progress'
   import { StatusDot } from '$lib/components/ui/status-dot'
-  import { getSettingsHost, getSettingsServer } from '../state/settings.svelte'
+  import { axoHostResource } from '../state/axo.svelte'
+  import { getSettingsHost } from '../state/settings.svelte'
   import { platform } from '$lib/platform'
   import type { AxoProvider, AxoProvidersPayload } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { onMount } from 'svelte'
   import ProviderCredentials, {
     credentialReminder,
     isConfigured,
     isReady,
+    providerStatus,
     sourceDetail,
     sourceLabel
   } from './ProviderCredentials.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
 
   const host = getSettingsHost()
-  let providers = $state<{ payload: AxoProvidersPayload | null; loading: boolean; error: string | null }>({
-    payload: null,
-    loading: false,
-    error: null
-  })
-  let refreshGeneration = 0
-  async function refresh() {
-    const generation = ++refreshGeneration
-    providers.loading = true
-    providers.error = null
-    try {
-      const payload = await backend.axo.providers(host)
-      if (generation === refreshGeneration) providers.payload = payload
-    } catch (cause) {
-      if (generation === refreshGeneration) providers.error = getErrorMessage(cause)
-    } finally {
-      if (generation === refreshGeneration) providers.loading = false
-    }
-  }
+  const providers = axoHostResource<AxoProvidersPayload | null>(
+    host,
+    null,
+    (target) => backend.axo.providers(null, target),
+    { loadingOnRefresh: true }
+  )
   let busy = $state(false)
   let error = $state<string | null>(null)
-  let credentialClaimed = $state<string | null>(null)
-  function claimCredentials(id: string) {
-    if (credentialClaimed !== null) return null
-    credentialClaimed = id
-    return () => {
-      credentialClaimed = null
-    }
-  }
   let query = $state('')
 
-  const all = $derived(providers.payload?.providers ?? [])
+  const all = $derived(providers.data?.providers ?? [])
   const configuredCount = $derived(all.filter(isConfigured).length)
   const readyModels = $derived(all.filter(isReady).reduce((sum, provider) => sum + provider.models, 0))
   const matches = $derived.by(() => {
@@ -64,27 +44,6 @@
   })
   const configured = $derived(matches.filter(isConfigured))
   const unconfigured = $derived(matches.filter((provider) => !isConfigured(provider)))
-
-  onMount(() => {
-    const server = getSettingsServer()
-    const changed = (event: { server: string | null }) => {
-      if (event.server === server) void refresh()
-    }
-    const subscriptions = [backend.axo.onModelsChanged(changed), backend.axo.onExtensionsChanged(changed)]
-    void Promise.allSettled(subscriptions).then(() => {
-      if (!disposed) void refresh()
-    })
-    let disposed = false
-    return () => {
-      disposed = true
-      refreshGeneration++
-      for (const subscription of subscriptions)
-        void subscription.then(
-          (stop) => stop(),
-          () => {}
-        )
-    }
-  })
 
   async function run(action: () => Promise<unknown>) {
     busy = true
@@ -103,7 +62,7 @@
   <div class="flex items-center justify-between gap-4">
     <p class="min-w-0 text-xs text-subtle">
       Built-in catalog plus custom providers from
-      <span class="font-mono break-all">{providers.payload?.modelsFile.path ?? 'models.jsonc'}</span>.
+      <span class="font-mono break-all">{providers.data?.modelsFile.path ?? 'models.jsonc'}</span>.
     </p>
     <div class="flex shrink-0 gap-2">
       {#if platform.native && host === null}
@@ -117,7 +76,7 @@
         onclick={() =>
           run(async () => {
             await backend.axo.refreshModels(host)
-            await refresh()
+            await providers.refresh()
           })}
       >
         {#if busy}<Spinner />{/if}
@@ -126,8 +85,8 @@
     </div>
   </div>
 
-  {#if providers.payload?.modelsFile.error}
-    <Alert.Root variant="danger">models.jsonc: {providers.payload.modelsFile.error}</Alert.Root>
+  {#if providers.data?.modelsFile.error}
+    <Alert.Root variant="danger">models.jsonc: {providers.data.modelsFile.error}</Alert.Root>
   {/if}
   {#if error || providers.error}
     <Alert.Root variant="danger">{error ?? providers.error}</Alert.Root>
@@ -139,75 +98,72 @@
     </div>
     <span class="flex shrink-0 items-center gap-2 text-xs text-muted">
       {#if providers.loading}<Spinner />{/if}
-      {#if providers.payload}{all.length} providers · {configuredCount} configured · {readyModels} models{/if}
+      {#if providers.data}{all.length} providers · {configuredCount} configured · {readyModels} models{/if}
     </span>
   </div>
 </div>
 
-{#snippet card(provider: AxoProvider)}
-  {@const live = isReady(provider)}
-  {@const detail = sourceDetail(provider)}
-  {@const label = sourceLabel(provider)}
-  <article class="flex flex-col gap-2.5 rounded-lg border border-edge bg-surface p-3">
-    <header class="flex items-center gap-2.5">
-      <span
-        aria-hidden="true"
-        class="grid size-8 shrink-0 place-items-center rounded-md border border-edge bg-raised font-mono text-md uppercase
-               {live ? 'text-accent' : 'text-subtle'}">{provider.id[0]}</span
-      >
-      <div class="flex min-w-0 flex-1 flex-col">
-        <span class="truncate text-md font-semibold text-bright" title={provider.id}>{provider.id}</span>
-        <span class="text-xs text-muted">{provider.models} {provider.models === 1 ? 'model' : 'models'}</span>
-      </div>
-      <StatusDot
-        tone={live ? 'success' : provider.status.kind === 'error' ? 'danger' : 'idle'}
-        label={live ? 'Configured' : provider.status.kind === 'error' ? 'Needs attention' : 'Not configured'}
-      />
-    </header>
-    {#if label}
-      <div><Badge>{label}</Badge></div>
-    {/if}
-    {#if provider.status.kind === 'error'}
-      <p class="text-xs text-danger">{provider.status.message}</p>
-    {/if}
-    {#if detail}
-      <p class="truncate font-mono text-xs text-subtle" title={detail}>{detail}</p>
-    {/if}
-    <div class="mt-auto flex flex-wrap gap-1.5 border-t border-edge pt-2.5">
-      <ProviderCredentials
-        {provider}
-        {host}
-        scopeFolder={null}
-        disabled={busy ||
-          (credentialClaimed !== null && credentialClaimed !== provider.id) ||
-          providers.loading ||
-          providers.error !== null}
-        claimCredentials={() => claimCredentials(provider.id)}
-        onChanged={() => void refresh()}
-      />
+<ProviderCredentials
+  {host}
+  scopeFolder={null}
+  disabled={busy || providers.loading || providers.error !== null}
+  onChanged={() => void providers.refresh()}
+>
+  {#snippet children(actions)}
+    {#snippet card(provider: AxoProvider)}
+      {@const live = isReady(provider)}
+      {@const status = providerStatus(provider)}
+      {@const detail = sourceDetail(provider)}
+      {@const label = sourceLabel(provider)}
+      <article class="flex flex-col gap-2.5 rounded-lg border border-edge bg-surface p-3">
+        <header class="flex items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            class="grid size-8 shrink-0 place-items-center rounded-md border border-edge bg-raised font-mono text-md uppercase
+                   {live ? 'text-accent' : 'text-subtle'}">{provider.id[0]}</span
+          >
+          <div class="flex min-w-0 flex-1 flex-col">
+            <span class="truncate text-md font-semibold text-bright" title={provider.id}>{provider.id}</span>
+            <span class="text-xs text-muted">{provider.models} {provider.models === 1 ? 'model' : 'models'}</span>
+          </div>
+          <StatusDot tone={status.tone} label={status.label} />
+        </header>
+        {#if label}
+          <div><Badge>{label}</Badge></div>
+        {/if}
+        {#if provider.status.kind === 'error'}
+          <p class="text-xs text-danger">{provider.status.message}</p>
+        {/if}
+        {#if detail}
+          <p class="truncate font-mono text-xs text-subtle" title={detail}>{detail}</p>
+        {/if}
+        <div class="mt-auto flex flex-wrap gap-1.5 border-t border-edge pt-2.5">
+          {@render actions(provider)}
+        </div>
+      </article>
+    {/snippet}
+
+    {#snippet group(label: string, list: AxoProvider[])}
+      {#if list.length}
+        <SettingsSection title={label} description={`${list.length} providers`}>
+          <div class="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
+            {#each list as provider (provider.id)}{@render card(provider)}{/each}
+          </div>
+        </SettingsSection>
+      {/if}
+    {/snippet}
+
+    <div>
+      {@render group('Configured', configured)}
+      {@render group('Not Configured', unconfigured)}
+      {#if providers.data && !matches.length}
+        <p class="py-6 text-center text-sm text-muted">No providers match “{query.trim()}”.</p>
+      {/if}
+      {#if providers.data}
+        <p class="pb-5 text-xs text-subtle">
+          {credentialReminder}
+        </p>
+      {/if}
     </div>
-  </article>
-{/snippet}
-
-{#snippet group(label: string, list: AxoProvider[])}
-  {#if list.length}
-    <SettingsSection title={label} description={`${list.length} providers`}>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3">
-        {#each list as provider (provider.id)}{@render card(provider)}{/each}
-      </div>
-    </SettingsSection>
-  {/if}
-{/snippet}
-
-<div>
-  {@render group('Configured', configured)}
-  {@render group('Not Configured', unconfigured)}
-  {#if providers.payload && !matches.length}
-    <p class="py-6 text-center text-sm text-muted">No providers match “{query.trim()}”.</p>
-  {/if}
-  {#if providers.payload}
-    <p class="pb-5 text-xs text-subtle">
-      {credentialReminder}
-    </p>
-  {/if}
-</div>
+  {/snippet}
+</ProviderCredentials>

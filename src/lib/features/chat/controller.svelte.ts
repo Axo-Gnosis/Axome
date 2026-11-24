@@ -23,9 +23,9 @@ import type {
   ChatState
 } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
-import { splitRemotePath } from '$lib/utils/paths'
+import { hostRoot } from '$lib/utils/paths'
 import { getOrCreate } from './registry'
-import { askKey, createAskDraft, parseAskBlocks, type AskDraft } from './elements/ask/askDocument'
+import { askKey, createAskDraft, validAskBlocks, type AskDraft } from './elements/ask/askDocument'
 import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
 import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent, prependQueuedParts } from './parts/parts'
 
@@ -73,6 +73,7 @@ export class ChatController {
   jobOutputs = $state<Record<string, ChatJobOutput>>({})
   askDrafts = $state<Record<string, AskDraft>>({})
   #extensions = $state.raw<ExtensionsState | null>(null)
+  readonly #extensionsFolder = $derived(this.state && !this.readOnly ? this.folderPath : null)
   #dismissedDiagnostics = $state.raw<string[]>([])
   #askSessionId: string | null = null
   /** Parts sent as the first message once the first attach succeeds; `newChat` sets it. */
@@ -121,8 +122,10 @@ export class ChatController {
     return this.#extensions
   }
 
-  holdExtensions(folderPath: string): () => void {
-    const state = createExtensionsState(splitRemotePath(folderPath) ? folderPath : null, folderPath)
+  holdExtensions(): (() => void) | undefined {
+    const folderPath = this.#extensionsFolder
+    if (!folderPath) return
+    const state = createExtensionsState(hostRoot(folderPath), folderPath)
     this.#extensions = state
     return () => {
       if (this.#extensions === state) this.#extensions = null
@@ -231,6 +234,7 @@ export class ChatController {
           this.state.commands = event.commands
           this.state.toolOrigins = event.toolOrigins
           this.state.extensionDiagnostics = event.diagnostics
+          this.state.toolbox = event.toolbox
           this.#reconcileExtensionDiagnostics()
         }
         break
@@ -329,12 +333,11 @@ export class ChatController {
     const pending = new Set<string>()
     for (const ask of this.state?.live.questions ?? []) {
       const key = askKey(ask.callId)
-      const blocks = parseAskBlocks(ask)
-      if (!blocks) continue
+      if (!validAskBlocks(ask.blocks)) continue
       pending.add(key)
       const draft = this.askDrafts[key]
-      if (!draft || JSON.stringify(draft.blocks) !== JSON.stringify(blocks))
-        this.askDrafts[key] = createAskDraft(blocks)
+      if (!draft || JSON.stringify(draft.blocks) !== JSON.stringify(ask.blocks))
+        this.askDrafts[key] = createAskDraft(ask.blocks)
     }
     for (const key of Object.keys(this.askDrafts)) {
       if (!pending.has(key)) delete this.askDrafts[key]

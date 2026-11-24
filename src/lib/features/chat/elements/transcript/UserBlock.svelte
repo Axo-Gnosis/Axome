@@ -3,6 +3,7 @@
   import { Chip } from '$lib/components/ui/chip'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
+  import { formatTime } from '$lib/features/chat/format'
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
   import { hasContent, invokedCommand, partsText } from '$lib/features/chat/parts/parts'
   import type { ChatCommand, ChatModel } from '$lib/types/backend'
@@ -47,14 +48,7 @@
   )
   const editing = $derived(controller.editing?.entryId === entry.id)
   const branchIndex = $derived(entry.body.siblings.indexOf(entry.id))
-  const time = $derived(
-    new Date(entry.timestamp).toLocaleTimeString([], {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    })
-  )
+  const time = $derived(formatTime(entry.timestamp))
 
   $effect(() => {
     if (editing) input?.focus()
@@ -135,7 +129,7 @@
     {:else if entry.body.from?.kind === 'extension'}
       <span class="text-muted">sent by <span class="font-mono">{entry.body.from.id}</span> ·</span>
     {/if}
-    <time datetime={entry.timestamp} class="font-mono tabular-nums">{time}</time>
+    {#if time}<time datetime={entry.timestamp} class="font-mono tabular-nums">{time}</time>{/if}
     {#if entry.body.siblings.length > 1}
       <div class="flex items-center gap-1 font-mono" aria-label="Message branches">
         <IconButton

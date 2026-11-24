@@ -104,9 +104,8 @@
   let host: HTMLDivElement
   let view: EditorView | undefined
   let lastParts: ChatPart[] = []
-  let validation = $state('')
-  let stoppedLink = $state.raw<ExtensionSettingsTarget | null>(null)
-  const alertMessage = $derived(validation || blocked)
+  let validation = $state.raw<{ message: string; link?: ExtensionSettingsTarget } | null>(null)
+  const alertMessage = $derived(validation?.message || blocked)
   // The argument a failed send flagged; cleared by the next edit.
   let invalid = $state<string | null>(null)
   let submitting = $state(false)
@@ -153,7 +152,12 @@
   let outside = $state.raw<{ typed: string; entries: FolderEntry[] } | null>(null)
   let outsideKey = ''
   const catalog = $derived(commands.filter(offeredCommand))
-  type Item = Suggestion & { command?: ChatCommand; path?: string; value?: string }
+  type Item = Suggestion & {
+    command?: ChatCommand
+    path?: string
+    value?: string
+    stoppedTarget?: ExtensionSettingsTarget | null
+  }
   const catalogRank: Record<ChatCommand['kind'], number> = { builtin: 0, registered: 1, mode: 2, skill: 3 }
   const catalogGroup: Record<ChatCommand['kind'], string> = {
     builtin: 'Commands',
@@ -219,14 +223,15 @@
         .filter((item) => item.name.startsWith(query!.text))
         .sort((a, b) => catalogRank[a.kind] - catalogRank[b.kind])
         .map((item) => {
-          const stopped = !!stoppedCommandTarget(extensions, owner.folderPath, item.origin)
+          const stoppedTarget = stoppedCommandTarget(extensions, owner.folderPath, item.origin)
           return {
             key: item.name,
             group: catalogGroup[item.kind],
             label: item.name,
             icon: catalogIcon[item.kind],
             origin: item.origin ?? undefined,
-            stopped,
+            stopped: !!stoppedTarget,
+            stoppedTarget,
             detail: item.description,
             fields:
               item.kind === 'builtin'
@@ -234,7 +239,7 @@
                 : item.argumentHint
                   ? [item.argumentHint]
                   : undefined,
-            blocked: !stopped && running && item.policy === 'when_idle' ? 'when idle' : undefined,
+            blocked: !stoppedTarget && running && item.policy === 'when_idle' ? 'when idle' : undefined,
             command: item
           }
         })
@@ -272,7 +277,7 @@
     view!.updateState(
       EditorState.create({ schema: promptSchema, doc: partsDocument(next), plugins: view!.state.plugins })
     )
-    validation = ''
+    validation = null
     invalid = null
     updateQuery()
   }
@@ -309,9 +314,9 @@
   }
   async function submit(followUp = false): Promise<void> {
     if (disabled || submitting) return
-    stoppedLink = null
-    const fail = (message: string, name: string | null, caret: number) => {
-      validation = message
+    validation = null
+    const fail = (message: string, name: string | null, caret: number, link?: ExtensionSettingsTarget) => {
+      validation = link ? { message, link } : { message }
       invalid = name
       view!.dispatch(view!.state.tr.setSelection(TextSelection.create(view!.state.doc, caret + 1)))
       view!.focus()
@@ -327,12 +332,16 @@
         focus()
       } else fail(error, null, end)
     }
+    const requirePlain = (name: string, currentParts: ChatPart[], end: number) =>
+      currentParts.some((part) => part.type !== 'text')
+        ? (fail(`/${name} can't take attachments.`, null, end), false)
+        : true
+    const requireIdle = (name: string, policy: ChatCommand['policy'], end: number) =>
+      running && policy === 'when_idle' ? (fail(`/${name} is available when idle.`, null, end), false) : true
     if (view && line) {
       const { command } = line
       const end = documentText(view.state.doc).length
-      if (getParts().some((part) => part.type !== 'text'))
-        return fail(`/${command.name} can't take attachments.`, null, end)
-      if (running && command.policy === 'when_idle') return fail(`/${command.name} is available when idle.`, null, end)
+      if (!requirePlain(command.name, getParts(), end) || !requireIdle(command.name, command.policy, end)) return
       if (line.extra) return fail(`/${command.name} doesn't take "${line.extra.text}".`, null, line.extra.to)
       const result = commandArguments(command, Object.fromEntries(line.args.map((arg) => [arg.name, arg.text])))
       if (result.invalid)
@@ -346,7 +355,7 @@
       return settle(() => run(command.name, result.args), end)
     } else if (view && mode && onMode) {
       const end = documentText(view.state.doc).length
-      if (running && mode.policy === 'when_idle') return fail(`/${mode.name} is available when idle.`, null, end)
+      if (!requireIdle(mode.name, mode.policy, end)) return
       // The rest of the message, chips included, is what the mode starts with.
       const [first, ...others] = getParts()
       const text = first?.type === 'text' ? first.text.slice(mode.name.length + 1).replace(/^\s+/, '') : ''
@@ -358,13 +367,9 @@
       const { name, policy } = registered
       const end = documentText(view.state.doc).length
       const target = stoppedCommandTarget(extensions, owner.folderPath, registered.origin)
-      if (target) {
-        stoppedLink = target
-        return fail(`/${name} is stopped. Retry in Settings.`, null, end)
-      }
+      if (target) return fail(`/${name} is stopped. Retry in Settings.`, null, end, target)
       const args = getParts()
-      if (args.some((part) => part.type !== 'text')) return fail(`/${name} can't take attachments.`, null, end)
-      if (running && policy === 'when_idle') return fail(`/${name} is available when idle.`, null, end)
+      if (!requirePlain(name, args, end) || !requireIdle(name, policy, end)) return
       const text = partsText(args)
         .slice(name.length + 1)
         .trim()
@@ -383,16 +388,13 @@
   function choose(index = active, descend = false) {
     const item = items[index]
     if (!item || !query || !view) return
-    if (item.command) {
-      const target = stoppedCommandTarget(extensions, owner.folderPath, item.command.origin)
-      if (target) {
-        query = null
-        openExtensionSettings(target)
-        return
-      }
+    if (item.stoppedTarget) {
+      query = null
+      openExtensionSettings(item.stoppedTarget)
+      return
     }
     if (item.blocked) {
-      validation = `/${item.label} is available when idle.`
+      validation = { message: `/${item.label} is available when idle.` }
       return
     }
     const { from, to } = query
@@ -701,8 +703,7 @@
       editable: () => !disabled,
       dispatchTransaction(transaction) {
         if (transaction.docChanged) {
-          validation = ''
-          stoppedLink = null
+          validation = null
           invalid = null
           staleKeywords()
         }
@@ -862,10 +863,9 @@
     <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-4 py-2 text-sm">
       {#if alertMessage}
         <span role="alert" class="truncate text-danger">{alertMessage}</span>
-        {#if stoppedLink}
-          <Button variant="text" size="xs" onclick={() => stoppedLink && openExtensionSettings(stoppedLink)}
-            >Open Extensions</Button
-          >
+        {#if validation?.link}
+          {@const link = validation.link}
+          <Button variant="text" size="xs" onclick={() => openExtensionSettings(link)}>Open Extensions</Button>
         {/if}
       {:else if context}
         <span class="shrink-0 font-medium text-bright">{context.title}</span>

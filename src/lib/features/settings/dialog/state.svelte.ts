@@ -2,13 +2,11 @@ import { untrack } from 'svelte'
 import type { Attachment } from 'svelte/attachments'
 import { getActiveFolderPath } from '$lib/features/workbench/state.svelte'
 import { invalidateSettingsLoad } from '../state/settings.svelte'
-import { splitRemotePath } from '$lib/utils/paths'
+import { hostRoot } from '$lib/utils/paths'
 
 let settingsOpen = $state(false)
 let settingsPage = $state('appearance')
 let openingFolder = $state<string | null>(null)
-let extensionTarget = $state.raw<ExtensionSettingsTarget | null>(null)
-let extensionContextFolder = $state<string | null>(null)
 
 export type ExtensionSettingsTarget = {
   hostFolder: string | null
@@ -16,27 +14,55 @@ export type ExtensionSettingsTarget = {
   id: string | null
 }
 
-export function getExtensionSettingsTarget(): ExtensionSettingsTarget | null {
-  return extensionTarget
+export type ExtensionDetailTarget = {
+  id: string
+  project: boolean
+}
+
+let extensionContext = $state.raw<{ host: string | null; projectFolder: string | null } | null>(null)
+let extensionDetail = $state.raw<ExtensionDetailTarget | null>(null)
+let scrollToProject = $state(false)
+
+export function getExtensionDetail(): ExtensionDetailTarget | null {
+  return extensionDetail
+}
+
+export function setExtensionDetail(detail: ExtensionDetailTarget | null): void {
+  extensionDetail = detail
+  scrollToProject = false
+}
+
+export function closeExtensionDetail(): void {
+  const wasProject = extensionDetail?.project ?? false
+  extensionDetail = null
+  scrollToProject = wasProject
+}
+
+export function isExtensionProjectScroll(): boolean {
+  return scrollToProject
+}
+
+export function clearExtensionProjectScroll(): void {
+  scrollToProject = false
 }
 
 export function getExtensionContextFolder(): string | null {
-  return extensionTarget ? extensionContextFolder : openingFolder
+  return extensionContext ? extensionContext.projectFolder : openingFolder
 }
 
 export function getSettingsLoadFolder(): string | null {
-  return extensionTarget ? extensionTarget.hostFolder : settingsOpen ? openingFolder : getActiveFolderPath()
+  return hostRoot(extensionContext ? extensionContext.host : settingsOpen ? openingFolder : getActiveFolderPath())
 }
 
 export function openExtensionSettings(target: ExtensionSettingsTarget): void {
   setSettingsOpen(true)
-  const host = target.hostFolder ? splitRemotePath(target.hostFolder)?.server : undefined
+  const host = hostRoot(target.hostFolder ?? target.projectFolder)
   const currentFolder = getExtensionContextFolder()
-  extensionContextFolder =
-    target.projectFolder ?? (currentFolder && splitRemotePath(currentFolder)?.server === host ? currentFolder : null)
-  const previous = getSettingsLoadFolder()
-  if (previous !== target.hostFolder && (host || (previous && splitRemotePath(previous)))) invalidateSettingsLoad()
-  extensionTarget = target
+  const projectFolder =
+    target.projectFolder ?? (currentFolder && hostRoot(currentFolder) === host ? currentFolder : null)
+  extensionContext = { host, projectFolder }
+  extensionDetail = target.id !== null ? { id: target.id, project: target.projectFolder !== null } : null
+  scrollToProject = target.id === null && target.projectFolder !== null
   settingsPage = 'extensions'
 }
 
@@ -45,15 +71,10 @@ export function getSettingsPage(): string {
 }
 
 export function setSettingsPage(page: string): void {
-  if (page !== 'extensions' && extensionTarget) {
-    if (
-      extensionTarget.hostFolder !== openingFolder &&
-      ((extensionTarget.hostFolder && splitRemotePath(extensionTarget.hostFolder)) ||
-        (openingFolder && splitRemotePath(openingFolder)))
-    )
-      invalidateSettingsLoad()
-    extensionTarget = null
-    extensionContextFolder = null
+  if (page !== 'extensions' && (extensionContext || extensionDetail)) {
+    extensionContext = null
+    extensionDetail = null
+    scrollToProject = false
   }
   settingsPage = page
 }
@@ -67,8 +88,9 @@ export function setSettingsOpen(open: boolean) {
   if (open) openingFolder = getActiveFolderPath()
   else {
     invalidateSettingsLoad()
-    extensionTarget = null
-    extensionContextFolder = null
+    extensionContext = null
+    extensionDetail = null
+    scrollToProject = false
     openingFolder = null
   }
   settingsOpen = open

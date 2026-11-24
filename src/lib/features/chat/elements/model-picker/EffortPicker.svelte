@@ -11,9 +11,11 @@
 -->
 
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   import { Button } from '$lib/components/ui/button'
   import { inputVariants } from '$lib/components/ui/input'
   import * as Popover from '$lib/components/ui/popover'
+  import { Radio } from '$lib/components/ui/radio'
   import { Slider } from '$lib/components/ui/slider'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import Icon from '$lib/icons/Icon.svelte'
@@ -29,6 +31,7 @@
     defaultLabel,
     variant = 'field',
     label = 'Reasoning effort',
+    shortcutHint,
     open = $bindable(false),
     disabled = false,
     side = 'bottom',
@@ -40,7 +43,7 @@
     serviceTiers,
     modelName,
     tierDefaultLabel,
-    savedSelector,
+    tierNote,
     onTierSelect,
     onSelect
   }: {
@@ -49,6 +52,7 @@
     defaultLabel?: string
     variant?: 'ghost' | 'field'
     label?: string
+    shortcutHint?: string
     open?: boolean
     disabled?: boolean
     side?: 'top' | 'bottom'
@@ -60,13 +64,12 @@
     serviceTiers?: Partial<Record<ChatServiceTier, number>>
     modelName?: string
     tierDefaultLabel?: string
-    savedSelector?: string
+    tierNote?: Snippet
     onTierSelect?: (tier: ChatServiceTier | null) => void
     onSelect: (level: ChatThinking | '') => void
   } = $props()
 
   const uid = $props.id()
-  const triggerLabel = $derived(onTierSelect ? 'Model options' : label)
   const stops: readonly (ChatThinking | '')[] = $derived([
     ...(defaultLabel ? ['' as const] : []),
     ...(levels.length ? levels : THINKING_LEVELS)
@@ -81,6 +84,7 @@
   const standardOnly = $derived(serviceTiers !== undefined && choices.length === 1)
   const remembered = $derived(tier && effectiveTier && tier !== effectiveTier ? tier : null)
   const shownTier = $derived(effectiveTier ?? tier)
+  const unoffered = $derived(serviceTiers !== undefined && !effectiveTier && !!tier && !choices.includes(tier))
 
   function setIndex(nextIndex: number) {
     if (disabled) return
@@ -89,9 +93,17 @@
     if (next !== value) onSelect(next)
   }
 
-  function selectTier(event: MouseEvent, next: ChatServiceTier | null) {
-    // Keep the checked state tied to the saved/live selection, not the click.
-    event.preventDefault()
+  function pickTier(event: Event, next: ChatServiceTier | null) {
+    // Keep the checked state tied to the saved/live selection, not the click or arrow key.
+    if (event.type === 'click') event.preventDefault()
+    else if (event.currentTarget instanceof HTMLInputElement) {
+      const root = event.currentTarget.closest('fieldset') ?? document
+      for (const input of root.querySelectorAll<HTMLInputElement>(
+        `input[type="radio"][name="${CSS.escape(event.currentTarget.name)}"]`
+      )) {
+        input.checked = input.value === (tier ?? '')
+      }
+    }
     if (!disabled && !tierDisabled && next !== tier) onTierSelect?.(next)
   }
 </script>
@@ -133,8 +145,8 @@
                 data-slot="effort-picker"
                 variant="ghost"
                 size="sm"
-                aria-label={triggerLabel}
-                aria-keyshortcuts={onTierSelect ? 'Shift+Tab' : undefined}
+                aria-label={label}
+                aria-keyshortcuts={shortcutHint}
                 {disabled}
                 class={cn('hover:bg-raised', className)}
               >
@@ -146,7 +158,7 @@
                 {...props}
                 type="button"
                 data-slot="effort-picker"
-                aria-label={triggerLabel}
+                aria-label={label}
                 {disabled}
                 class={cn(
                   inputVariants(),
@@ -165,8 +177,8 @@
     </Tooltip.Trigger>
     {#if variant === 'ghost'}
       <Tooltip.Content>
-        {triggerLabel}
-        {#if onTierSelect}<span class="block text-xs text-muted">Cycle reasoning effort (Shift+Tab)</span>{/if}
+        {label}
+        {#if shortcutHint}<span class="block text-xs text-muted">Cycle reasoning effort ({shortcutHint})</span>{/if}
       </Tooltip.Content>
     {/if}
   </Tooltip.Root>
@@ -226,20 +238,14 @@
         {#each choices as option (option)}
           {@render tierChoice(option, TIER_LABELS[option], option === 'standard' ? 1 : serviceTiers?.[option])}
         {/each}
-        {#if standardOnly && !remembered}
+        {#if standardOnly && !remembered && !unoffered}
           <p class="text-xs text-muted">Standard only on this model.</p>
         {/if}
-        {#if !effectiveTier && tier && !choices.includes(tier)}
+        {#if unoffered && tier}
           <p class="text-xs text-muted">{TIER_LABELS[tier]} is saved but isn't offered here.</p>
         {/if}
       </fieldset>
-      {#if tierDefaultLabel}
-        {#if savedSelector}<p class="text-xs break-all text-muted">
-            Saved as <span class="font-mono">{savedSelector}</span>
-          </p>{/if}
-      {:else}
-        <p class="text-xs text-muted">Applies from the next request. Also <span class="font-mono">/tier fast</span>.</p>
-      {/if}
+      {#if tierNote}{@render tierNote()}{/if}
     {/if}
   </Popover.Content>
 </Popover.Root>
@@ -249,13 +255,12 @@
     class="flex cursor-pointer items-center gap-2 rounded border border-edge bg-surface px-2 py-1.5 text-sm
     has-checked:border-accent/40 has-disabled:cursor-not-allowed has-disabled:opacity-50"
   >
-    <input
-      type="radio"
+    <Radio
       name={`${uid}-tier`}
       value={option ?? ''}
       checked={tier === option}
-      class="shrink-0 accent-accent focus-visible:shadow-focus-ring focus-visible:outline-none"
-      onclick={(event) => selectTier(event, option)}
+      onclick={(event) => pickTier(event, option)}
+      onchange={(event) => pickTier(event, option)}
     />
     <span class="text-fg">{title}</span>
     {#if option && option !== 'standard'}

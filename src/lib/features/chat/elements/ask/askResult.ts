@@ -2,7 +2,7 @@ import type { ChatAnswer, ChatAskBlock } from '$lib/types/backend'
 import { partsText } from '../../parts/parts'
 import type { ToolStep } from '../../turns'
 import { record } from '../tool/payload'
-import { askKey, parseAskBlocks, validateAskAnswers } from './askDocument'
+import { answerError, askKey, parseAskBlocks } from './askDocument'
 
 export type AskOutcome = 'answered' | 'timedOut' | 'dismissed' | 'cancelled' | 'steered' | 'failed' | 'unavailable'
 
@@ -62,8 +62,7 @@ export function parseAskResult(call: ToolStep): AskResult {
     if ((other !== undefined && typeof other !== 'string') || (note !== undefined && typeof note !== 'string'))
       return unavailable
     const answer: ChatAnswer = { id, value, other, note }
-    const validation = validateAskAnswers([{ ...question, optional: false }], [answer])
-    if (validation.error || validation.errors[askKey(id)]) return unavailable
+    if (answerError(question, answer, true)) return unavailable
 
     let text: string
     if (question.type === 'choice') {

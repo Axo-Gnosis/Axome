@@ -15,7 +15,7 @@ import type {
   WindowSettings
 } from '$lib/types/backend'
 
-import { splitRemotePath } from '$lib/utils/paths'
+import { hostRoot } from '$lib/utils/paths'
 
 let settings = $state<SettingsPayload | null>(null)
 /**
@@ -71,7 +71,7 @@ export async function loadSettings(folderPath: string | null = getSettingsLoadFo
   // A remote folder's daemon owns its host sections; anything else is this
   // desktop's. Both are read as that host's global layer, the one the setters
   // write.
-  const host = folderPath && splitRemotePath(folderPath) ? folderPath : null
+  const host = hostRoot(folderPath)
   if (inFlightLoad?.host === host) return inFlightLoad.promise
 
   // The newest request owns the store: a slow response for a host the user
@@ -193,10 +193,3 @@ export async function saveLspServerConfig(nextConfig: LspServerConfig, host: str
 export function getSettingsHost(): string | null {
   return settingsHost
 }
-
-/**
- * Server segment of the loaded settings host's `axome://<server>/…` URI, or
- * null when it is this desktop. Host-section editors caption it so the user
- * knows which machine the values they see — and write — belong to.
- */
-export const getSettingsServer = () => (settingsHost ? (splitRemotePath(settingsHost)?.server ?? null) : null)

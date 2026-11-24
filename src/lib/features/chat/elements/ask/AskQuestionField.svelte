@@ -12,8 +12,7 @@
     askDecimalPlaces,
     askNumberStep,
     askNumberValue,
-    buildAskAnswers,
-    askKey,
+    buildQuestionAnswer,
     type AskQuestion,
     type AskQuestionDraft
   } from './askDocument'
@@ -91,10 +90,8 @@
   const canAddNote = $derived(question.type !== 'text' && !draft.noteOpen)
   const canNote = $derived.by(() => {
     if (question.type === 'text') return false
-    const check = buildAskAnswers([{ ...question, optional: false }], {
-      [askKey(question.id)]: { ...draft, noteOpen: false }
-    })
-    return check.ready === 1
+    const { error: questionError, hasAnswer } = buildQuestionAnswer(question, { ...draft, noteOpen: false })
+    return !questionError && hasAnswer
   })
 
   function changed() {
@@ -185,6 +182,37 @@
   }
 </script>
 
+{#snippet choiceControl(
+  id: string,
+  checked: boolean,
+  described: string | undefined,
+  multi: boolean,
+  onPick: (checked: boolean) => void
+)}
+  {#if multi}
+    <Checkbox
+      {id}
+      {checked}
+      {disabled}
+      aria-labelledby={`${id}-label`}
+      aria-describedby={described}
+      aria-invalid={!!error}
+      onCheckedChange={onPick}
+      class="mt-0.5"
+    />
+  {:else}
+    <Radio
+      {id}
+      name={uid}
+      {checked}
+      aria-labelledby={`${id}-label`}
+      aria-describedby={described}
+      onchange={() => onPick(true)}
+      class="mt-0.5"
+    />
+  {/if}
+{/snippet}
+
 {#snippet optionText(id: string, label: string, description: string | null, selected: boolean)}
   <span class="flex min-w-0 flex-1 flex-col">
     <span id={`${id}-label`} class={cn('wrap-anywhere', selected ? 'text-bright' : 'text-fg')}>{label}</span>
@@ -228,28 +256,9 @@
             selected ? 'bg-accent-bg' : 'hover:bg-raised'
           )}
         >
-          {#if question.multi}
-            <Checkbox
-              {id}
-              checked={selected}
-              {disabled}
-              aria-labelledby={`${id}-label`}
-              aria-describedby={described}
-              aria-invalid={!!error}
-              onCheckedChange={(checked) => choose(option.value, checked, true)}
-              class="mt-0.5"
-            />
-          {:else}
-            <Radio
-              {id}
-              name={uid}
-              checked={selected}
-              aria-labelledby={`${id}-label`}
-              aria-describedby={described}
-              onchange={() => choose(option.value, true, false)}
-              class="mt-0.5"
-            />
-          {/if}
+          {@render choiceControl(id, selected, described, question.multi, (checked) =>
+            choose(option.value, checked, question.multi)
+          )}
           {@render optionText(id, option.label, option.description, selected)}
           {#if option.recommended}<Badge variant="accent" class="shrink-0">Recommended</Badge>{/if}
         </label>
@@ -260,28 +269,13 @@
           for={`${uid}-other`}
           class="flex min-w-0 cursor-pointer items-start gap-2.5 px-1.5 py-1.5"
         >
-          {#if question.multi}
-            <Checkbox
-              id={`${uid}-other`}
-              checked={draft.otherOpen}
-              {disabled}
-              aria-labelledby={`${uid}-other-label`}
-              aria-describedby={error ? errorId : undefined}
-              aria-invalid={!!error}
-              onCheckedChange={(checked) => void toggleOther(checked, true)}
-              class="mt-0.5"
-            />
-          {:else}
-            <Radio
-              id={`${uid}-other`}
-              name={uid}
-              checked={draft.otherOpen}
-              aria-labelledby={`${uid}-other-label`}
-              aria-describedby={error ? errorId : undefined}
-              onchange={() => void toggleOther(true, false)}
-              class="mt-0.5"
-            />
-          {/if}
+          {@render choiceControl(
+            `${uid}-other`,
+            draft.otherOpen,
+            error ? errorId : undefined,
+            question.multi,
+            (checked) => void toggleOther(checked, question.multi)
+          )}
           {@render optionText(
             `${uid}-other`,
             'Other',

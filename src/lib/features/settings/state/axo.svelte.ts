@@ -5,13 +5,19 @@ import { getErrorMessage } from '$lib/utils/client-error'
 import { splitRemotePath } from '$lib/utils/paths'
 import { saveHostSection } from './settings.svelte'
 
-/** Models a host offers, kept current while the calling component is mounted. */
-export function axoModels(host: string | null): { models: ChatModel[]; loading: boolean; error: string | null } {
-  const state = $state<{ models: ChatModel[]; loading: boolean; error: string | null }>({
-    models: [],
+/** Host-scoped axo data, loaded on mount and refreshed when models or extensions change. */
+export function axoHostResource<T>(
+  host: string | null,
+  initial: T,
+  load: (host: string | null) => Promise<T>,
+  options: { loadingOnRefresh?: boolean } = {}
+): { data: T; loading: boolean; error: string | null; refresh: () => Promise<void> } {
+  const state = $state<{ data: T; loading: boolean; error: string | null }>({
+    data: initial,
     loading: true,
     error: null
   })
+  let refreshCurrent: (() => Promise<void>) | null = null
   onMount(() => {
     const server = host === null ? null : (splitRemotePath(host)?.server ?? null)
     let disposed = false
@@ -20,10 +26,14 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
     async function refresh() {
       if (disposed) return
       const request = ++generation
+      if (options.loadingOnRefresh) {
+        state.loading = true
+        state.error = null
+      }
       try {
-        const models = await backend.axo.models(host)
+        const next = await load(host)
         if (request !== generation) return
-        state.models = models
+        state.data = next
         state.error = null
       } catch (error) {
         if (request === generation) state.error = getErrorMessage(error)
@@ -32,6 +42,7 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
       }
     }
 
+    refreshCurrent = refresh
     const changed = (event: { server: string | null }) => {
       if (event.server === server) void refresh()
     }
@@ -39,6 +50,7 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
     void Promise.allSettled(listeners).then(refresh)
     return () => {
       disposed = true
+      refreshCurrent = null
       generation++
       for (const listener of listeners)
         void listener.then(
@@ -47,7 +59,34 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
         )
     }
   })
-  return state
+  return {
+    get data() {
+      return state.data
+    },
+    get loading() {
+      return state.loading
+    },
+    get error() {
+      return state.error
+    },
+    refresh: () => refreshCurrent?.() ?? Promise.resolve()
+  }
+}
+
+/** Models a host offers, kept current while the calling component is mounted. */
+export function axoModels(host: string | null): { models: ChatModel[]; loading: boolean; error: string | null } {
+  const resource = axoHostResource(host, [] as ChatModel[], backend.axo.models)
+  return {
+    get models() {
+      return resource.data
+    },
+    get loading() {
+      return resource.loading
+    },
+    get error() {
+      return resource.error
+    }
+  }
 }
 
 export const BUILTIN_ROLES = ['default', 'reason', 'work', 'dash', 'conduct', 'memory'] as const

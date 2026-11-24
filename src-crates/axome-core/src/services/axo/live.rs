@@ -210,7 +210,7 @@ impl RelayState {
         let stats = convert::stats(
             &entries,
             &path,
-            model.context_window,
+            Self::selection_window(session, model),
             context,
             has_children.then_some(&snapshot.tree_usage),
         );
@@ -312,32 +312,46 @@ impl RelayState {
             .map_or(model.context_window, |cap| cap.min(model.context_window))
     }
 
-    fn refresh_selection(&mut self, session: &axo::Session) -> bool {
-        let model = session.model();
-        let thinking = convert::thinking_to_wire(session.thinking());
-        let tier = session.service_tier();
-        let effective = convert::service_tier_to_wire(model.effective_tier(tier));
+    fn apply_selection(
+        &mut self,
+        thinking: axo_ai::ThinkingLevel,
+        tier: axo_ai::ServiceTier,
+        effective: axo_ai::ServiceTier,
+        window: u64,
+        force_stats: bool,
+    ) -> bool {
+        let thinking = convert::thinking_to_wire(thinking);
+        let effective = convert::service_tier_to_wire(effective);
         let tier = convert::service_tier_to_wire(tier);
-        let model_changed = self.live.model.as_deref().and_then(|s| s.split_once('/'))
-            != Some((model.provider.as_str(), model.id.as_str()));
-        let window = Self::selection_window(session, &model);
         let window_changed = self.live.stats.context_window != window;
-        let changed = model_changed
-            || self.live.thinking != thinking
+        let changed = self.live.thinking != thinking
             || self.live.service_tier != tier
             || self.live.effective_service_tier != effective
             || window_changed;
-        if model_changed {
-            self.live.model = Some(format!("{}/{}", model.provider, model.id));
-        }
         self.live.thinking = thinking;
         self.live.service_tier = tier;
         self.live.effective_service_tier = effective;
-        if window_changed {
+        if self.context.is_some_and(|context| context.window != window) || window_changed {
             self.context = None;
+        }
+        if window_changed || force_stats {
             self.refresh_stats(window);
         }
         changed
+    }
+
+    fn refresh_selection(&mut self, session: &axo::Session) -> bool {
+        let model = session.model();
+        let thinking = session.thinking();
+        let tier = session.service_tier();
+        let model_changed = self.live.model.as_deref().and_then(|s| s.split_once('/'))
+            != Some((model.provider.as_str(), model.id.as_str()));
+        if model_changed {
+            self.live.model = Some(format!("{}/{}", model.provider, model.id));
+        }
+        let window = Self::selection_window(session, &model);
+        let effective = model.effective_tier(tier);
+        model_changed | self.apply_selection(thinking, tier, effective, window, false)
     }
 
     fn project_selection(&mut self, session: &axo::Session, models: &axo_ai::Models) {
@@ -364,21 +378,15 @@ impl RelayState {
         let effective = definition.map_or(axo_ai::ServiceTier::Standard, |model| {
             model.effective_tier(tier)
         });
-        if self.context.is_some_and(|context| context.window != window) {
-            self.context = None;
-        }
         self.live.model = model;
-        self.live.thinking = convert::thinking_to_wire(thinking);
-        self.live.service_tier = convert::service_tier_to_wire(tier);
-        self.live.effective_service_tier = convert::service_tier_to_wire(effective);
-        self.refresh_stats(window);
+        self.apply_selection(thinking, tier, effective, window, true);
     }
 
-    fn refresh_tools(&mut self, session: &axo::Session) {
-        self.refresh_catalog(session, None);
-    }
-
-    fn refresh_catalog(&mut self, session: &axo::Session, diagnostics: Option<Vec<String>>) {
+    fn refresh_catalog(
+        &mut self,
+        session: &axo::Session,
+        extension: Option<(Vec<String>, ChatToolbox)>,
+    ) {
         let tools = session.tools();
         let tool_origins = convert::tool_origins(&tools);
         let tools = convert::session_tools(tools);
@@ -391,21 +399,30 @@ impl RelayState {
             .into_iter()
             .map(convert::command)
             .collect::<Vec<_>>();
+        let (diagnostics, toolbox) = match extension {
+            Some((diagnostics, toolbox)) => (Some(diagnostics), Some(toolbox)),
+            None => (None, None),
+        };
         if commands != self.commands
             || tool_origins != self.tool_origins
             || diagnostics
                 .as_ref()
                 .is_some_and(|value| value != &self.extension_diagnostics)
+            || toolbox.as_ref().is_some_and(|value| value != &self.toolbox)
         {
             self.commands = commands;
             self.tool_origins = tool_origins;
             if let Some(diagnostics) = diagnostics {
                 self.extension_diagnostics = diagnostics;
             }
+            if let Some(toolbox) = toolbox {
+                self.toolbox = toolbox;
+            }
             self.broadcast(ChatEvent::ExtensionCatalog {
                 commands: self.commands.clone(),
                 tool_origins: self.tool_origins.clone(),
                 diagnostics: self.extension_diagnostics.clone(),
+                toolbox: self.toolbox.clone(),
             });
         }
     }
@@ -471,13 +488,13 @@ impl RelayState {
     }
 
     fn broadcast_snapshot(&mut self, id: &str) {
-        let state = self.snapshot(id);
+        let state = Box::new(self.snapshot(id));
         self.broadcast(ChatEvent::Snapshot { state });
     }
 
     fn broadcast_live(&mut self) {
         self.broadcast(ChatEvent::Live {
-            live: self.live.clone(),
+            live: Box::new(self.live.clone()),
         });
     }
 
@@ -660,7 +677,7 @@ impl RelayState {
                             .tools
                             .retain(|run| run.call_id != result.tool_call_id),
                         AgentMessage::Custom(custom) if custom.custom_type == "tool_catalog" => {
-                            self.refresh_tools(session);
+                            self.refresh_catalog(session, None);
                         }
                         AgentMessage::Llm(Message::User(_) | Message::System(_))
                         | AgentMessage::Custom(_) => {}
@@ -688,10 +705,10 @@ impl RelayState {
                     Entry::AgentChange { agent, .. } => {
                         // The journaled name, not `session.agent()`: axo swaps the spec after appending.
                         self.live.agent = agent.clone();
-                        self.refresh_tools(session);
+                        self.refresh_catalog(session, None);
                     }
                     Entry::CustomMessage { custom_type, .. } if custom_type == "tool_catalog" => {
-                        self.refresh_tools(session);
+                        self.refresh_catalog(session, None);
                     }
                     Entry::ModelChange { .. }
                     | Entry::SubmissionWithdrawn { .. }
@@ -904,7 +921,7 @@ impl RelayState {
             // Tool allowance follows the effective mode, which changes at a request boundary.
             SessionEvent::EffectiveMode { mode } => {
                 self.live.effective_mode = mode.clone();
-                self.refresh_tools(session);
+                self.refresh_catalog(session, None);
                 changed = true;
             }
             SessionEvent::QueueChanged => changed = true,
@@ -1113,12 +1130,9 @@ impl LiveSession {
 
     pub(super) fn refresh_extension_catalog(&self, diagnostics: Vec<String>) {
         let toolbox = convert::toolbox(&self.session, &self.folder);
-        let mut state = self.state.lock();
-        state.refresh_catalog(&self.session, Some(diagnostics));
-        if toolbox != state.toolbox {
-            state.toolbox = toolbox;
-            state.broadcast_snapshot(&self.id);
-        }
+        self.state
+            .lock()
+            .refresh_catalog(&self.session, Some((diagnostics, toolbox)));
     }
 
     pub(super) async fn release(&self) {
@@ -1173,7 +1187,7 @@ impl LiveSession {
     ) -> Result<(), ApiError> {
         let mut state = self.state.lock();
         sink(ChatEvent::Snapshot {
-            state: state.snapshot(&self.id),
+            state: Box::new(state.snapshot(&self.id)),
         })
         .map_err(ApiError::Internal)?;
         state.subscribers.retain(|(id, _)| id != &attach_id);

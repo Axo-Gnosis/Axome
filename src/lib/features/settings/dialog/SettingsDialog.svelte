@@ -40,7 +40,7 @@
   import { loadSettings } from '$lib/features/settings/state/settings.svelte'
   import { localHostLabel } from '$lib/features/browser/state.svelte'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { splitRemotePath } from '$lib/utils/paths'
+  import { hostRoot, splitRemotePath } from '$lib/utils/paths'
   import { platform } from '$lib/platform'
   import { onMount, untrack, type Component } from 'svelte'
 
@@ -61,12 +61,13 @@
   import ProjectAccessView from '$lib/features/settings/views/ProjectAccessView.svelte'
   import { getSaveStatus } from '../views/autoSaver.svelte'
   import {
+    closeExtensionDetail,
     getExtensionContextFolder,
-    getExtensionSettingsTarget,
+    getExtensionDetail,
     getPageSections,
     getSettingsLoadFolder,
     getSettingsPage,
-    openExtensionSettings,
+    isExtensionProjectScroll,
     setSettingsPage
   } from './state.svelte'
 
@@ -213,7 +214,7 @@
 
   const loadFolder = $derived(getSettingsLoadFolder())
   const server = $derived(loadFolder ? (splitRemotePath(loadFolder)?.server ?? null) : null)
-  const host = $derived(server === null ? null : loadFolder)
+  const host = $derived(hostRoot(loadFolder))
   const hostLabel = $derived(server ?? localHostLabel().toLowerCase())
   let languagePages = $derived(getSettingsPages(host))
   let groups = $derived<NavGroup[]>([
@@ -239,14 +240,8 @@
   let activeItem = $derived(items.find((item) => item.id === getSettingsPage()) ?? items[0])
 
   const hostSectionServer = $derived(activeItem.host ? server : null)
-  const extensionTarget = $derived(activeItem.id === 'extensions' ? getExtensionSettingsTarget() : null)
+  const extensionDetail = $derived(activeItem.id === 'extensions' ? getExtensionDetail() : null)
   const extensionFolder = $derived(getExtensionContextFolder())
-
-  function backToExtensions() {
-    if (!extensionTarget) return
-    openExtensionSettings({ ...extensionTarget, id: null })
-    viewport?.scrollTo({ top: 0 })
-  }
 
   // SECTIONS //
 
@@ -298,8 +293,11 @@
   })
 
   function openPage(id: string) {
-    if (id === 'extensions' && extensionTarget?.id !== null && extensionTarget) backToExtensions()
-    else setSettingsPage(id)
+    if (id === 'extensions' && extensionDetail) {
+      closeExtensionDetail()
+      return
+    }
+    setSettingsPage(id)
     viewport?.scrollTo({ top: 0 })
   }
 
@@ -348,8 +346,10 @@
   })
 
   $effect(() => {
-    void extensionTarget?.id
-    untrack(() => viewport?.scrollTo({ top: 0 }))
+    void extensionDetail?.id
+    untrack(() => {
+      if (extensionDetail || !isExtensionProjectScroll()) viewport?.scrollTo({ top: 0 })
+    })
   })
 
   // VERSION //
@@ -441,11 +441,11 @@
 
   <main class="flex min-w-0 flex-1 flex-col">
     <header class="flex h-12 shrink-0 items-center justify-between border-b border-edge px-5">
-      {#if extensionTarget?.id}
+      {#if extensionDetail}
         <div class="flex min-w-0 items-center gap-2 text-md">
-          <Button variant="text" size="sm" onclick={backToExtensions}>Extensions</Button>
+          <Button variant="text" size="sm" onclick={closeExtensionDetail}>Extensions</Button>
           <span aria-hidden="true" class="text-muted">/</span>
-          <h1 class="truncate font-mono text-bright">{extensionTarget.id}</h1>
+          <h1 class="truncate font-mono text-bright">{extensionDetail.id}</h1>
         </div>
       {:else}
         <h1 class="truncate text-md font-semibold text-bright">{activeItem.label}</h1>

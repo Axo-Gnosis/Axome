@@ -146,14 +146,14 @@
           }
         }
         for (const [index, image] of result.images.entries()) {
-          void image.url.then((url) => {
+          void image.then(({ url, local }) => {
             if (current !== generation) return
             const node = root.querySelector<HTMLImageElement>(`img[data-axome-image="${index}"]`)
             if (!node) return
             if (url === null) {
               replaceUnavailableImage(node)
             } else {
-              if (image.local) {
+              if (local) {
                 node.addEventListener(
                   'error',
                   () => {

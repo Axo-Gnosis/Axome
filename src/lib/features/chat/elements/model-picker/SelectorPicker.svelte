@@ -8,7 +8,7 @@
   import { cn } from '$lib/utils/cn'
   import EffortPicker from './EffortPicker.svelte'
   import ModelPicker from './ModelPicker.svelte'
-  import { joinSelector, modelForSelector, splitSelector, type SelectorParts } from './selector'
+  import { canonicalSelector, resolveSelector, type SelectorParts } from './selector'
 
   let {
     value,
@@ -30,29 +30,14 @@
     onSelect: (selector: string) => void
   } = $props()
 
-  const parts = $derived(splitSelector(value, models))
-  const model = $derived(modelForSelector(value, models, roles))
-
-  function matches(selector: string, wanted: SelectorParts): boolean {
-    const actual = splitSelector(selector, models)
-    return actual?.model === wanted.model && actual.effort === wanted.effort && actual.tier === wanted.tier
-  }
-
-  const savedSelector = $derived.by(() => {
-    if (!parts) return value
-    const canonical = joinSelector(parts.model, parts.effort, parts.tier)
-    return matches(canonical, parts) ? canonical : value
-  })
+  const resolved = $derived(resolveSelector(value, models, roles))
+  const parts = $derived(resolved?.parts ?? null)
+  const model = $derived(resolved?.model)
+  const savedSelector = $derived(parts ? (canonicalSelector(parts, models, value) ?? value) : value)
 
   function save(next: SelectorParts, original?: string) {
-    const canonical = joinSelector(next.model, next.effort, next.tier)
-    if (matches(canonical, next)) return onSelect(canonical)
-    if (original && matches(original, next)) return onSelect(original)
-    // Some model IDs are spelled like selectors. Never save options for a different model.
-    if (next.tier && next.effort) {
-      const reversed = `${next.model}:${next.tier}:${next.effort}`
-      if (matches(reversed, next)) return onSelect(reversed)
-    }
+    const target = canonicalSelector(next, models, original)
+    if (target !== null) return onSelect(target)
     notify.error('Model options not saved', 'Another model ID takes precedence over this selector.')
   }
 </script>
@@ -69,7 +54,7 @@
     {disabled}
     onSelect={(next) => {
       if (!next) return onSelect('')
-      const picked = splitSelector(next, models)
+      const picked = resolveSelector(next, models)?.parts
       if (picked)
         save(
           {
@@ -82,16 +67,24 @@
     }}
   />
   <EffortPicker
+    label="Model options"
     value={parts?.effort ?? ''}
     levels={model?.thinking}
     tier={parts?.tier}
     serviceTiers={model?.serviceTiers}
     modelName={model?.name}
     tierDefaultLabel="Chat's tier"
-    {savedSelector}
     defaultLabel="Default"
     disabled={disabled || !parts}
     onSelect={(level) => parts && save({ ...parts, effort: level || null })}
     onTierSelect={(tier) => parts && save({ ...parts, tier })}
-  />
+  >
+    {#snippet tierNote()}
+      {#if savedSelector}
+        <p class="text-xs break-all text-muted">
+          Saved as <span class="font-mono">{savedSelector}</span>
+        </p>
+      {/if}
+    {/snippet}
+  </EffortPicker>
 </div>

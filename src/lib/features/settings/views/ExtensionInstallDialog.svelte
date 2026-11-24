@@ -20,33 +20,24 @@
   import { getErrorMessage } from '$lib/utils/client-error'
   import { copyToClipboard } from '$lib/utils/clipboard'
   import { splitRemotePath } from '$lib/utils/paths'
-  import { extensionAddsText, shortRevision } from '../state/extensions.svelte'
+  import { extensionAddsText, shortRevision, type ExtensionsState } from '../state/extensions.svelte'
 
   let {
-    open,
     host,
     hostLabel,
+    state: controls,
     update,
-    bunUnavailable,
-    busy,
-    actionError,
-    onInstalled,
-    onTurnOn,
-    onClose,
-    run
+    onClose
   }: {
-    open: boolean
     host: string | null
     hostLabel: string
+    state: ExtensionsState
     update: AxoExtension | null
-    bunUnavailable: boolean
-    busy: boolean
-    actionError: string | null
-    onInstalled: (extension: AxoExtension) => Promise<void>
-    onTurnOn: (id: string) => Promise<boolean>
     onClose: () => void
-    run: (action: () => Promise<void>) => Promise<boolean>
   } = $props()
+
+  const disabled = $derived(controls.busy || controls.stale)
+  const bunUnavailable = $derived(controls.bunUnavailable || controls.stale)
 
   let tab = $state<'folder' | 'git'>('folder')
   let folder = $state('')
@@ -122,7 +113,6 @@
   }
 
   $effect(() => {
-    if (!open) return
     const copy = update?.install
     void host
     untrack(() => {
@@ -159,7 +149,7 @@
   }
 
   async function commit(replaceOrigin: boolean) {
-    if (!stage?.value.compatible || bunUnavailable || busy || committing) return
+    if (!stage || bunUnavailable || disabled || committing) return
     const { value, host: owner } = stage
     const current = generation
     const updating = update !== null
@@ -168,7 +158,7 @@
     error = null
     const result: { outcome?: AxoInstallOutcome; error?: string } = {}
     try {
-      const ok = await run(async () => {
+      const ok = await controls.run(async () => {
         try {
           result.outcome = await backend.axo.installExtension(value.stageId, replaceOrigin, owner)
         } catch (cause) {
@@ -199,21 +189,21 @@
         failure = { title: outcome.title, output: outcome.output }
         return
       }
-      await onInstalled(outcome.extension)
       if (current === generation) {
         if (updating) onClose()
-        else installed = outcome.extension.id
+        else installed = outcome.id
       }
     } finally {
       committing = false
     }
   }
 
-  async function turnOn(id: string) {
-    if (busy || committing) return
+  async function turnOn() {
+    const id = installed
+    if (!id || disabled || committing) return
     committing = true
     try {
-      if (await onTurnOn(id)) onClose()
+      if (await controls.setEnabled(id, false, true)) onClose()
     } finally {
       committing = false
     }
@@ -221,7 +211,7 @@
 </script>
 
 <Dialog.Root
-  {open}
+  open
   onOpenChange={(value) => {
     if (!value) close()
   }}
@@ -249,12 +239,10 @@
     </Dialog.Header>
 
     {#if installed}
-      {#if actionError}<p role="alert" class="text-sm text-danger-bright">{actionError}</p>{/if}
+      {#if controls.error}<p role="alert" class="text-sm text-danger-bright">{controls.error}</p>{/if}
       <Dialog.Footer>
         <Button size="sm" disabled={committing} onclick={close}>Not Now</Button>
-        <Button size="sm" variant="accent" disabled={busy || committing} onclick={() => installed && turnOn(installed)}
-          >Turn On</Button
-        >
+        <Button size="sm" variant="accent" disabled={disabled || committing} onclick={turnOn}>Turn On</Button>
       </Dialog.Footer>
     {:else if replacement}
       <div class="flex flex-col gap-2 text-sm text-muted">
@@ -264,7 +252,12 @@
       </div>
       <Dialog.Footer>
         <Button size="sm" disabled={committing} onclick={close}>Cancel</Button>
-        <Button size="sm" variant="accent" disabled={committing || busy || bunUnavailable} onclick={() => commit(true)}>
+        <Button
+          size="sm"
+          variant="accent"
+          disabled={committing || disabled || bunUnavailable}
+          onclick={() => commit(true)}
+        >
           Update from New Source
         </Button>
       </Dialog.Footer>
@@ -357,8 +350,6 @@
         <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-edge pt-3 text-sm">
           <dt class="text-muted">Package</dt>
           <dd class="font-mono">{value.id}</dd>
-          <dt class="text-muted">SDK</dt>
-          <dd>{value.compatible ? 'Compatible' : `Incompatible SDK · Declared SDK: ${value.sdk ?? 'not declared'}`}</dd>
           {#if value.revision}
             <dt class="text-muted">Commit</dt>
             <dd>
@@ -383,7 +374,7 @@
         <Button
           size="sm"
           variant="accent"
-          disabled={committing || browsing || busy || bunUnavailable || !stage?.value.compatible}
+          disabled={committing || browsing || disabled || bunUnavailable || !stage}
           onclick={() => commit(false)}>{update ? 'Update' : 'Install'}</Button
         >
       </Dialog.Footer>

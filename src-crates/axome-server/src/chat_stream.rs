@@ -55,7 +55,14 @@ pub(crate) async fn run(
         };
         let Some(event) = event else { break };
         let closed = matches!(&event, ChatEvent::Closed { .. });
-        if send.write_json(&ChatDown::Event { event }).await.is_err() || closed {
+        if send
+            .write_json(&ChatDown::Event {
+                event: Box::new(event),
+            })
+            .await
+            .is_err()
+            || closed
+        {
             break;
         }
     }

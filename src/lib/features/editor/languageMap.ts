@@ -225,8 +225,8 @@ function getExtension(filePath: string): string {
 export function filePathToLanguage(folderPath: string | null, filePath: string): string {
   const fileName = basename(filePath)
   const baseName = fileName.split('.').slice(0, -1).join('.') || fileName
-  const extensionLanguage = getLanguageForFilePath(folderPath, filePath)
-  if (extensionLanguage) return extensionLanguage
+  const integrationLanguage = getLanguageForFilePath(folderPath, filePath)
+  if (integrationLanguage) return integrationLanguage
 
   if (FILENAME_TO_LANG[fileName]) return FILENAME_TO_LANG[fileName]
   if (FILENAME_TO_LANG[baseName]) return FILENAME_TO_LANG[baseName]

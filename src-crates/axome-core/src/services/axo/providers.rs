@@ -96,8 +96,8 @@ impl AxoService {
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         drop(state);
-        self.emit_models_changed();
-        self.reload_models().await
+        self.sync_models_after_credential_change().await;
+        Ok(())
     }
 
     pub(crate) async fn provider_remove(
@@ -122,7 +122,7 @@ impl AxoService {
             Err(error) => return Err(ApiError::Internal(error.to_string())),
         };
         drop(state);
-        self.emit_models_changed();
+        self.sync_models_after_credential_change().await;
         Ok(warning)
     }
 }

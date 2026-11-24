@@ -2,7 +2,22 @@ import type { ExtensionSettingsTarget } from '$lib/features/settings/dialog/stat
 import type { ExtensionsState } from '$lib/features/settings/state/extensions.svelte'
 import type { AxoExtensions } from '$lib/types/backend'
 import { splitRemotePath } from '$lib/utils/paths'
-import { parseExtensionOrigin, type ExtensionOrigin } from './elements/tool/payload'
+
+export type ExtensionOrigin = { id: string; scoped: boolean }
+
+/** Mirrors axo_extensions::ExtensionOrigin::parse; the scope key isn't display data. */
+export function parseExtensionOrigin(label: string | null): ExtensionOrigin | null {
+  const prefix = 'extension '
+  if (!label?.startsWith(prefix)) return null
+  const rest = label.slice(prefix.length)
+  const delimiter = ' (scope '
+  const split = rest.indexOf(delimiter)
+  const id = split === -1 ? rest : rest.slice(0, split)
+  if (!id || id.includes(' ')) return null
+  if (split === -1) return { id, scoped: false }
+  const key = rest.slice(split + delimiter.length, -1)
+  return rest.endsWith(')') && key && !key.includes(' ') ? { id, scoped: true } : null
+}
 
 export function chatExtensionTarget(folderPath: string, origin: ExtensionOrigin | null): ExtensionSettingsTarget {
   return {

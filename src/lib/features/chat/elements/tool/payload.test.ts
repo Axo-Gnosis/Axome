@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { blockedCall, editDiff, fileRecords, parseExtensionOrigin } from './payload'
+import { parseExtensionOrigin } from '../../extensions'
+import { blockedCall, editDiff, fileRecords } from './payload'
 
 test('blocked markers distinguish anonymous blocks from malformed or absent details', () => {
   for (const origin of ['extension lab/gate', 'extension gate (scope abc123)', 'host policy']) {

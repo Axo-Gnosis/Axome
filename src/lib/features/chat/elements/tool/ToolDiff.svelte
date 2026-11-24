@@ -46,7 +46,6 @@
           <DisclosureChevron open={false} size={12} class="text-muted group-open/file:rotate-90" />
           <FileIcon filename={path} size={12} />
           <span class="min-w-0 flex-1 truncate" title={path}>{label}{line ? `:${line}` : ''}</span>
-          {#if call.result?.isError}<span class="shrink-0 text-warning">unfinished call</span>{/if}
           {#if diff}<NetLineChange added={diff.additions} removed={diff.deletions} split />{/if}
         </summary>
         <div class="min-w-0 border-t border-edge px-3 py-2">

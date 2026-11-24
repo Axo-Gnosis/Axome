@@ -35,13 +35,7 @@ impl Host {
             HarnessSettingsEntry { harness, config }
         })
         .collect();
-        let mut lsp = resolved.settings.lsp;
-        let integrations = IntegrationService::current();
-        for server in &integrations.lsp_servers {
-            lsp.servers
-                .entry(server.server_definition_id.clone())
-                .or_default();
-        }
+        let lsp = resolved.settings.lsp;
 
         Ok(SettingsPayload {
             axo: resolved.settings.axo,

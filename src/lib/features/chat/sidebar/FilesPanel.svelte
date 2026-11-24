@@ -19,13 +19,13 @@
 
   let {
     state: chat,
-    folderPath,
     owner
   }: {
     state: ChatState | null
-    folderPath: string
     owner: { folderPath: string; sessionId: string | null }
   } = $props()
+
+  const folderPath = $derived(owner.folderPath)
 
   const sessionId = $derived(chat?.sessionId)
   const running = $derived(chat?.live.running ?? false)

@@ -121,10 +121,10 @@ export function parseAskBlocks(arguments_: unknown): ChatAskBlock[] | null {
         return null
     }
   }
-  return validDocument(blocks) ? blocks : null
+  return validAskBlocks(blocks) ? blocks : null
 }
 
-function validDocument(blocks: ChatAskBlock[]): boolean {
+export function validAskBlocks(blocks: ChatAskBlock[]): boolean {
   const ids = new Set<string>()
   for (const block of blocks) {
     if (block.type === 'markdown') continue
@@ -136,7 +136,6 @@ function validDocument(blocks: ChatAskBlock[]): boolean {
       if (!block.multi && block.options.filter((option) => option.recommended).length > 1) return false
     } else if (block.type === 'number') {
       const { min, max, integer, default: suggested } = block
-      if (![min, max, suggested].every(nullableNumber)) return false
       if (min !== null && max !== null && (min > max || (integer && Math.ceil(min) > Math.floor(max)))) return false
       if (suggested !== null && numberError(block, suggested)) return false
     }
@@ -180,14 +179,18 @@ function numberError(question: Extract<AskQuestion, { type: 'number' }>, value: 
 }
 
 // Keep resolve_one's ordering: normalize empty fields, check omission, then check their types.
-function answerError(question: AskQuestion, answer?: ChatAnswer): string | null {
+export function answerError(
+  question: AskQuestion,
+  answer?: ChatAnswer,
+  requireAnswer = !question.optional
+): string | null {
   let value = answer?.value
   if ((typeof value === 'string' && blank(value)) || (Array.isArray(value) && !value.length)) value = undefined
   const other = answer?.other !== undefined && !blank(answer.other)
   const note = answer?.note !== undefined && !blank(answer.note)
   if (value === undefined && !other) {
     if (note) return 'A note needs an answer.'
-    if (question.optional) return null
+    if (!requireAnswer) return null
     return question.type === 'choice'
       ? 'Pick an option or type your own answer.'
       : question.type === 'text'
@@ -217,34 +220,6 @@ function answerError(question: AskQuestion, answer?: ChatAnswer): string | null 
   }
 }
 
-export function validateAskAnswers(
-  blocks: ChatAskBlock[],
-  answers: ChatAnswer[]
-): { errors: Record<string, string>; error: string | null } {
-  const errors: Record<string, string> = {}
-  if (!validDocument(blocks)) return { errors, error: UNAVAILABLE }
-  const byId = new Map<string, ChatAnswer>()
-  for (const answer of answers) {
-    if (byId.has(answer.id)) {
-      const reason = 'answered twice'
-      if (blocks.some((block) => block.type !== 'markdown' && block.id === answer.id)) {
-        errors[askKey(answer.id)] = reason
-        return { errors, error: null }
-      }
-      return { errors, error: `question \`${answer.id}\`: ${reason}` }
-    }
-    byId.set(answer.id, answer)
-  }
-  for (const block of blocks) {
-    if (block.type === 'markdown') continue
-    const reason = answerError(block, byId.get(block.id))
-    if (reason) errors[askKey(block.id)] = reason
-    byId.delete(block.id)
-  }
-  const unknown = Object.keys(errors).length ? undefined : [...byId.keys()].sort()[0]
-  return { errors, error: unknown === undefined ? null : `no question \`${unknown}\`` }
-}
-
 export function askNumberValue(text: string): number | null {
   const literal = text.trim()
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(literal)) return null
@@ -252,36 +227,49 @@ export function askNumberValue(text: string): number | null {
   return finite(value) ? value : null
 }
 
-export function buildAskAnswers(blocks: ChatAskBlock[], questions: Record<string, AskQuestionDraft>): AskValidation {
-  const answers: ChatAnswer[] = []
-  const unfinished: Record<string, string> = {}
-  for (const block of blocks) {
-    if (block.type === 'markdown') continue
-    const key = askKey(block.id)
-    const draft = questions[key]
-    const answer: ChatAnswer = { id: block.id }
-    answers.push(answer)
-    if (!draft || draft.skipped) continue
-    if (block.type === 'choice') {
-      if (draft.selected.length) answer.value = block.multi ? [...draft.selected] : draft.selected[0]
+export function buildQuestionAnswer(
+  question: AskQuestion,
+  draft?: AskQuestionDraft
+): { answer: ChatAnswer; error: string | null; hasAnswer: boolean } {
+  const answer: ChatAnswer = { id: question.id }
+  let unfinished: string | null = null
+  if (draft && !draft.skipped) {
+    if (question.type === 'choice') {
+      if (draft.selected.length) answer.value = question.multi ? [...draft.selected] : draft.selected[0]
       if (draft.otherOpen) {
-        if (blank(draft.other)) unfinished[key] = 'Type your answer, or pick one of the options.'
+        if (blank(draft.other)) unfinished = 'Type your answer, or pick one of the options.'
         else answer.other = draft.other
       }
     } else if (!blank(draft.text)) {
-      if (block.type === 'text') answer.value = draft.text
+      if (question.type === 'text') answer.value = draft.text
       else {
         const value = askNumberValue(draft.text)
-        if (value === null) unfinished[key] = 'Enter a number.'
+        if (value === null) unfinished = 'Enter a number.'
         else answer.value = value
       }
     }
     if (draft.noteOpen && !blank(draft.note)) answer.note = draft.note
   }
-  const { errors, error } = validateAskAnswers(blocks, answers)
-  Object.assign(errors, unfinished)
+  const error = unfinished ?? answerError(question, answer)
+  const hasAnswer = answer.value !== undefined || answer.other !== undefined
+  return { answer, error, hasAnswer }
+}
+
+export function buildAskAnswers(blocks: ChatAskBlock[], questions: Record<string, AskQuestionDraft>): AskValidation {
+  if (!validAskBlocks(blocks)) {
+    return { answers: [], errors: {}, error: UNAVAILABLE, total: 0, ready: 0 }
+  }
+  const answers: ChatAnswer[] = []
+  const errors: Record<string, string> = {}
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    const key = askKey(block.id)
+    const { answer, error } = buildQuestionAnswer(block, questions[key])
+    answers.push(answer)
+    if (error) errors[key] = error
+  }
   const total = answers.length
-  return { answers, errors, error, total, ready: error ? 0 : total - Object.keys(errors).length }
+  return { answers, errors, error: null, total, ready: total - Object.keys(errors).length }
 }
 
 export function askDecimalPlaces(value: number): number {

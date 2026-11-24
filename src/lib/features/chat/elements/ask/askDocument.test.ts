@@ -2,14 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ToolStep } from '../../turns'
 import {
+  answerError,
   askCountdown,
   askKey,
   askNumberStep,
   askRefusal,
   buildAskAnswers,
   createAskDraft,
-  parseAskBlocks,
-  validateAskAnswers
+  parseAskBlocks
 } from './askDocument'
 import { parseAskResult } from './askResult'
 
@@ -95,13 +95,11 @@ test('validates omissions and notes, preserving suggestions and hostile IDs', ()
   questions.$countdown.skipped = true
   assert.deepEqual(draft.build().answers[0], { id: 'countdown' })
   assert.equal(draft.build().ready, 3)
+  const titleQuestion = blocks[2]
+  assert.ok(titleQuestion.type === 'text')
   for (const extra of [{ other: 'not allowed' }, { note: 'not allowed' }]) {
-    const answers = draft.build().answers.map((a) => (a.id === 'title' ? { ...a, ...extra } : a))
-    assert.match(validateAskAnswers(blocks, answers).errors.$title, /takes no/)
+    assert.match(answerError(titleQuestion, { ...draft.build().answers[1], ...extra }) ?? '', /takes no/)
   }
-  const answers = draft.build().answers
-  assert.match(validateAskAnswers(blocks, [...answers, { id: '__proto__' }]).errors[key], /answered twice/)
-  assert.equal(validateAskAnswers(blocks, [...answers, { id: 'unknown' }]).error, 'no question `unknown`')
   assert.deepEqual(askRefusal('Invalid argument: question `__proto__`: refused', blocks), {
     id: '__proto__',
     message: 'refused'
