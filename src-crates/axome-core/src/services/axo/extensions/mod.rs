@@ -320,7 +320,7 @@ impl ExtensionService {
             auto_install: true,
         };
         Ok(Self {
-            manager: Extensions::new(axo, options.clone()),
+            manager: Extensions::new(axo, options.clone()).map_err(bridge_error)?,
             options,
             scope_data,
             staging,
@@ -712,8 +712,7 @@ fn bridge_error(error: BridgeError) -> ApiError {
 fn install_error(error: InstallError) -> ApiError {
     let message = error.to_string();
     match error {
-        InstallError::InvalidOptions(_)
-        | InstallError::InvalidPackage(_)
+        InstallError::InvalidPackage(_)
         | InstallError::SdkMismatch { .. }
         | InstallError::MissingLockfile(_)
         | InstallError::Enabled(_)

@@ -499,7 +499,6 @@ impl AxoService {
         let options = owner.compose(SessionOptions {
             cwd: folder.to_owned(),
             model,
-            definitions: bundled::definitions(bundled::session_modes(&plans_dir)),
             thinking,
             ask_enabled: true,
             project_access: Some(project_access(folder)),
@@ -507,9 +506,13 @@ impl AxoService {
                 self.db.clone(),
                 folder.to_owned(),
             ))),
-            sections: Vec::new(),
-            tools,
-            schemes: self.host_schemes(folder),
+            host: axo::Registrations {
+                definitions: bundled::definitions(bundled::session_modes(&plans_dir)),
+                sections: Vec::new(),
+                tools,
+                schemes: self.host_schemes(folder),
+                ..Default::default()
+            },
             recovery: RecoveryPolicy::Resume,
             ..Default::default()
         });

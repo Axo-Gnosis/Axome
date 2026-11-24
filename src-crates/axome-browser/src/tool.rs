@@ -910,11 +910,7 @@ fn require_target_locator<'a>(
     Ok((target, resolve_locator(page, target)))
 }
 
-async fn navigate_page(
-    page: &Page,
-    url: &Url,
-    wait_until: Option<&str>,
-) -> Result<(), String> {
+async fn navigate_page(page: &Page, url: &Url, wait_until: Option<&str>) -> Result<(), String> {
     let opts = GotoOptions::new().wait_until(parse_wait_until(wait_until));
     page.goto(url.as_str(), Some(opts))
         .await

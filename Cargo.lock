@@ -357,7 +357,7 @@ dependencies = [
 [[package]]
 name = "axo"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=fc1bb887f135bee1a7a67eafc723e35af47a2fb7#fc1bb887f135bee1a7a67eafc723e35af47a2fb7"
 dependencies = [
  "async-trait",
  "axo-agent",
@@ -398,7 +398,7 @@ dependencies = [
 [[package]]
 name = "axo-agent"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=fc1bb887f135bee1a7a67eafc723e35af47a2fb7#fc1bb887f135bee1a7a67eafc723e35af47a2fb7"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -416,7 +416,7 @@ dependencies = [
 [[package]]
 name = "axo-ai"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=fc1bb887f135bee1a7a67eafc723e35af47a2fb7#fc1bb887f135bee1a7a67eafc723e35af47a2fb7"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -443,7 +443,7 @@ dependencies = [
 [[package]]
 name = "axo-extensions"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=fc1bb887f135bee1a7a67eafc723e35af47a2fb7#fc1bb887f135bee1a7a67eafc723e35af47a2fb7"
 dependencies = [
  "async-trait",
  "axo",
@@ -470,7 +470,7 @@ dependencies = [
 [[package]]
 name = "axo-macros"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=fc1bb887f135bee1a7a67eafc723e35af47a2fb7#fc1bb887f135bee1a7a67eafc723e35af47a2fb7"
 dependencies = [
  "proc-macro2",
  "quote",

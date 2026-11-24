@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use axo_ai::{Credential, CredentialSource, CredentialStore};
+use axo_ai::CredentialSource;
 use axome_protocol::axo::*;
 
 use super::AxoService;
@@ -34,7 +34,9 @@ impl AxoService {
             };
             let status = match auth.remove(&provider.id) {
                 Some(Ok(())) => AxoProviderStatus::Ready,
-                Some(Err(axo_ai::Error::NoApiKey { .. })) => AxoProviderStatus::NeedsCredentials,
+                Some(Err(axo_ai::Error::NoApiKey { .. } | axo_ai::Error::LoginRequired { .. })) => {
+                    AxoProviderStatus::NeedsCredentials
+                }
                 Some(Err(error)) => AxoProviderStatus::Error {
                     message: error.to_string(),
                 },
@@ -57,6 +59,7 @@ impl AxoService {
                 id: provider.id,
                 env: provider.env,
                 requires_key: provider.requires_key,
+                oauth_only: provider.oauth_only,
                 login: provider.login,
                 source,
                 status,
@@ -88,11 +91,8 @@ impl AxoService {
         let models = self
             .provider_models(&engine, &mut state, folder, provider)
             .await?;
-        let slot = models
-            .credential_slot(provider)
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
-        self.credentials
-            .set(&slot, Credential::ApiKey { key })
+        models
+            .set_api_key(provider, key)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         drop(state);

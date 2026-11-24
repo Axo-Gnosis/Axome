@@ -17,6 +17,7 @@ pub struct AxoProvider {
     pub hides: Option<AxoHiddenProvider>,
     pub env: Vec<String>,
     pub requires_key: bool,
+    pub oauth_only: bool,
     pub login: bool,
     pub source: AxoCredentialSource,
     pub status: AxoProviderStatus,

@@ -641,18 +641,29 @@ fn entry_with(entries: &[SeqEntry], at: usize, index: &TranscriptIndex<'_>) -> O
             let submitted = index.submission(value);
             if let Some(Entry::Submission {
                 kind: kind @ (SubmissionKind::Quiet | SubmissionKind::Mail),
-                sender,
+                provenance,
                 ..
             }) = submitted
             {
                 let raw = text(&user.content);
                 let notice = match kind {
                     SubmissionKind::Mail => {
-                        let sender = sender.clone().unwrap_or_else(|| "teammate".into());
+                        let sender = match provenance {
+                            Some(axo::SubmissionProvenance::Agent {
+                                name: Some(name), ..
+                            }) => name.as_str(),
+                            _ => "teammate",
+                        };
                         let prefix =
                             format!("Message from {sender} (reply with send to \"{sender}\"):\n\n");
-                        let text = raw.strip_prefix(&prefix).unwrap_or(&raw).to_owned();
-                        ChatNotice::Mail { sender, text }
+                        let text = match raw.strip_prefix(&prefix) {
+                            Some(text) => text.to_owned(),
+                            None => raw,
+                        };
+                        ChatNotice::Mail {
+                            sender: sender.to_owned(),
+                            text,
+                        }
                     }
                     SubmissionKind::Quiet => ChatNotice::Host { text: raw },
                     SubmissionKind::Prompt | SubmissionKind::Steer | SubmissionKind::FollowUp => {
@@ -1381,7 +1392,6 @@ mod tests {
             parts: vec![axo::PromptPart::Text { text: id.into() }],
             keywords: vec![],
             request_id: None,
-            sender: None,
             provenance: None,
             custom: None,
         }
@@ -1648,7 +1658,11 @@ mod tests {
             ),
             (
                 SubmissionKind::Mail,
-                Some("worker"),
+                Some(axo::SubmissionProvenance::Agent {
+                    name: Some("worker".into()),
+                    session_id: "worker-session".into(),
+                    route: axo::SendKind::Mail,
+                }),
                 "Message from worker (reply with send to \"worker\"):\n\nhello",
                 ChatNotice::Mail {
                     sender: "worker".into(),
@@ -1664,11 +1678,49 @@ mod tests {
                     text: "plain message".into(),
                 },
             ),
+            (
+                SubmissionKind::Mail,
+                None,
+                "Message from worker (reply with send to \"worker\"):\n\nhello",
+                ChatNotice::Mail {
+                    sender: "teammate".into(),
+                    text: "Message from worker (reply with send to \"worker\"):\n\nhello".into(),
+                },
+            ),
+            (
+                SubmissionKind::Mail,
+                Some(axo::SubmissionProvenance::Agent {
+                    name: Some("worker".into()),
+                    session_id: "worker-session".into(),
+                    route: axo::SendKind::Mail,
+                }),
+                "Message from other (reply with send to \"other\"):\n\nhello",
+                ChatNotice::Mail {
+                    sender: "worker".into(),
+                    text: "Message from other (reply with send to \"other\"):\n\nhello".into(),
+                },
+            ),
+            (
+                SubmissionKind::Mail,
+                Some(axo::SubmissionProvenance::Agent {
+                    name: None,
+                    session_id: "worker-session".into(),
+                    route: axo::SendKind::Mail,
+                }),
+                "Message from teammate (reply with send to \"teammate\"):\n\nhello",
+                ChatNotice::Mail {
+                    sender: "teammate".into(),
+                    text: "hello".into(),
+                },
+            ),
         ];
-        for (kind, sender, body_text, expected) in cases {
+        for (kind, provenance, body_text, expected) in cases {
             let mut submitted = submission("submission", None, kind);
-            if let Entry::Submission { sender: value, .. } = &mut submitted {
-                *value = sender.map(str::to_owned);
+            if let Entry::Submission {
+                provenance: value, ..
+            } = &mut submitted
+            {
+                *value = provenance;
             }
             let entries = log(vec![
                 submitted,

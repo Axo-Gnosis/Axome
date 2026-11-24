@@ -199,6 +199,7 @@ export interface AxoProvider {
   hides: AxoHiddenProvider | null
   env: string[]
   requiresKey: boolean
+  oauthOnly: boolean
   login: boolean
   status: { kind: 'ready' } | { kind: 'needsCredentials' } | { kind: 'error'; message: string }
   source: AxoCredentialSource

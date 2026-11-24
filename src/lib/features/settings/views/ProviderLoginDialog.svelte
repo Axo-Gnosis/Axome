@@ -163,7 +163,7 @@
           {@const question = view.question}
           {#if view.url && (host !== null || !platform.native)}
             <p class="text-xs text-muted">
-              This host is another machine, so the browser redirect cannot reach it. Paste the redirect URL here.
+              Complete login in your browser, then follow the prompt below. Credentials stay on the selected host.
             </p>
           {/if}
           {#if question.kind === 'prompt'}

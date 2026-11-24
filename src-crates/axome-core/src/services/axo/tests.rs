@@ -173,6 +173,53 @@ impl Fixture {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_subscription_requires_login_without_catalog_or_api_key() {
+    use axome_protocol::axo::{AxoCredentialSource, AxoProviderStatus};
+
+    let fixture = Fixture::new(vec![]).await;
+    let before = fixture.service.providers(None).await.unwrap();
+    let provider = before
+        .providers
+        .iter()
+        .find(|provider| provider.id == "anthropic-subscription")
+        .expect("subscription login must remain visible without catalog rows");
+    assert_eq!(provider.models, 0);
+    assert!(provider.requires_key);
+    assert!(provider.oauth_only);
+    assert!(provider.login);
+    assert!(provider.env.is_empty());
+    assert!(matches!(
+        provider.status,
+        AxoProviderStatus::NeedsCredentials
+    ));
+    assert!(matches!(provider.source, AxoCredentialSource::None));
+
+    let error = fixture
+        .service
+        .provider_set_key("anthropic-subscription", "synthetic-api-key".into(), None)
+        .await
+        .expect_err("the service must reject API keys for subscription login");
+    assert!(
+        error
+            .to_string()
+            .contains("Log in to anthropic-subscription"),
+        "{error}"
+    );
+
+    let after = fixture.service.providers(None).await.unwrap();
+    let provider = after
+        .providers
+        .iter()
+        .find(|provider| provider.id == "anthropic-subscription")
+        .unwrap();
+    assert!(matches!(provider.source, AxoCredentialSource::None));
+    assert!(matches!(
+        provider.status,
+        AxoProviderStatus::NeedsCredentials
+    ));
+}
+
 fn collector() -> (Events, EventSink<ChatEvent>) {
     let events = Arc::new(Mutex::new(Vec::new()));
     let collected = Arc::clone(&events);
@@ -907,9 +954,12 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
             model: Some("test/m".into()),
             thinking: Some(axo_ai::ThinkingLevel::Off),
             ask_enabled: true,
-            definitions: super::bundled::definitions(super::bundled::modes().to_vec()),
-            tools,
-            schemes: direct.service.web.host_schemes(),
+            host: axo::Registrations {
+                definitions: super::bundled::definitions(super::bundled::modes().to_vec()),
+                tools,
+                schemes: direct.service.web.host_schemes(),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .await

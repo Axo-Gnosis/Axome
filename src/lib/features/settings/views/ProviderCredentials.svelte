@@ -117,7 +117,7 @@
       }}>Log In</Button
     >
   {/if}
-  {#if provider.requiresKey}
+  {#if provider.requiresKey && !provider.oauthOnly}
     <Button
       size="xs"
       disabled={active}
