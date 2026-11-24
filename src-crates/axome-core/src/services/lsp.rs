@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use crate::events::EventSink;
-use crate::services::extensions::{
+use crate::services::integrations::{
     missing_requirement, resolve_contribution_command, LoadedLspServer,
 };
 #[cfg(unix)]
@@ -608,8 +608,8 @@ pub fn resolve_server_status(
 
     LspServerStatus {
         server_definition_id: server.server_definition_id.clone(),
-        extension_id: server.extension_id.clone(),
-        extension_label: server.extension_label.clone(),
+        integration_id: server.integration_id.clone(),
+        integration_label: server.integration_label.clone(),
         label: server.definition.label.clone(),
         enabled: config.enabled,
         status,
@@ -634,7 +634,7 @@ pub fn resolve_launch(
     }
     let program = resolve_contribution_command(
         &server.definition.command,
-        server.extension_dir.as_deref(),
+        server.integration_dir.as_deref(),
         path,
         config.binary_path_override.as_deref(),
     )?;

@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use axo::{HostTool, SessionTools};
 use playwright_rs::api::LaunchOptions;
-use playwright_rs::protocol::{Browser, BrowserContext, BrowserContextOptions, Playwright, Viewport};
+use playwright_rs::protocol::{
+    Browser, BrowserContext, BrowserContextOptions, Playwright, Viewport,
+};
 use tokio::sync::Mutex;
 
 use crate::discovery::resolve_executable;

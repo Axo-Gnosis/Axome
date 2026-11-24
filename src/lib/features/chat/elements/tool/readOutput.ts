@@ -1,7 +1,7 @@
 import type { ChatContent } from '$lib/types/backend'
 import type { ToolStep } from '../../turns'
 import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
-import { coversBody, pathText, record, truncation } from './payload'
+import { coversBody, fileRecords, pathText, record, truncation } from './payload'
 
 export type ReadOutput = {
   path: string
@@ -25,23 +25,23 @@ export function readStartLine(arguments_: unknown): number | undefined {
   return Number.isSafeInteger(start) ? start : undefined
 }
 
-/** Preserve session-owned URLs; plain paths use the ledger's backend normalization. */
-export function readPath(call: ToolStep): string | null {
+/** Preserve session-owned URLs; plain paths use an unambiguous read record's normalization. */
+export function readPath(call: ToolStep, records = fileRecords(call.result?.details)): string | null {
   const path = record(call.arguments).path
   if (pathText(path) && isSchemeUrl(path)) return path
-  const ledger = record(record(call.result?.details).ledger)
-  if (ledger.access === 'read' && pathText(ledger.path)) return ledger.path
+  if (records.length === 1 && records[0].ledger.access === 'read') return records[0].ledger.path
   return pathText(path) ? path : null
 }
 
 /** Return captured source, never a range inferred from the requested limit or attached context. */
-export function readOutput(call: ToolStep): ReadOutput | null {
+export function readOutput(call: ToolStep, records = fileRecords(call.result?.details)): ReadOutput | null {
   if (call.name !== 'read' || !call.result || call.status === 'error') return null
   const args = record(call.arguments)
   const details = record(call.result.details)
-  const ledger = record(details.ledger)
-  const path = readPath(call)
-  if (!path || (ledger.path != null && (!pathText(ledger.path) || ledger.access !== 'read'))) return null
+  const hasReadRecord = records.length === 1 && records[0].ledger.access === 'read'
+  if (records.length > 0 && !hasReadRecord) return null
+  const path = readPath(call, records)
+  if (!path) return null
   const first = call.output[0]
   if (first?.type !== 'text') return null
   const start = readStartLine(args)
@@ -65,6 +65,7 @@ export function readOutput(call: ToolStep): ReadOutput | null {
   if (details.truncation != null) {
     const cut = truncation(details.truncation)
     if (
+      !hasReadRecord ||
       !cut ||
       (cut.truncatedBy !== 'lines' && cut.truncatedBy !== 'bytes') ||
       cut.outputLines < 1 ||
@@ -98,7 +99,7 @@ export function readOutput(call: ToolStep): ReadOutput | null {
       const source = text.slice(0, footer.index)
       // User limits lack truncation metadata: require the ledger and exact count/continuation.
       if (
-        !pathText(ledger.path) ||
+        !hasReadRecord ||
         count === Infinity ||
         Number(footer[3]) !== start + count ||
         (source === '' ? count > 1 : source.split('\n').length !== count)

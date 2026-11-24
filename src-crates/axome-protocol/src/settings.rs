@@ -42,7 +42,7 @@ pub struct FormattingLanguageSettings {
     pub formatter: String,
 }
 
-/// Keyed by language id. Values: `<extension_id>::<formatter_id>`, `lsp`, or `disabled`.
+/// Keyed by language id. Values: `<integration_id>::<formatter_id>`, `lsp`, or `disabled`.
 pub type FormattingSettings = BTreeMap<String, FormattingLanguageSettings>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -296,8 +296,8 @@ impl Default for LspServerSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct LspSettings {
-    /// Keyed by extension catalog (`ExtensionService`) server_definition_id, formatted as
-    /// `${extension_id}::${server_id}`.
+    /// Keyed by integration catalog (`IntegrationService`) server_definition_id, formatted as
+    /// `${integration_id}::${server_id}`.
     pub servers: BTreeMap<String, LspServerSettings>,
 }
 
@@ -373,7 +373,7 @@ pub struct EffectiveSettings {
 
 impl EffectiveSettings {
     /// Builds default effective settings with LSP server IDs, formatting defaults,
-    /// and harness IDs supplied by the extension catalog (`ExtensionService`).
+    /// and harness IDs supplied by the integration catalog (`IntegrationService`).
     pub fn with_catalog_defaults<I, S>(
         server_definition_ids: I,
         formatting_defaults: &BTreeMap<String, String>,

@@ -79,6 +79,8 @@ craneLib.buildPackage (
     postInstall = ''
       install -Dm644 src-tauri/icons/128x128.png $out/share/icons/hicolor/128x128/apps/axome.png
       install -Dm644 ${desktopFile} $out/share/applications/axome.desktop
+      mkdir -p "$out/lib/axome"
+      ln -s "${pkgs.bun}/bin/bun" "$out/lib/axome/bun"
     '';
 
     dontWrapGApps = true;

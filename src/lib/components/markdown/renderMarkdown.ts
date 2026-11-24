@@ -9,13 +9,17 @@ import rehypeSlug from 'rehype-slug'
 import rehypeSanitize, { defaultSchema, type Options } from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
 import { SKIP, visit } from 'unist-util-visit'
-import { platform } from '$lib/platform'
-import { markdownImageSrc } from '$lib/utils/mediaAssets'
+import { markdownImageSrc, URL_SCHEME_RE } from '$lib/utils/mediaAssets'
 import { normalizeNestedMarkdownFences } from './markdownBlocks'
 
 export interface MarkdownCodeBlock {
   lang: string
   code: string
+}
+
+export interface MarkdownImage {
+  url: Promise<string | null>
+  local: boolean
 }
 
 function collectText(nodes: ElementContent[]): string {
@@ -70,15 +74,7 @@ const markdownSchema: Options = {
       'memory'
     ],
     // Embedded images are MIME-checked after sanitization; data links stay blocked.
-    src: [...(defaultSchema.protocols?.src ?? []), 'data']
-  }
-}
-
-const webMarkdownSchema: Options = {
-  ...markdownSchema,
-  protocols: {
-    ...markdownSchema.protocols,
-    src: [...(markdownSchema.protocols?.src ?? []), 'file']
+    src: [...(defaultSchema.protocols?.src ?? []), 'data', 'file']
   }
 }
 
@@ -87,10 +83,8 @@ export async function renderMarkdown(
   folderPath?: string,
   filePath?: string | null,
   loadLocalImage?: (filePath: string) => Promise<string | null>
-): Promise<{ html: string; images: Promise<string | null>[]; codeBlocks: MarkdownCodeBlock[] }> {
-  // Web admits file: image URLs only to replace them with text; desktop retains its original sanitizer.
-  const schema = 'url' in platform.assets ? markdownSchema : webMarkdownSchema
-  const images: Promise<string | null>[] = []
+): Promise<{ html: string; images: MarkdownImage[]; codeBlocks: MarkdownCodeBlock[] }> {
+  const images: MarkdownImage[] = []
   const codeBlocks: MarkdownCodeBlock[] = []
   const processor = unified()
     .use(remarkParse)
@@ -100,8 +94,16 @@ export async function renderMarkdown(
     .use(remarkRehype, { allowDangerousHtml: true, clobberPrefix: '' })
     .use(rehypeRaw)
     .use(rehypeSlug)
+    .use(() => (tree: Root) => {
+      // The sanitizer compares protocol names case-sensitively.
+      visit(tree, 'element', (node) => {
+        if (node.tagName === 'img' && typeof node.properties.src === 'string') {
+          node.properties.src = node.properties.src.replace(/^\s*file:/i, 'file:')
+        }
+      })
+    })
     // Sanitize raw HTML and generated IDs before trusted asset/code-slot transforms.
-    .use(rehypeSanitize, schema)
+    .use(rehypeSanitize, markdownSchema)
     .use(() => (tree: Root) => {
       visit(tree, 'element', (node, index, parent) => {
         if (node.tagName === 'img' && typeof node.properties.src === 'string') {
@@ -113,7 +115,10 @@ export async function renderMarkdown(
             node.properties.dataAxomeImage = String(images.length)
             node.properties.ariaBusy = 'true'
             delete node.properties.src
-            images.push(markdownImageSrc(src, folderPath, filePath, loadLocalImage).catch(() => null))
+            images.push({
+              url: markdownImageSrc(src, folderPath, filePath, loadLocalImage).catch(() => null),
+              local: /^file:/i.test(src) || (!URL_SCHEME_RE.test(src) && !src.startsWith('//'))
+            })
           }
           return
         }

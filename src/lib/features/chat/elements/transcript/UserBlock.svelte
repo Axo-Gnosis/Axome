@@ -130,8 +130,10 @@
     {/if}
   </div>
   <div class="flex min-h-5 flex-wrap items-center justify-end gap-2 text-xs text-subtle">
-    {#if entry.body.from}
+    {#if entry.body.from?.kind === 'agent'}
       <span class="text-muted">From {entry.body.from.name ?? 'parent agent'}</span>
+    {:else if entry.body.from?.kind === 'extension'}
+      <span class="text-muted">sent by <span class="font-mono">{entry.body.from.id}</span> ·</span>
     {/if}
     <time datetime={entry.timestamp} class="font-mono tabular-nums">{time}</time>
     {#if entry.body.siblings.length > 1}

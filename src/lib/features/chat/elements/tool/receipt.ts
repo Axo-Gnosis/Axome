@@ -1,6 +1,6 @@
 import type { ToolStep } from '../../turns'
 import { parseBashDetails } from './bashOutput'
-import { record } from './payload'
+import { fileRecords, record } from './payload'
 
 const RECEIPT_TOOLS: Record<string, true> = {
   spawn: true,
@@ -12,7 +12,9 @@ const RECEIPT_TOOLS: Record<string, true> = {
 }
 
 export function isReceiptTool(call: ToolStep): boolean {
-  return (call.name === 'bash' && parseBashDetails(call.details).job !== null) || RECEIPT_TOOLS[call.name] === true
+  const receipt =
+    (call.name === 'bash' && parseBashDetails(call.details).job !== null) || RECEIPT_TOOLS[call.name] === true
+  return receipt && fileRecords(call.result?.details).length === 0
 }
 
 // Mirrors axo's typed tool receipts (`crates/axo/src/coordination.rs`), which the

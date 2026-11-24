@@ -16,19 +16,22 @@ const builtin = (name: string, properties: Record<string, unknown>, required: st
   name,
   description: '',
   policy: 'alongside',
+  origin: null,
   parameters: { type: 'object', properties, required }
 })
 const commands: ChatCommand[] = [
   builtin('shake', { mode: { type: 'string', enum: ['elide', 'images'] } }, ['mode']),
   builtin('note', { level: { type: 'integer' }, text: { type: 'string' } }),
   builtin('navigate', { entry: { type: 'string', format: 'entry' } }),
-  { kind: 'skill', name: 'greet', description: '', policy: 'queued', argumentHint: null }
+  { kind: 'skill', name: 'greet', description: '', policy: 'queued', argumentHint: null, origin: null },
+  { kind: 'registered', name: 'hello', description: '', policy: 'alongside', argumentHint: 'text', origin: null }
 ]
 const parse = (text: string, caret = text.length) => parseCommandLine(text, caret, commands)
 
 test('command lines are only offered built-ins followed by whitespace', () => {
   assert.equal(parse('/shake'), null)
   assert.equal(parse('/greet Alice'), null)
+  assert.equal(parse('/hello alpha  "beta gamma"'), null)
   assert.equal(parse('/navigate x'), null)
   assert.equal(parse('hello /shake images'), null)
 })

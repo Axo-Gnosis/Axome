@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::{errors::ApiError, services::history::normalize_title};
 use axo::store::{Entry, RunOutcome, SeqEntry, SubmissionKind};
-use axo::LiveSnapshot;
 use axo_agent::AgentMessage;
-use axo_ai::{AssistantBlock, Message, StopReason, ThinkingLevel, Usage, UserBlock};
+use axo_ai::{AssistantBlock, Message, ServiceTier, StopReason, ThinkingLevel, Usage, UserBlock};
+use axo_extensions::ExtensionOrigin;
 use axome_protocol::chat::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -85,6 +85,11 @@ pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
     ChatCommand {
         name: value.name,
         description: value.description,
+        origin: value
+            .origin
+            .as_deref()
+            .and_then(ExtensionOrigin::parse)
+            .map(|origin| origin.id.to_owned()),
         policy: match value.policy {
             axo::CommandPolicy::Alongside => ChatCommandPolicy::Alongside,
             axo::CommandPolicy::WhenIdle => ChatCommandPolicy::WhenIdle,
@@ -94,6 +99,9 @@ pub(super) fn command(value: axo::CommandInfo) -> ChatCommand {
             axo::CommandKind::Builtin { parameters } => ChatCommandKind::Builtin { parameters },
             axo::CommandKind::Skill { argument_hint } => ChatCommandKind::Skill { argument_hint },
             axo::CommandKind::Mode { argument_hint } => ChatCommandKind::Mode { argument_hint },
+            axo::CommandKind::Registered { argument_hint } => {
+                ChatCommandKind::Registered { argument_hint }
+            }
         },
     }
 }
@@ -119,6 +127,15 @@ pub(super) fn thinking_to_wire(level: ThinkingLevel) -> ChatThinking {
     }
 }
 
+pub(super) fn service_tier_to_wire(tier: ServiceTier) -> ChatServiceTier {
+    match tier {
+        ServiceTier::Standard => ChatServiceTier::Standard,
+        ServiceTier::Flex => ChatServiceTier::Flex,
+        ServiceTier::Fast => ChatServiceTier::Fast,
+        ServiceTier::Ultrafast => ChatServiceTier::Ultrafast,
+    }
+}
+
 pub(super) fn thinking_from_wire(level: ChatThinking) -> ThinkingLevel {
     match level {
         ChatThinking::Off => ThinkingLevel::Off,
@@ -138,7 +155,7 @@ pub(super) fn usage(value: &Usage) -> ChatUsage {
         cache_read: value.cache_read,
         cache_write: value.cache_write,
         total_tokens: value.total_tokens,
-        cost: value.cost.total,
+        cost: value.cost.map(|cost| cost.total),
     }
 }
 
@@ -319,13 +336,25 @@ fn job_refs(details: Option<&serde_json::Value>, delivered_jobs: &[String]) -> V
     }
 }
 
+fn custom_extension_id(custom_type: &str) -> Option<&str> {
+    let (id, local) = custom_type.split_once(':')?;
+    (!id.is_empty() && !local.is_empty()).then_some(id)
+}
+
 fn notice_from_custom(
     jobs: &JobLookup<'_>,
     custom_type: &str,
     text: String,
     details: Option<&serde_json::Value>,
     delivered_jobs: &[String],
+    extension_id: Option<&str>,
 ) -> ChatNotice {
+    if let Some(id) = extension_id.or_else(|| custom_extension_id(custom_type)) {
+        return ChatNotice::Extension {
+            id: id.to_owned(),
+            text,
+        };
+    }
     match custom_type {
         "job_result" => {
             let refs = job_refs(details, delivered_jobs);
@@ -386,6 +415,7 @@ fn anchor<'a>(value: &'a Entry, by_id: &HashMap<&'a str, &'a Entry>) -> Option<&
             }
             Entry::Message { .. }
             | Entry::ThinkingLevelChange { .. }
+            | Entry::ServiceTierChange { .. }
             | Entry::ModelChange { .. }
             | Entry::Usage { .. }
             | Entry::Compaction { .. }
@@ -442,6 +472,7 @@ fn moved_blocks(entries: &[SeqEntry], at: usize) -> u32 {
                 },
                 Entry::CustomMessage { content, .. } => serde_json::to_value(content),
                 Entry::ThinkingLevelChange { .. }
+                | Entry::ServiceTierChange { .. }
                 | Entry::ModelChange { .. }
                 | Entry::Usage { .. }
                 | Entry::Compaction { .. }
@@ -624,6 +655,8 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
         } => ChatEntryBody::Assistant {
             blocks: assistant.content.iter().map(block).collect(),
             model: format!("{}/{}", assistant.provider, assistant.model),
+            service_tier: service_tier_to_wire(assistant.service_tier),
+            thinking: assistant.thinking_level.map(thinking_to_wire),
             usage: usage(&assistant.usage),
             stop_reason: match assistant.stop_reason {
                 StopReason::Stop => ChatStopReason::Stop,
@@ -633,6 +666,11 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
                 StopReason::Aborted => ChatStopReason::Aborted,
             },
             error: assistant.error_message.clone(),
+            provider_unavailable: assistant
+                .failure
+                .as_ref()
+                .and_then(|failure| failure.code.as_deref())
+                == Some("provider_unavailable"),
             duration_ms: assistant.duration_ms,
         },
         Entry::Message {
@@ -666,6 +704,13 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
                 text(&custom.content),
                 custom.details.as_ref(),
                 delivered_jobs,
+                match submission(value, entries) {
+                    Some(Entry::Submission {
+                        provenance: Some(axo::SubmissionProvenance::Extension { id }),
+                        ..
+                    }) => Some(id.as_str()),
+                    _ => None,
+                },
             ),
         },
         Entry::CustomMessage {
@@ -675,7 +720,14 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
             display: true,
             ..
         } => ChatEntryBody::Notice {
-            notice: notice_from_custom(jobs, custom_type, text(content), details.as_ref(), &[]),
+            notice: notice_from_custom(
+                jobs,
+                custom_type,
+                text(content),
+                details.as_ref(),
+                &[],
+                None,
+            ),
         },
         Entry::AgentChange { agent, .. } => ChatEntryBody::AgentChange {
             agent: agent.clone(),
@@ -686,8 +738,18 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
         } => ChatEntryBody::ModelChange {
             model: format!("{provider}/{model_id}"),
         },
-        Entry::ThinkingLevelChange { thinking_level, .. } => ChatEntryBody::ThinkingChange {
+        Entry::ThinkingLevelChange {
+            thinking_level,
+            automatic,
+            service_tier,
+            ..
+        } => ChatEntryBody::ThinkingChange {
             thinking: thinking_to_wire(*thinking_level),
+            automatic: *automatic,
+            service_tier: service_tier.map(service_tier_to_wire),
+        },
+        Entry::ServiceTierChange { service_tier, .. } => ChatEntryBody::ServiceTierChange {
+            service_tier: service_tier_to_wire(*service_tier),
         },
         Entry::Compaction {
             summary,
@@ -744,8 +806,9 @@ fn entry_with(entries: &[SeqEntry], at: usize, jobs: &JobLookup<'_>) -> Option<C
 }
 
 fn sender(provenance: &axo::SubmissionProvenance) -> ChatSender {
-    ChatSender {
-        name: provenance.name.clone(),
+    match provenance {
+        axo::SubmissionProvenance::Agent { name, .. } => ChatSender::Agent { name: name.clone() },
+        axo::SubmissionProvenance::Extension { id } => ChatSender::Extension { id: id.clone() },
     }
 }
 
@@ -780,20 +843,37 @@ pub(super) fn title_of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Opti
     name.or(prompt.as_deref()).and_then(normalize_title)
 }
 
-pub(super) fn selection(entries: &[SeqEntry], path: &[usize]) -> (Option<String>, ThinkingLevel) {
+pub(super) fn selection(
+    entries: &[SeqEntry],
+    path: &[usize],
+) -> (Option<String>, ThinkingLevel, ServiceTier) {
     let mut model = None;
     let mut thinking = ThinkingLevel::Off;
+    let mut tier = ServiceTier::Standard;
     for &at in path {
-        if let Entry::ModelChange {
-            provider, model_id, ..
-        } = &entries[at].entry
-        {
-            model = Some(format!("{provider}/{model_id}"));
-        } else if let Entry::ThinkingLevelChange { thinking_level, .. } = &entries[at].entry {
-            thinking = *thinking_level;
+        match &entries[at].entry {
+            Entry::ModelChange {
+                provider, model_id, ..
+            } => model = Some((provider, model_id)),
+            Entry::ThinkingLevelChange {
+                thinking_level,
+                service_tier,
+                ..
+            } => {
+                thinking = *thinking_level;
+                if let Some(service_tier) = service_tier {
+                    tier = *service_tier;
+                }
+            }
+            Entry::ServiceTierChange { service_tier, .. } => tier = *service_tier,
+            _ => {}
         }
     }
-    (model, thinking)
+    (
+        model.map(|(provider, id)| format!("{provider}/{id}")),
+        thinking,
+        tier,
+    )
 }
 
 pub(super) fn entries_usage(entries: &[SeqEntry]) -> Usage {
@@ -845,9 +925,8 @@ pub(super) fn stats(
     stats
 }
 
-pub(super) fn queue_at_attach(snapshot: &LiveSnapshot) -> Vec<ChatQueued> {
-    snapshot
-        .queued
+pub(super) fn queued(items: &[axo::QueuedInput]) -> Vec<ChatQueued> {
+    items
         .iter()
         .filter_map(|item| {
             let kind = match item.kind {
@@ -859,35 +938,63 @@ pub(super) fn queue_at_attach(snapshot: &LiveSnapshot) -> Vec<ChatQueued> {
                 submission_id: item.submission_id.clone(),
                 kind,
                 parts: parts_to_wire(&item.parts),
+                from: item.provenance.as_ref().map(sender),
             })
         })
         .collect()
 }
 
-pub(super) fn question(value: &axo::Question) -> ChatQuestion {
-    ChatQuestion {
-        id: value.id.clone(),
-        question: value.question.clone(),
-        header: value.header.clone(),
-        options: value
-            .options
-            .iter()
-            .map(|option| ChatQuestionOption {
-                label: option.label.clone(),
-                description: option.description.clone(),
-                preview: option.preview.clone(),
-            })
-            .collect(),
-        multi: value.multi,
-        recommended: value.recommended,
+pub(super) fn ask_block(value: &axo::AskBlock) -> ChatAskBlock {
+    match value {
+        axo::AskBlock::Markdown(block) => ChatAskBlock::Markdown {
+            text: block.text.clone(),
+        },
+        axo::AskBlock::Choice(block) => ChatAskBlock::Choice {
+            id: block.id.clone(),
+            question: block.question.clone(),
+            optional: block.optional,
+            options: block
+                .options
+                .iter()
+                .map(|option| ChatAskOption {
+                    value: option.value.clone(),
+                    label: option.label.clone(),
+                    description: option.description.clone(),
+                    recommended: option.recommended,
+                })
+                .collect(),
+            multi: block.multi,
+        },
+        axo::AskBlock::Text(block) => ChatAskBlock::Text {
+            id: block.id.clone(),
+            question: block.question.clone(),
+            optional: block.optional,
+            multiline: block.multiline,
+            placeholder: block.placeholder.clone(),
+            prefill: block.prefill.clone(),
+        },
+        axo::AskBlock::Number(block) => ChatAskBlock::Number {
+            id: block.id.clone(),
+            question: block.question.clone(),
+            optional: block.optional,
+            integer: block.integer,
+            min: block.min.clone(),
+            max: block.max.clone(),
+            default: block.default.clone(),
+        },
     }
 }
 
 pub(super) fn answer(value: ChatAnswer) -> axo::Answer {
     axo::Answer {
         id: value.id,
-        selected: value.selected,
-        custom: value.custom,
+        value: value.value.map(|value| match value {
+            ChatAnswerValue::Text(text) => axo::AnswerValue::Text(text),
+            ChatAnswerValue::Number(number) => axo::AnswerValue::Number(number),
+            ChatAnswerValue::Many(values) => axo::AnswerValue::Many(values),
+        }),
+        other: value.other,
+        note: value.note,
     }
 }
 
@@ -965,9 +1072,18 @@ pub(super) fn job(info: &axo::JobInfo, closed_session: bool) -> ChatJob {
     }
 }
 
-pub(super) fn session_tools(session: &axo::Session) -> Vec<ChatSessionTool> {
-    session
-        .tools()
+pub(super) fn tool_origins(tools: &[axo::SessionToolInfo]) -> BTreeMap<String, String> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            let origin = ExtensionOrigin::parse(tool.origin.as_deref()?)?;
+            Some((tool.name.clone(), origin.id.to_owned()))
+        })
+        .collect()
+}
+
+pub(super) fn session_tools(tools: Vec<axo::SessionToolInfo>) -> Vec<ChatSessionTool> {
+    tools
         .into_iter()
         .map(|info| ChatSessionTool {
             name: info.name,
@@ -1109,6 +1225,105 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn sender_provenance_is_tagged() {
+        for name in [None, Some("scout")] {
+            let provenance = axo::SubmissionProvenance::Agent {
+                session_id: "parent".into(),
+                route: axo::SendKind::Steer,
+                name: name.map(str::to_owned),
+            };
+            assert_eq!(
+                serde_json::to_value(sender(&provenance)).unwrap(),
+                serde_json::json!({"kind": "agent", "name": name}),
+            );
+        }
+        let provenance = axo::SubmissionProvenance::Extension {
+            id: "scratch".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(sender(&provenance)).unwrap(),
+            serde_json::json!({"kind": "extension", "id": "scratch"}),
+        );
+    }
+
+    #[test]
+    fn command_catalog_projects_only_extension_origins() {
+        for (label, expected, kind) in [
+            (
+                Some("extension lab/notes"),
+                Some("lab/notes"),
+                axo::CommandKind::Registered {
+                    argument_hint: None,
+                },
+            ),
+            (
+                Some("extension scratch (scope abc123)"),
+                Some("scratch"),
+                axo::CommandKind::Mode {
+                    argument_hint: None,
+                },
+            ),
+            (
+                Some("project file"),
+                None,
+                axo::CommandKind::Skill {
+                    argument_hint: None,
+                },
+            ),
+            (
+                Some("extension scratch (scope )"),
+                None,
+                axo::CommandKind::Mode {
+                    argument_hint: None,
+                },
+            ),
+        ] {
+            let projected = command(axo::CommandInfo {
+                name: "notes".into(),
+                description: String::new(),
+                policy: axo::CommandPolicy::Alongside,
+                origin: label.map(str::to_owned),
+                kind,
+            });
+            assert_eq!(
+                serde_json::to_value(projected).unwrap()["origin"],
+                serde_json::json!(expected)
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(ChatEvent::ExtensionCatalog {
+                commands: Vec::new(),
+                tool_origins: BTreeMap::new(),
+                diagnostics: Vec::new(),
+            })
+            .unwrap(),
+            serde_json::json!({"type":"extensionCatalog","commands":[],"toolOrigins":{},"diagnostics":[]}),
+        );
+    }
+
+    #[test]
+    fn unknown_usage_cost_is_null_and_propagates() {
+        let known = Usage::default();
+        let unknown = Usage {
+            cost: None,
+            ..Usage::default()
+        };
+        let wire_cost = |value: &Usage| {
+            serde_json::to_value(usage(value))
+                .unwrap()
+                .get("cost")
+                .expect("cost is always present on the wire")
+                .clone()
+        };
+        assert_eq!(wire_cost(&known), serde_json::json!(0.0));
+        assert_eq!(wire_cost(&unknown), serde_json::Value::Null);
+        for (mut first, second) in [(known.clone(), &unknown), (unknown.clone(), &known)] {
+            first += second;
+            assert_eq!(wire_cost(&first), serde_json::Value::Null);
+        }
+    }
+
     fn submission(id: &str, parent: Option<&str>, kind: SubmissionKind) -> Entry {
         Entry::Submission {
             base: base(id, parent),
@@ -1211,9 +1426,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn path_hides_system_bookkeeping_custom_and_fork_end() {
-        let assistant = AssistantMessage {
+    fn assistant() -> AssistantMessage {
+        AssistantMessage {
             content: vec![AssistantBlock::Text {
                 text: "reply".into(),
                 text_signature: None,
@@ -1225,6 +1439,7 @@ mod tests {
             response_id: None,
             provider_thinking_level: None,
             thinking_level: None,
+            service_tier: axo_ai::ServiceTier::Standard,
             usage: Usage::default(),
             stop_reason: StopReason::Stop,
             error_message: None,
@@ -1232,7 +1447,39 @@ mod tests {
             raw_stop_reason: None,
             timestamp: 0,
             duration_ms: None,
-        };
+        }
+    }
+
+    #[test]
+    fn provider_unavailable_comes_only_from_the_failure_code() {
+        for (code, message, expected) in [
+            (None, "provider test is unavailable", false),
+            (Some("other"), "provider test is unavailable", false),
+            (Some("provider_unavailable"), "Runner interrupted", true),
+        ] {
+            let entries = log(vec![Entry::Message {
+                base: base("failure", None),
+                submission_id: None,
+                admitted_jobs: vec![],
+                delivered_jobs: vec![],
+                message: AgentMessage::Llm(Message::Assistant(AssistantMessage {
+                    failure: code.map(|code| axo_ai::ProviderFailure {
+                        code: Some(code.into()),
+                        ..Default::default()
+                    }),
+                    stop_reason: StopReason::Error,
+                    error_message: Some(message.into()),
+                    ..assistant()
+                })),
+            }]);
+            let wire = serde_json::to_value(entry(&entries, 0).unwrap()).unwrap();
+            assert_eq!(wire["body"]["providerUnavailable"], expected);
+            assert_eq!(wire["body"]["error"], message);
+        }
+    }
+
+    #[test]
+    fn path_hides_system_bookkeeping_custom_and_fork_end() {
         let entries = log(vec![
             system("system", None),
             submission("s", Some("system"), SubmissionKind::Prompt),
@@ -1254,7 +1501,7 @@ mod tests {
             },
             Entry::Message {
                 base: base("reply", Some("model")),
-                message: AgentMessage::Llm(Message::Assistant(assistant)),
+                message: AgentMessage::Llm(Message::Assistant(assistant())),
                 submission_id: None,
                 admitted_jobs: vec![],
                 delivered_jobs: vec![],
@@ -1278,6 +1525,65 @@ mod tests {
             ChatEntryBody::ModelChange { .. }
         ));
         assert!(matches!(converted[1].body, ChatEntryBody::Assistant { .. }));
+    }
+
+    #[test]
+    fn displayed_extension_posts_prefer_provenance_and_hide_branch_state() {
+        let content = || {
+            vec![UserBlock::Text {
+                text: "Synced notes.".into(),
+            }]
+        };
+        let mut submitted = submission("submission", None, SubmissionKind::Quiet);
+        if let Entry::Submission { provenance, .. } = &mut submitted {
+            *provenance = Some(axo::SubmissionProvenance::Extension {
+                id: "lab/notes-sync".into(),
+            });
+        }
+        let entries = log(vec![
+            submitted,
+            Entry::Message {
+                base: base("delivered", Some("submission")),
+                submission_id: Some("submission".into()),
+                admitted_jobs: vec![],
+                delivered_jobs: vec![],
+                message: AgentMessage::Custom(axo_agent::CustomMessage {
+                    custom_type: "other:note".into(),
+                    content: content(),
+                    display: true,
+                    details: None,
+                    timestamp: 0,
+                }),
+            },
+            Entry::CustomMessage {
+                base: base("namespaced", Some("delivered")),
+                custom_type: "lab/notes-sync:note".into(),
+                content: content(),
+                display: true,
+                details: None,
+            },
+            Entry::CustomMessage {
+                base: base("hidden", Some("namespaced")),
+                custom_type: "lab/notes-sync:hidden".into(),
+                content: content(),
+                display: false,
+                details: None,
+            },
+            Entry::Custom {
+                base: base("private", Some("hidden")),
+                custom_type: "lab/notes-sync:state".into(),
+                data: Some(serde_json::json!({"saved": true})),
+            },
+        ]);
+        for at in [1, 2] {
+            let wire = serde_json::to_value(entry(&entries, at).unwrap()).unwrap();
+            assert_eq!(
+                wire["body"]["notice"],
+                serde_json::json!({"kind":"extension","id":"lab/notes-sync","text":"Synced notes."}),
+            );
+        }
+        assert!(entry(&entries, 3).is_none());
+        assert!(entry(&entries, 4).is_none());
     }
 
     #[test]
@@ -1696,93 +2002,55 @@ mod tests {
 
     #[test]
     fn queue_at_attach_maps_snapshot_queued_in_delivery_order() {
-        let mut snapshot = LiveSnapshot {
-            run_id: None,
-            maintenance: None,
-            running: false,
-            streaming: None,
-            pending_tool_calls: vec![],
-            queued: vec![
-                axo::QueuedInput {
-                    submission_id: "steer".into(),
-                    kind: SubmissionKind::Steer,
-                    parts: vec![axo::PromptPart::Text {
-                        text: "steer".into(),
-                    }],
-                    custom: None,
-                },
-                axo::QueuedInput {
-                    submission_id: "reopened".into(),
-                    kind: SubmissionKind::Prompt,
-                    parts: vec![axo::PromptPart::Text {
-                        text: "reopened".into(),
-                    }],
-                    custom: None,
-                },
-                axo::QueuedInput {
-                    submission_id: "follow".into(),
-                    kind: SubmissionKind::FollowUp,
-                    parts: vec![axo::PromptPart::Text {
-                        text: "follow".into(),
-                    }],
-                    custom: None,
-                },
-            ],
-            messages: vec![],
-            pending_questions: vec![],
-            pending_results: vec![],
-            jobs: vec![],
-            usage: Usage::default(),
-            tree_usage: Usage::default(),
-            model: axo_ai::Model {
-                id: "m".into(),
-                name: "Test".into(),
-                api: axo_ai::ApiKind::OpenAiCompletions,
-                provider: "test".into(),
-                base_url: String::new(),
-                reasoning: false,
-                thinking_level_map: None,
-                input: vec![],
-                cost: Default::default(),
-                context_window: 1000,
-                max_tokens: 100,
-                compat: Default::default(),
-            },
-            thinking: ThinkingLevel::Off,
-            agent: None,
-            mode: None,
-            effective_mode: None,
-            context: None,
-            auto_paused: false,
+        let input = |id: &str, kind, provenance| axo::QueuedInput {
+            submission_id: id.into(),
+            kind,
+            parts: vec![axo::PromptPart::Text { text: id.into() }],
+            custom: None,
+            provenance,
         };
+        let items = [
+            input(
+                "steer",
+                SubmissionKind::Steer,
+                Some(axo::SubmissionProvenance::Agent {
+                    session_id: "parent".into(),
+                    route: axo::SendKind::Steer,
+                    name: Some("scout".into()),
+                }),
+            ),
+            input("quiet", SubmissionKind::Quiet, None),
+            input("reopened", SubmissionKind::Prompt, None),
+            input("mail", SubmissionKind::Mail, None),
+            input(
+                "follow",
+                SubmissionKind::FollowUp,
+                Some(axo::SubmissionProvenance::Extension {
+                    id: "scratch".into(),
+                }),
+            ),
+        ];
         assert_eq!(
-            queue_at_attach(&snapshot),
-            vec![
-                ChatQueued {
-                    submission_id: "steer".into(),
-                    kind: ChatQueueKind::Steer,
-                    parts: vec![ChatPart::Text {
-                        text: "steer".into()
-                    }]
+            serde_json::to_value(queued(&items)).unwrap(),
+            serde_json::json!([
+                {
+                    "submissionId": "steer", "kind": "steer",
+                    "parts": [{"type": "text", "text": "steer"}],
+                    "from": {"kind": "agent", "name": "scout"}
                 },
-                ChatQueued {
-                    submission_id: "reopened".into(),
-                    kind: ChatQueueKind::Steer,
-                    parts: vec![ChatPart::Text {
-                        text: "reopened".into()
-                    }]
+                {
+                    "submissionId": "reopened", "kind": "steer",
+                    "parts": [{"type": "text", "text": "reopened"}],
+                    "from": null
                 },
-                ChatQueued {
-                    submission_id: "follow".into(),
-                    kind: ChatQueueKind::FollowUp,
-                    parts: vec![ChatPart::Text {
-                        text: "follow".into()
-                    }]
-                },
-            ]
+                {
+                    "submissionId": "follow", "kind": "followUp",
+                    "parts": [{"type": "text", "text": "follow"}],
+                    "from": {"kind": "extension", "id": "scratch"}
+                }
+            ]),
         );
-        snapshot.queued.clear();
-        assert!(queue_at_attach(&snapshot).is_empty());
+        assert!(queued(&[]).is_empty());
     }
 
     #[test]

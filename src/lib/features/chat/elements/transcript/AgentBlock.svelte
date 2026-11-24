@@ -5,7 +5,12 @@
   import { Separator } from '$lib/components/ui/separator'
   import * as Alert from '$lib/components/ui/alert'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
+  import { backend } from '$lib/api/backend'
+  import { chatExtensionTarget, findExtension } from '$lib/features/chat/extensions'
+  import { openExtensionSettings } from '$lib/features/settings/dialog/state.svelte'
+  import { splitRemotePath } from '$lib/utils/paths'
   import * as Message from '$lib/features/chat/elements/message'
+  import { TIER_LABELS } from '$lib/features/chat/elements/model-picker/selector'
   import {
     cacheHitPercent,
     formatCost,
@@ -19,6 +24,7 @@
   import { isActiveJob, type TranscriptJob } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { notify } from '$lib/features/notifications/state.svelte'
+  import type { ChatUsage } from '$lib/types/backend'
   import {
     ArrowDown02Icon,
     ArrowUp02Icon,
@@ -66,8 +72,7 @@
     overrides,
     onView,
     onOpenJob,
-    onOpenPlan,
-    onAnswer
+    onOpenPlan
   }: {
     turn: Turn
     turns: Turn[]
@@ -84,18 +89,21 @@
     onView: (stepId: string, view: BlockView) => void
     onOpenJob?: (ref?: string) => void
     onOpenPlan?: () => void
-    /** Opens the docked ask panel from a pending question's row. */
-    onAnswer?: () => void
   } = $props()
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
+  const tierLabel = $derived.by(() => {
+    const first = turn.assistants[0]?.body.serviceTier
+    if (!first) return null
+    if (turn.assistants.some(({ body }) => body.serviceTier !== first)) return 'Mixed tiers'
+    return first === 'standard' ? null : TIER_LABELS[first]
+  })
   const duration = $derived(turnDurationMs(turn, now))
   const compactionSteps = $derived(
     turn.steps.filter((step): step is Extract<Step, { kind: 'compaction' }> => step.kind === 'compaction')
   )
   const segments = $derived(segmentSteps(groupSteps(turn.steps.filter((step) => step.kind !== 'compaction')), jobs))
   const liveJobs = $derived(controller.state?.live.jobs ?? [])
-  const asking = $derived(new Set(controller.state?.live.questions.map((questions) => questions.callId)))
   const reviews = $derived(controller.state?.live.reviews ?? [])
   const canReview = $derived(controller.connection === 'live' && !controller.readOnly)
   const retry = $derived(turn.running ? (controller.state?.live.retry ?? null) : null)
@@ -104,7 +112,7 @@
   const copyText = $derived(turn.steps.flatMap((step) => (step.kind === 'text' ? [step.text] : [])).join('\n\n'))
   const usage = $derived.by(() => {
     if (!turn.assistants.length) return null
-    const sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 }
+    const sum: ChatUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 }
     let assistantMs = 0
     let hasAssistantMs = false
     for (const entry of turn.assistants) {
@@ -113,7 +121,7 @@
       sum.cacheRead += entry.body.usage.cacheRead
       sum.cacheWrite += entry.body.usage.cacheWrite
       sum.totalTokens += entry.body.usage.totalTokens
-      sum.cost += entry.body.usage.cost
+      sum.cost = sum.cost === null || entry.body.usage.cost === null ? null : sum.cost + entry.body.usage.cost
       if (entry.body.durationMs !== null) {
         assistantMs += entry.body.durationMs
         hasAssistantMs = true
@@ -126,6 +134,44 @@
     return { ...sum, totalTokens, cacheHitPercent: cacheHitPercent(sum), tokensPerSec }
   })
   const endNotice = $derived(turnEndNotice(turn))
+  const failedAssistant = $derived(turn.assistants.findLast(({ body }) => body.stopReason === 'error'))
+  const failedProvider = $derived(
+    failedAssistant?.body.providerUnavailable ? failedAssistant.body.model.split('/')[0] : null
+  )
+  const providerOrigin = $derived.by(() => {
+    const state = controller.extensions
+    if (!failedProvider || !state || state.stale || state.providerError || controller.readOnly) return null
+    const provider = state.providers?.providers.find(({ id }) => id === failedProvider)
+    return provider?.origin ? { id: provider.origin, scoped: provider.originProject } : null
+  })
+  const providerExtension = $derived(
+    providerOrigin && findExtension(controller.extensions?.payload ?? null, providerOrigin)
+  )
+  async function retryProvider() {
+    const state = controller.extensions
+    const origin = providerOrigin
+    if (
+      !state ||
+      state.busy ||
+      state.stale ||
+      controller.readOnly ||
+      controller.connection !== 'live' ||
+      !origin ||
+      !providerExtension?.enabled
+    )
+      return
+    const target = chatExtensionTarget(folderPath, origin)
+    const project = target.projectFolder
+    const scope = project && (splitRemotePath(project)?.path ?? project)
+    await state.run(async () => {
+      try {
+        await backend.axo.retryExtension(origin.id, scope, target.hostFolder)
+      } catch (error) {
+        notify.error('Retry failed', getErrorMessage(error))
+        throw error
+      }
+    })
+  }
   // Jobs this turn started that outlive a stopped turn.
   const stillRunning = $derived.by(() => {
     const ids = liveJobs
@@ -182,7 +228,6 @@
       {controller}
       {now}
       {onOpenJob}
-      {onAnswer}
     />
   {:else if step.kind === 'tool'}
     <ToolBlock
@@ -195,7 +240,6 @@
       {controller}
       {now}
       {onOpenJob}
-      {onAnswer}
     />
   {:else if step.kind === 'job'}
     {#if step.target === 'command'}
@@ -239,9 +283,24 @@
       <ReceiptRow call={step.call} {onOpenJob} />
     {/if}
   {:else if step.kind === 'notice' && step.notice.kind !== 'jobWake'}
-    <NoticeBlock notice={step.notice} {folderPath} {sessionId} />
+    <NoticeBlock notice={step.notice} timestamp={step.timestamp} {folderPath} {sessionId} />
   {:else if step.kind === 'branchSummary'}
     <SummaryBlock {step} view={overrides[step.id] ?? detailView} {onView} {folderPath} {sessionId} />
+  {:else if step.kind === 'thinkingChange' || step.kind === 'serviceTierChange'}
+    <div class="flex items-start gap-2 text-sm text-muted" data-command={step.kind}>
+      <Icon icon={InfoIcon} size={14} class="shrink-0" />
+      <div>
+        {#if step.kind === 'thinkingChange'}
+          <div>Effort {step.automatic ? 'adjusted' : 'set'} to {step.thinking}</div>
+        {/if}
+        {#if step.serviceTier}
+          <div class="flex flex-wrap items-baseline gap-x-2">
+            <span>Tier set to {TIER_LABELS[step.serviceTier]}</span>
+            <span class="text-xs text-subtle">from the next request</span>
+          </div>
+        {/if}
+      </div>
+    </div>
   {:else if step.kind === 'contextMoved' || step.kind === 'agentChange' || step.kind === 'modeChange'}
     <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
       <Icon icon={InfoIcon} size={14} />
@@ -268,7 +327,6 @@
         {liveJobs}
         {expansion}
         {overrides}
-        {asking}
         {onView}
         {render}
         stop={stopControl}
@@ -298,10 +356,41 @@
       <span>Stopped.{stillRunning}</span>
     </div>
   {:else if endNotice?.kind === 'failed'}
-    <Alert.Root variant="danger">
-      <Alert.Title>Turn Failed</Alert.Title>
-      <Alert.Description class="whitespace-pre-wrap">{endNotice.text}</Alert.Description>
-    </Alert.Root>
+    {#if failedProvider}
+      <Alert.Root variant="danger">
+        <Alert.Title>Request failed: provider {failedProvider} is unavailable</Alert.Title>
+        <Alert.Description>
+          {#if providerOrigin}
+            It comes from {providerOrigin.id}, which {providerExtension?.phase === 'disabled'
+              ? 'stopped after a failure.'
+              : "isn't running right now."}
+          {/if}
+          Work so far is kept above.
+          <details class="mt-1">
+            <summary class="cursor-pointer focus-visible:shadow-focus-ring focus-visible:outline-none"
+              >Error details</summary
+            >
+            <p class="mt-1 wrap-anywhere whitespace-pre-wrap">{failedAssistant?.body.error ?? endNotice.text}</p>
+          </details>
+        </Alert.Description>
+        {#if providerOrigin}
+          {@const target = chatExtensionTarget(folderPath, providerOrigin)}
+          <div class="flex flex-wrap gap-1">
+            <Button variant="text" size="xs" onclick={() => openExtensionSettings(target)}>Open Extensions</Button>
+            {#if providerExtension?.enabled && controller.connection === 'live' && !controller.readOnly}
+              <Button variant="text" size="xs" disabled={controller.extensions?.busy} onclick={retryProvider}
+                >Retry</Button
+              >
+            {/if}
+          </div>
+        {/if}
+      </Alert.Root>
+    {:else}
+      <Alert.Root variant="danger">
+        <Alert.Title>Turn Failed</Alert.Title>
+        <Alert.Description class="whitespace-pre-wrap">{endNotice.text}</Alert.Description>
+      </Alert.Root>
+    {/if}
   {:else if endNotice?.kind === 'note'}
     <div class="flex items-start gap-2 text-sm text-muted">
       <Icon icon={TriangleAlertIcon} size={14} class="shrink-0" />
@@ -331,8 +420,12 @@
           >
             <Icon icon={InfoIcon} size={14} />
           </Tooltip.Trigger>
-          <Tooltip.Content side="top" align="start" class="w-64 p-3">
-            <div class="mb-2 text-xs font-medium tracking-wide text-muted uppercase">Message usage</div>
+          <Tooltip.Content
+            side="top"
+            align="start"
+            class="max-h-[min(70dvh,var(--bits-tooltip-content-available-height,70dvh))] w-80 overflow-y-auto p-3"
+          >
+            <div class="mb-2 text-xs font-medium tracking-wide text-muted uppercase">Response Details</div>
             <dl class="flex flex-col gap-1.5 text-sm">
               {#if duration !== null}
                 {@render stat(Clock01Icon, 'Duration', formatDuration(duration))}
@@ -356,16 +449,36 @@
                 {#if usage.tokensPerSec !== null}
                   {@render stat(ArrowDown02Icon, 'Rate', `${usage.tokensPerSec} tok/s avg`)}
                 {/if}
-                {@render stat(DollarCircleIcon, 'Cost', formatCost(usage.cost))}
+                {@render stat(DollarCircleIcon, 'Estimated total', formatCost(usage.cost))}
               {/if}
             </dl>
+            {#if usage}
+              <Separator class="my-2 bg-edge-strong" />
+              <div class="mb-1 text-xs text-muted">Requests</div>
+              <ol class="list-decimal space-y-1.5 ps-4 text-xs marker:text-muted">
+                {#each turn.assistants as { id, body } (id)}
+                  <li>
+                    <div class="flex items-baseline justify-between gap-2">
+                      <span class="min-w-0 truncate font-mono text-fg" title={body.model}>
+                        {modelName(body.model)} · {body.thinking ?? 'unknown'}
+                      </span>
+                      <span class="shrink-0 text-muted">{TIER_LABELS[body.serviceTier]}</span>
+                      <span class="shrink-0 font-mono tabular-nums">{formatCost(body.usage.cost)}</span>
+                    </div>
+                  </li>
+                {/each}
+              </ol>
+              <p class="mt-2 text-xs text-muted">Estimates use the tier recorded on each response.</p>
+            {/if}
           </Tooltip.Content>
         </Tooltip.Root>
       {/if}
       {#if lastAssistant}
-        <span class="ml-1 truncate font-mono text-xs text-muted" title={lastAssistant.body.model}
-          >{modelName(lastAssistant.body.model)}:{turn.config.thinking ?? 'unknown'}</span
-        >
+        <span class="ml-1 truncate font-mono text-xs text-muted" title={lastAssistant.body.model}>
+          {modelName(lastAssistant.body.model)} · {lastAssistant.body.thinking ?? 'unknown'}{tierLabel
+            ? ` · ${tierLabel}`
+            : ''}
+        </span>
       {/if}
     </div>
   {/if}

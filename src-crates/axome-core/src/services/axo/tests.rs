@@ -8,9 +8,9 @@ use axo::{Axo, Command, ConfigLayer, ConfigSource, PromptRequest, SessionOptions
 use axo_ai::testing::{reply_text, reply_tool_calls};
 use axo_ai::{FileCredentialStore, Models, ModelsConfig, ModelsOptions, ScriptedApi, ScriptedTurn};
 use axome_protocol::chat::{
-    ChatAnswer, ChatCommandKind, ChatEntry, ChatEntryBody, ChatEvent, ChatJobKind, ChatJobStatus,
-    ChatLinkTarget, ChatLive, ChatOutputChunk, ChatOutputStream, ChatPart, ChatRunOutcome,
-    ChatThinking,
+    ChatAnswer, ChatAnswerValue, ChatAskBlock, ChatCommandKind, ChatEntry, ChatEntryBody,
+    ChatEvent, ChatJobKind, ChatJobStatus, ChatLinkTarget, ChatLive, ChatOutputChunk,
+    ChatOutputStream, ChatPart, ChatRunOutcome, ChatServiceTier, ChatThinking,
 };
 use base64::Engine as _;
 use parking_lot::Mutex;
@@ -113,15 +113,22 @@ impl Fixture {
         .streamer(api.clone())
         .build();
         let db = Arc::new(DatabaseService::new(dir.join("test.db")).unwrap());
+        let dirs = crate::HostDirs::under(&dir);
+        let axo = Arc::new(axo);
+        let extensions = super::extensions::ExtensionService::new(axo.clone(), &dirs, None)
+            .await
+            .unwrap();
         let service = AxoService::with_engine_and_events(
             db,
-            crate::HostDirs::under(&dir),
+            dirs,
             Engine {
-                axo: Arc::new(axo),
+                axo,
                 models,
+                extensions,
             },
             events,
-        );
+        )
+        .await;
         Self {
             service,
             folder,
@@ -133,7 +140,12 @@ impl Fixture {
 
     async fn create(&self) -> String {
         self.service
-            .create(&self.folder, "test/m".into(), ChatThinking::Off)
+            .create(
+                &self.folder,
+                "test/m".into(),
+                ChatThinking::Off,
+                ChatServiceTier::Standard,
+            )
             .await
             .unwrap()
     }
@@ -434,7 +446,12 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
 
     let writer_id = fixture
         .service
-        .create(&writer_dir, "test/m".into(), ChatThinking::Off)
+        .create(
+            &writer_dir,
+            "test/m".into(),
+            ChatThinking::Off,
+            ChatServiceTier::Standard,
+        )
         .await
         .unwrap();
     let (writer_events, sink) = collector();
@@ -478,9 +495,13 @@ async fn ask_round_trip() {
             "ask-1",
             "ask",
             json!({
-                "questions": [{
+                "blocks": [{
+                    "type": "choice",
                     "id": "choice", "question": "Which file?",
-                    "options": [{"label": "first"}, {"label": "second"}]
+                    "options": [
+                        {"value": "first", "label": "first"},
+                        {"value": "second", "label": "second"}
+                    ]
                 }]
             }),
         )])),
@@ -518,8 +539,17 @@ async fn ask_round_trip() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(pending.questions.len(), 1);
-    let question = &pending.questions[0];
+    assert_eq!(pending.blocks.len(), 1);
+    let ChatAskBlock::Choice {
+        id: question_id,
+        options,
+        ..
+    } = &pending.blocks[0]
+    else {
+        panic!("expected the pending choice block");
+    };
+    assert_eq!(question_id, "choice");
+    assert_eq!(options[0].value, "first");
     fixture
         .service
         .answer(
@@ -527,9 +557,10 @@ async fn ask_round_trip() {
             &id,
             pending.call_id.clone(),
             vec![ChatAnswer {
-                id: question.id.clone(),
-                selected: vec![question.options[0].label.clone()],
-                custom: None,
+                id: "choice".into(),
+                value: Some(ChatAnswerValue::Text("first".into())),
+                other: None,
+                note: None,
             }],
         )
         .await
@@ -691,6 +722,7 @@ fn list_history_rejects_a_stopped_runtime() {
             db,
             crate::HostDirs::under(&dir),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            None,
             events,
         ),
         folder: dir.clone(),
@@ -855,6 +887,16 @@ fn replies() -> Vec<ScriptedTurn> {
 async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
     let direct = Fixture::new(replies()).await;
     let wrapped = Fixture::new(replies()).await;
+    let mut tools = direct.service.web.host_tools(&direct.folder);
+    tools.extend(
+        direct
+            .service
+            .browser
+            .host_tools(super::config::browser_config(
+                &direct.service.dirs,
+                &direct.folder,
+            )),
+    );
     let session = direct
         .service
         .axo()
@@ -865,10 +907,8 @@ async fn structured_prompts_and_commands_match_direct_axo_jsonl() {
             model: Some("test/m".into()),
             thinking: Some(axo_ai::ThinkingLevel::Off),
             ask_enabled: true,
-            agents: super::bundled::agents().to_vec(),
-            modes: super::bundled::modes().to_vec(),
-            keywords: super::bundled::keywords().to_vec(),
-            tools: direct.service.web.host_tools(&direct.folder),
+            definitions: super::bundled::definitions(super::bundled::modes().to_vec()),
+            tools,
             schemes: direct.service.web.host_schemes(),
             ..Default::default()
         })
@@ -1439,7 +1479,12 @@ fn chat_close_succeeds_after_folder_is_deleted() {
     }
     let folder_str = folder.to_string_lossy().into_owned();
     let session_id = host
-        .chat_create(folder_str.clone(), "test/m".into(), ChatThinking::Off)
+        .chat_create(
+            folder_str.clone(),
+            "test/m".into(),
+            ChatThinking::Off,
+            ChatServiceTier::Standard,
+        )
         .unwrap();
     assert_eq!(host.axo.loaded(), 1);
     std::fs::remove_dir_all(&folder).unwrap();
@@ -1476,6 +1521,7 @@ async fn engine_reloads_in_place() {
         db,
         dirs.clone(),
         axome_protocol::server_config::Supervision::ProcessGroup,
+        None,
         Arc::new(|_| Ok(())),
     );
     service.bind_runtime();
@@ -1505,7 +1551,7 @@ async fn engine_reloads_in_place() {
     let third = service.engine().await.unwrap();
     assert!(Arc::ptr_eq(&first, &third));
     assert!(service
-        .providers()
+        .providers(None)
         .await
         .unwrap()
         .models_file
@@ -1824,8 +1870,12 @@ async fn bundled_definitions_load_and_project_agents_override() {
     .unwrap();
 
     let engine = fixture.service.engine().await.unwrap();
-    let catalog =
-        super::bundled::catalog(&engine.axo, &fixture.folder, axo::ProjectAccess::Trust).unwrap();
+    let catalog = super::bundled::catalog(
+        &engine.axo,
+        &fixture.folder,
+        super::project_access(&fixture.folder),
+    )
+    .unwrap();
     let catalog_scout = catalog
         .agents
         .iter()
@@ -2095,8 +2145,15 @@ async fn turn_snapshots_and_squash_work_across_live_and_closed_sessions() {
                                 },
                             ..
                         },
-                } => details.get("change").cloned(),
+                } => details.get("files").and_then(Value::as_array),
                 _ => None,
+            })
+            .flatten()
+            .filter_map(|record| {
+                record
+                    .get("change")
+                    .filter(|change| !change.is_null())
+                    .cloned()
             })
             .collect()
     };

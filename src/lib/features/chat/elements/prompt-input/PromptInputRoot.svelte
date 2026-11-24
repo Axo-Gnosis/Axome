@@ -5,7 +5,7 @@
   import { keymap } from 'prosemirror-keymap'
   import { history, undo, redo } from 'prosemirror-history'
   import { deleteSelection, selectAll } from 'prosemirror-commands'
-  import { IconButton } from '$lib/components/ui/button'
+  import { Button, IconButton } from '$lib/components/ui/button'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
   import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
   import {
@@ -19,6 +19,9 @@
     SparklesIcon
   } from '@hugeicons/core-free-icons'
   import { notify } from '$lib/features/notifications/state.svelte'
+  import { stoppedCommandTarget } from '$lib/features/chat/extensions'
+  import { openExtensionSettings, type ExtensionSettingsTarget } from '$lib/features/settings/dialog/state.svelte'
+  import type { ExtensionsState } from '$lib/features/settings/state/extensions.svelte'
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
   import {
     CONTENT_LIMIT,
@@ -60,6 +63,7 @@
     placeholder,
     commands,
     models = [],
+    extensions = null,
     running = false,
     owner,
     onSubmit,
@@ -79,6 +83,7 @@
     placeholder: string
     commands: ChatCommand[]
     models?: ChatModel[]
+    extensions?: ExtensionsState | null
     running?: boolean
     owner: { folderPath: string; sessionId: string | null }
     onSubmit: () => unknown
@@ -100,6 +105,7 @@
   let view: EditorView | undefined
   let lastParts: ChatPart[] = []
   let validation = $state('')
+  let stoppedLink = $state.raw<ExtensionSettingsTarget | null>(null)
   const alertMessage = $derived(validation || blocked)
   // The argument a failed send flagged; cleared by the next edit.
   let invalid = $state<string | null>(null)
@@ -111,13 +117,16 @@
   const skill = $derived(invokedCommand(parts, commands, 'skill'))
   // Only a composer that can enter modes treats `/<mode>` as one; elsewhere it is plain text.
   const mode = $derived(onMode ? invokedCommand(parts, commands, 'mode') : null)
+  const registered = $derived(onCommand ? invokedCommand(parts, commands, 'registered') : null)
   type Query =
     | { kind: 'file' | 'command'; text: string; from: number; to: number }
     | { kind: 'argument'; text: string; from: number; to: number; arg: CommandArgument }
   let query = $state.raw<Query | null>(null)
   // The built-in command being typed, re-read on every editor change.
   let line = $state.raw<CommandLine | null>(null)
-  const canSend = $derived(!disabled && !submitting && (!blocked || !!line || !!mode) && hasContent(parts))
+  const canSend = $derived(
+    !disabled && !submitting && (!blocked || !!line || !!mode || !!registered) && hasContent(parts)
+  )
   let dismissed = ''
   let active = $state(0)
   let files = $state.raw<string[]>([])
@@ -145,10 +154,16 @@
   let outsideKey = ''
   const catalog = $derived(commands.filter(offeredCommand))
   type Item = Suggestion & { command?: ChatCommand; path?: string; value?: string }
-  const catalogRank: Record<ChatCommand['kind'], number> = { builtin: 0, mode: 1, skill: 2 }
-  const catalogGroup: Record<ChatCommand['kind'], string> = { builtin: 'Commands', mode: 'Modes', skill: 'Skills' }
+  const catalogRank: Record<ChatCommand['kind'], number> = { builtin: 0, registered: 1, mode: 2, skill: 3 }
+  const catalogGroup: Record<ChatCommand['kind'], string> = {
+    builtin: 'Commands',
+    registered: 'Commands',
+    mode: 'Modes',
+    skill: 'Skills'
+  }
   const catalogIcon: Record<ChatCommand['kind'], IconData> = {
     builtin: SlashIcon,
+    registered: SlashIcon,
     mode: Layers01Icon,
     skill: SparklesIcon
   }
@@ -203,25 +218,30 @@
       return catalog
         .filter((item) => item.name.startsWith(query!.text))
         .sort((a, b) => catalogRank[a.kind] - catalogRank[b.kind])
-        .map((item) => ({
-          key: item.name,
-          group: catalogGroup[item.kind],
-          label: item.name,
-          icon: catalogIcon[item.kind],
-          detail: item.description,
-          fields:
-            item.kind === 'builtin'
-              ? commandFields(item).map(([name]) => name)
-              : item.argumentHint
-                ? [item.argumentHint]
-                : undefined,
-          blocked: running && item.policy === 'when_idle' ? 'when idle' : undefined,
-          command: item
-        }))
+        .map((item) => {
+          const stopped = !!stoppedCommandTarget(extensions, owner.folderPath, item.origin)
+          return {
+            key: item.name,
+            group: catalogGroup[item.kind],
+            label: item.name,
+            icon: catalogIcon[item.kind],
+            origin: item.origin ?? undefined,
+            stopped,
+            detail: item.description,
+            fields:
+              item.kind === 'builtin'
+                ? commandFields(item).map(([name]) => name)
+                : item.argumentHint
+                  ? [item.argumentHint]
+                  : undefined,
+            blocked: !stopped && running && item.policy === 'when_idle' ? 'when idle' : undefined,
+            command: item
+          }
+        })
     return []
   })
   const open = $derived(!disabled && !!query)
-  // What the line above the input explains: the argument under the caret, the command, or the skill or mode being typed.
+  // What the line above the input explains: the argument under the caret or the command being typed.
   const context = $derived.by(() => {
     if (line?.slot) {
       const required = (line.command.parameters.required ?? []) as string[]
@@ -237,7 +257,7 @@
         note: running && line.command.policy === 'when_idle' ? 'when idle' : undefined,
         text: line.command.description
       }
-    const invoked = skill ?? mode
+    const invoked = registered ?? skill ?? mode
     if (invoked)
       return { title: '/' + invoked.name, note: invoked.argumentHint ?? undefined, text: invoked.description }
     if (hint && hasContent(parts)) return { title: hint.title, note: undefined, text: hint.text }
@@ -289,6 +309,7 @@
   }
   async function submit(followUp = false): Promise<void> {
     if (disabled || submitting) return
+    stoppedLink = null
     const fail = (message: string, name: string | null, caret: number) => {
       validation = message
       invalid = name
@@ -333,6 +354,22 @@
       const enter = onMode
       const name = mode.name
       return settle(() => enter(name, rest), end)
+    } else if (view && registered && onCommand) {
+      const { name, policy } = registered
+      const end = documentText(view.state.doc).length
+      const target = stoppedCommandTarget(extensions, owner.folderPath, registered.origin)
+      if (target) {
+        stoppedLink = target
+        return fail(`/${name} is stopped. Retry in Settings.`, null, end)
+      }
+      const args = getParts()
+      if (args.some((part) => part.type !== 'text')) return fail(`/${name} can't take attachments.`, null, end)
+      if (running && policy === 'when_idle') return fail(`/${name} is available when idle.`, null, end)
+      const text = partsText(args)
+        .slice(name.length + 1)
+        .trim()
+      const run = onCommand
+      return settle(() => run(name, { args: text }), end)
     } else if (!blocked) {
       submitting = true
       try {
@@ -346,6 +383,14 @@
   function choose(index = active, descend = false) {
     const item = items[index]
     if (!item || !query || !view) return
+    if (item.command) {
+      const target = stoppedCommandTarget(extensions, owner.folderPath, item.command.origin)
+      if (target) {
+        query = null
+        openExtensionSettings(target)
+        return
+      }
+    }
     if (item.blocked) {
       validation = `/${item.label} is available when idle.`
       return
@@ -657,6 +702,7 @@
       dispatchTransaction(transaction) {
         if (transaction.docChanged) {
           validation = ''
+          stoppedLink = null
           invalid = null
           staleKeywords()
         }
@@ -816,6 +862,11 @@
     <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-4 py-2 text-sm">
       {#if alertMessage}
         <span role="alert" class="truncate text-danger">{alertMessage}</span>
+        {#if stoppedLink}
+          <Button variant="text" size="xs" onclick={() => stoppedLink && openExtensionSettings(stoppedLink)}
+            >Open Extensions</Button
+          >
+        {/if}
       {:else if context}
         <span class="shrink-0 font-medium text-bright">{context.title}</span>
         {#if context.note}<span class="shrink-0 text-xs text-subtle">{context.note}</span>{/if}

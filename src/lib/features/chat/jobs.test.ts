@@ -40,7 +40,6 @@ function turn(steps: Step[]): Turn {
   return {
     id: 'turn:0',
     user: null,
-    config: { model: null, thinking: null },
     steps,
     assistants: [],
     end: null,

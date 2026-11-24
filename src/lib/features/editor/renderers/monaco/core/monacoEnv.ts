@@ -1,5 +1,5 @@
 // Monaco environment bootstrap. Sets up workers, theme, keybinding
-// overrides, and per-host language support from extension catalogs.
+// overrides, and per-host language support from integration catalogs.
 
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
@@ -80,7 +80,7 @@ function getJsonLanguageService(monaco: typeof import('monaco-editor')): JsonLan
   return (monaco.languages.json as unknown as { jsonDefaults: JsonLanguageDefaults }).jsonDefaults
 }
 
-/** One-time Monaco setup: extension language support, theme, keybinding overrides. */
+/** One-time Monaco setup: integration language support, theme, keybinding overrides. */
 let initPromise: Promise<void> | null = null
 
 export function initMonaco(monaco: typeof import('monaco-editor')): Promise<void> {
@@ -127,7 +127,7 @@ export function initMonaco(monaco: typeof import('monaco-editor')): Promise<void
 
     await ensureMonacoLsp(monaco)
     await ensureFolderLanguageSupport(monaco, null).catch((error) =>
-      console.warn('Extension language support failed', error)
+      console.warn('Integration language support failed', error)
     )
 
     const { KeyMod, KeyCode } = monaco

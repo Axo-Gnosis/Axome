@@ -9,13 +9,24 @@
   } from './scrollAnchor'
   import { IconButton } from '$lib/components/ui/button'
   import type { Turn } from '$lib/features/chat/turns'
+  import { focusAskControl } from '$lib/features/chat/elements/ask/askDocument'
   import { ArrowDown02Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
   import { logicalKey } from '$lib/utils/keyboardEvent'
   import TurnRail from './TurnRail.svelte'
 
-  let { turns = [], children, footer }: { turns?: Turn[]; children?: Snippet; footer?: Snippet } = $props()
+  let {
+    turns = [],
+    children,
+    footer,
+    onAskVisibility
+  }: {
+    turns?: Turn[]
+    children?: Snippet
+    footer?: Snippet
+    onAskVisibility?: (visibleCallIds: string[]) => void
+  } = $props()
 
   let viewport: HTMLDivElement | undefined
   let transcript: HTMLDivElement | undefined
@@ -211,6 +222,90 @@
     viewport.scrollTo({ top, behavior: 'smooth' })
   }
 
+  export function jumpToAsk(callId: string): void {
+    const scroller = viewport
+    const content = transcript
+    if (!scroller?.isConnected || !content?.isConnected) return
+    const target = Array.from(content.querySelectorAll<HTMLElement>('[data-ask-call-id]')).find(
+      (node) => node.dataset.askCallId === callId
+    )
+    if (!target) return
+    expansionAnchor.reset()
+    lockedSpacer = null
+    anchor = null
+    atBottom = false
+    changing = false
+    beginUserScroll()
+    const current = revision
+    void tick().then(() => {
+      if (
+        current !== revision ||
+        viewport !== scroller ||
+        !content.contains(target) ||
+        target.dataset.askCallId !== callId
+      )
+        return
+      const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      scroller.scrollTo({ top: scroller.scrollTop + delta, behavior: reducedMotion ? 'instant' : 'smooth' })
+      if (!focusAskControl(target)) target.focus({ preventScroll: true })
+      updateAtBottom()
+    })
+  }
+
+  function observeAsks(content: HTMLDivElement) {
+    if (!onAskVisibility) return
+    const scroller = content.parentElement?.parentElement
+    if (!scroller) return
+    let rows: HTMLElement[] = []
+    let reported: string[] = []
+    const visible = new Set<Element>()
+    function report() {
+      const next = rows.filter((node) => visible.has(node)).map((node) => node.dataset.askCallId!)
+      if (next.length === reported.length && next.every((id, index) => id === reported[index])) return
+      reported = next
+      onAskVisibility?.(next)
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && content.contains(entry.target)) visible.add(entry.target)
+          else visible.delete(entry.target)
+        }
+        report()
+      },
+      { root: scroller }
+    )
+    function reconcile() {
+      const next = Array.from(content.querySelectorAll<HTMLElement>('[data-ask-call-id]'))
+      const seen = new Set(next)
+      const previous = new Set(rows)
+      for (const node of rows) {
+        if (!seen.has(node)) {
+          visible.delete(node)
+          observer.unobserve(node)
+        }
+      }
+      for (const node of next) {
+        if (!previous.has(node)) observer.observe(node)
+      }
+      rows = next
+      report()
+    }
+    const mutations = new MutationObserver(reconcile)
+    mutations.observe(content, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-ask-call-id']
+    })
+    reconcile()
+    return () => {
+      mutations.disconnect()
+      observer.disconnect()
+    }
+  }
+
   $effect(() => {
     void turns
     void tick().then(() => {
@@ -321,6 +416,7 @@
       <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col" {@attach pinToBottom}>
         <div
           bind:this={transcript}
+          {@attach observeAsks}
           class={cn('flex flex-1 flex-col gap-4 pt-4 pb-2', lockedSpacer === null && 'justify-end')}
           style:padding-top={`${lockedSpacer ?? overscrollTop}px`}
         >

@@ -1,8 +1,13 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use axo::{Axo, JsonlStore};
-use axo_ai::{FileCredentialStore, Models, ModelsConfig, ModelsOptions};
+use axo_ai::auth::CredentialUpdate;
+use axo_ai::{
+    Credential, CredentialStore, FileCredentialStore, Models, ModelsConfig, ModelsOptions,
+};
 
+use super::extensions::ExtensionService;
 use super::{
     axo_error,
     config::{read_optional, AxomeConfig},
@@ -12,15 +17,46 @@ use crate::{errors::ApiError, services::db::DatabaseService, HostDirs};
 pub(crate) struct Engine {
     pub axo: Arc<Axo>,
     pub models: Arc<Models>,
+    pub(super) extensions: ExtensionService,
+}
+
+struct ProviderCredentials(Arc<FileCredentialStore>);
+
+#[async_trait::async_trait]
+impl CredentialStore for ProviderCredentials {
+    async fn get(&self, slot: &str) -> Result<Option<Credential>, axo_ai::Error> {
+        self.0.get(slot).await
+    }
+
+    async fn set(&self, slot: &str, credential: Credential) -> Result<(), axo_ai::Error> {
+        self.0.set(slot, credential).await
+    }
+
+    async fn remove(&self, slot: &str) -> Result<(), axo_ai::Error> {
+        // Distinguish a failed credential removal from axo's later cache-removal I/O.
+        self.0.remove(slot).await.map_err(|error| match error {
+            axo_ai::Error::Io(error) => {
+                axo_ai::Error::Auth(format!("Could not remove stored credential: {error}"))
+            }
+            error => error,
+        })
+    }
+
+    async fn update(
+        &self,
+        slot: &str,
+        update: CredentialUpdate,
+    ) -> Result<Option<Credential>, axo_ai::Error> {
+        self.0.update(slot, update).await
+    }
+}
+
+pub(super) fn model(models: &Models, selector: &str) -> Option<Arc<axo_ai::Model>> {
+    let (provider, id) = selector.split_once('/')?;
+    models.lookup(provider, id)
 }
 
 impl Engine {
-    pub(super) fn context_window(&self, selector: Option<&str>) -> u64 {
-        selector
-            .and_then(|selector| self.models.find(selector))
-            .map_or(0, |model| model.context_window)
-    }
-
     /// Builds the engine; the `Option<String>` is the `models.jsonc` error when the file was
     /// rejected and built-in models were loaded instead.
     pub(crate) async fn build(
@@ -29,6 +65,7 @@ impl Engine {
         credentials: Arc<FileCredentialStore>,
         supervision: axo::Supervision,
         extended_context: bool,
+        bun: Option<&Path>,
     ) -> Result<(Self, Option<String>), ApiError> {
         let data = dirs.data.join("axo");
         let cache = dirs.cache.join("axo");
@@ -45,6 +82,7 @@ impl Engine {
             db: db.clone(),
         };
         let parsed = read_models_config(dirs)?;
+        let credentials: Arc<dyn CredentialStore> = Arc::new(ProviderCredentials(credentials));
         let load = |config| {
             Models::load(ModelsOptions {
                 cache_dir: Some(cache.clone()),
@@ -82,7 +120,15 @@ impl Engine {
             .supervision(supervision)
             .build(),
         );
-        Ok((Self { axo, models }, models_error))
+        let extensions = ExtensionService::new(axo.clone(), dirs, bun).await?;
+        Ok((
+            Self {
+                axo,
+                models,
+                extensions,
+            },
+            models_error,
+        ))
     }
 }
 

@@ -9,6 +9,7 @@
     description,
     key = $bindable(),
     busy,
+    disabled = false,
     error,
     onSave,
     onClose
@@ -18,6 +19,7 @@
     description?: string
     key: string
     busy: boolean
+    disabled?: boolean
     error?: string | null
     onSave: () => void
     onClose: () => void
@@ -30,7 +32,7 @@
     if (!open) onClose()
   }}
 >
-  <Dialog.Content>
+  <Dialog.Content escapeKeydownBehavior={busy ? 'ignore' : 'close'} interactOutsideBehavior={busy ? 'ignore' : 'close'}>
     <Dialog.Header>
       <Dialog.Title>{title}</Dialog.Title>
       {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
@@ -43,12 +45,12 @@
       }}
     >
       <label class="flex flex-col gap-2 text-sm text-muted"
-        >API key<Input type="password" bind:value={key} autocomplete="off" disabled={busy} /></label
+        >API key<Input type="password" bind:value={key} autocomplete="off" disabled={busy || disabled} /></label
       >
       {#if error}<p role="alert" class="text-sm text-danger">{error}</p>{/if}
       <Dialog.Footer>
         <Button type="button" disabled={busy} onclick={onClose}>Cancel</Button>
-        <Button type="submit" variant="accent" disabled={busy || !key.trim()}>Save Key</Button>
+        <Button type="submit" variant="accent" disabled={busy || disabled || !key.trim()}>Save Key</Button>
       </Dialog.Footer>
     </form>
   </Dialog.Content>

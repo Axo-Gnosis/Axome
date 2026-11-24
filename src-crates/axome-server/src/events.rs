@@ -21,6 +21,16 @@ pub(crate) fn to_wire(event: HostEvent) -> Option<HostEventWire> {
         HostEvent::IssuesChanged(folder) => Some(HostEventWire::IssuesChanged(folder)),
         HostEvent::ChatSummariesChanged(event) => Some(HostEventWire::ChatSummariesChanged(event)),
         HostEvent::ModelsChanged => Some(HostEventWire::ModelsChanged(())),
+        HostEvent::ExtensionsChanged => Some(HostEventWire::ExtensionsChanged(())),
+        HostEvent::ExtensionStopped {
+            id,
+            folder,
+            problem,
+        } => Some(HostEventWire::ExtensionStopped {
+            id,
+            folder,
+            problem,
+        }),
         HostEvent::FileMoved { .. } | HostEvent::FileDeleted(_) => None,
     }
 }
@@ -70,6 +80,12 @@ pub(crate) async fn run(
             Ok(event) => event,
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 tracing::warn!(skipped, "host events stream lagged");
+                if write_frame(&mut send, &HostEventWire::ExtensionsChanged(()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
                 continue;
             }
             Err(broadcast::error::RecvError::Closed) => break,
@@ -99,7 +115,9 @@ pub(crate) async fn claimed(session: &Mutex<Session>, event: &HostEventWire) -> 
     let folder = match event {
         HostEventWire::RecentFoldersChanged(_)
         | HostEventWire::WorkbenchesChanged(())
-        | HostEventWire::ModelsChanged(()) => return true,
+        | HostEventWire::ModelsChanged(())
+        | HostEventWire::ExtensionsChanged(())
+        | HostEventWire::ExtensionStopped { .. } => return true,
         HostEventWire::FilesChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::GitChanged(event) => Some(event.folder_path.as_str()),
         HostEventWire::ChatSummariesChanged(event) => Some(event.folder_path.as_str()),

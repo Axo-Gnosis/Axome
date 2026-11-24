@@ -18,13 +18,13 @@
       webkitgtk_4_1
     ];
 
-  # Filter for crane workspace sources: keep Rust source, Tauri configs, desktop files, migrations, icons, and extensions.
+  # Filter for crane workspace sources: keep Rust source, Tauri configs, desktop files, migrations, icons, and integrations.
   workspaceSourceFilter =
     craneLib: path: type:
     (craneLib.filterCargoSources path type)
     || (lib.hasSuffix "tauri.conf.json" path)
     || (lib.hasSuffix "axome.desktop" path)
-    || (lib.hasInfix "src-crates/axome-core/extensions" path)
+    || (lib.hasInfix "src-crates/axome-core/integrations" path)
     # bundled.rs embeds these Markdown definitions with include_str! in both binaries.
     || (lib.hasInfix "/src-crates/axome-core/src/services/axo/bundled/" path)
     || (lib.hasInfix "src-tauri/capabilities" path)

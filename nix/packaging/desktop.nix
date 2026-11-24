@@ -40,6 +40,8 @@ let
   installNativePayload = root: ''
     install -Dm755 ${axome}/bin/.axome-wrapped "${root}/usr/bin/axome"
     patchelf --set-interpreter ${interpreter} --remove-rpath "${root}/usr/bin/axome"
+    install -Dm755 "${pkgs.bun}/bin/bun" "${root}/usr/lib/axome/bun"
+    patchelf --set-interpreter ${interpreter} --remove-rpath "${root}/usr/lib/axome/bun"
     install -Dm644 ${axome}/share/applications/axome.desktop "${root}/usr/share/applications/axome.desktop"
     sed -i 's|^Exec=axome|Exec=/usr/bin/axome|' "${root}/usr/share/applications/axome.desktop"
     mkdir -p "${root}/usr/share/icons"
@@ -143,6 +145,7 @@ let
       %files
       %defattr(-,root,root,-)
       /usr/bin/axome
+      /usr/lib/axome
       /usr/share/applications/axome.desktop
       /usr/share/icons/hicolor/*/*/*
       /usr/share/doc/axome

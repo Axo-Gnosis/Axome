@@ -42,6 +42,7 @@ pub async fn start_loop(root: &Path) -> anyhow::Result<(ServerHandle, Identity, 
         listen: Some("127.0.0.1:0".parse()?),
         config_file: None,
         web_assets_dir: None,
+        bun: None,
     })
     .await?;
     let desktop_config = axome_core::HostDirs::under(root).config;

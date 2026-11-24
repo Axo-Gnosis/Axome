@@ -1,4 +1,5 @@
 import { backend } from '$lib/api/backend'
+import { getSettingsLoadFolder } from '../dialog/state.svelte'
 import { getActiveFolderPath } from '$lib/features/workbench/state.svelte'
 import { invalidateLspServerEntries, restartLspServerDefinition } from '$lib/features/editor/lsp/registry'
 import { loadLspServers } from './lspSettings.svelte'
@@ -61,7 +62,12 @@ async function fetchSettings(host: string | null): Promise<SettingsPayload> {
   return remote
 }
 
-export async function loadSettings(folderPath: string | null = getActiveFolderPath()): Promise<SettingsPayload> {
+export function invalidateSettingsLoad(): void {
+  loadGeneration++
+  inFlightLoad = null
+}
+
+export async function loadSettings(folderPath: string | null = getSettingsLoadFolder()): Promise<SettingsPayload> {
   // A remote folder's daemon owns its host sections; anything else is this
   // desktop's. Both are read as that host's global layer, the one the setters
   // write.

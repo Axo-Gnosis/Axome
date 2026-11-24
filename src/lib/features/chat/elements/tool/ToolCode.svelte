@@ -174,12 +174,7 @@
   {#if limit !== null && (hiddenLines > 0 || hiddenHunks > 0)}
     <div class="mt-1">
       <MoreButton
-        label={[
-          hiddenLines > 0 ? formatCount(hiddenLines, 'more line') : '',
-          hiddenHunks > 0 ? formatCount(hiddenHunks, 'more hunk') : ''
-        ]
-          .filter(Boolean)
-          .join(', ')}
+        label={hiddenHunks > 0 ? formatCount(hiddenHunks, 'more hunk') : formatCount(hiddenLines, 'more line')}
         {onExpand}
       />
     </div>

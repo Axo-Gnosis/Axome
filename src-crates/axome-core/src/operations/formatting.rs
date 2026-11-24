@@ -2,13 +2,13 @@ use crate::{
     errors::ApiError,
     services::{
         env::EnvironmentService,
-        extensions::{missing_requirement, resolve_contribution_command, ExtensionService},
         folders::resolve_folder,
         formatting::{relative_stdin_file_path, FormattingService},
+        integrations::{missing_requirement, resolve_contribution_command, IntegrationService},
     },
     Host,
 };
-use axome_protocol::extensions::{FormatterAvailability, FormatterStatus};
+use axome_protocol::integrations::{FormatterAvailability, FormatterStatus};
 use std::collections::HashMap;
 
 impl Host {
@@ -19,8 +19,8 @@ impl Host {
         formatter_id: String,
         content: String,
     ) -> Result<String, ApiError> {
-        let extensions = ExtensionService::current();
-        let formatter = extensions
+        let integrations = IntegrationService::current();
+        let formatter = integrations
             .find_formatter(&formatter_id)
             .ok_or_else(|| ApiError::NotFound(format!("Unknown formatter {formatter_id}")))?;
         let (folder, env) = self.formatter_context(&folder_path)?;
@@ -30,7 +30,7 @@ impl Host {
         }
         let program = resolve_contribution_command(
             &formatter.definition.command,
-            formatter.extension_dir.as_deref(),
+            formatter.integration_dir.as_deref(),
             path,
             None,
         )
@@ -56,8 +56,8 @@ impl Host {
             EnvironmentService::current().with_nix(None)
         };
         let path = env.get("PATH").map(String::as_str).unwrap_or("");
-        let extensions = ExtensionService::current();
-        Ok(extensions
+        let integrations = IntegrationService::current();
+        Ok(integrations
             .formatters
             .iter()
             .map(|formatter| {
@@ -65,7 +65,7 @@ impl Host {
                     Some(message) => Err(message),
                     None => resolve_contribution_command(
                         &formatter.definition.command,
-                        formatter.extension_dir.as_deref(),
+                        formatter.integration_dir.as_deref(),
                         path,
                         None,
                     ),
@@ -77,8 +77,8 @@ impl Host {
                 FormatterStatus {
                     formatter_id: formatter.formatter_id.clone(),
                     label: formatter.definition.label.clone(),
-                    extension_id: formatter.extension_id.clone(),
-                    extension_label: formatter.extension_label.clone(),
+                    integration_id: formatter.integration_id.clone(),
+                    integration_label: formatter.integration_label.clone(),
                     languages: formatter.definition.languages.clone(),
                     status,
                     resolved_path,

@@ -308,8 +308,12 @@
           {@render usageMetric('Total tokens', formatTokens(totalTokens), SigmaIcon)}
           {@render usageMetric('Cost', formatCost(usage.cost), DollarCircleIcon)}
           {#if stats.tree}
+            {@const subagentCost =
+              stats.tree.cost === null || stats.usage.cost === null
+                ? null
+                : Math.max(0, stats.tree.cost - stats.usage.cost)}
             {@render usageMetric('Root', formatCost(stats.usage.cost))}
-            {@render usageMetric('Subagents', formatCost(Math.max(0, stats.tree.cost - stats.usage.cost)))}
+            {@render usageMetric('Subagents', formatCost(subagentCost))}
           {/if}
         </dl>
       </SidebarDivision>

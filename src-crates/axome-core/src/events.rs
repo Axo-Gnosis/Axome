@@ -37,4 +37,10 @@ pub enum HostEvent {
     FileDeleted(PathBuf),
     /// The model registry changed: models, providers, or credentials.
     ModelsChanged,
+    ExtensionsChanged,
+    ExtensionStopped {
+        id: String,
+        folder: Option<String>,
+        problem: axome_protocol::axo::AxoExtensionProblem,
+    },
 }

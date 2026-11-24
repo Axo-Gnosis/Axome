@@ -1,4 +1,4 @@
-use crate::extensions::{LspDocumentSelector, LspServerSettingsDescriptor};
+use crate::integrations::{LspDocumentSelector, LspServerSettingsDescriptor};
 use crate::settings::LspServerConfigRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,8 +12,8 @@ pub struct LspServerSettingsEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LspServerStatus {
     pub server_definition_id: String,
-    pub extension_id: String,
-    pub extension_label: String,
+    pub integration_id: String,
+    pub integration_label: String,
     pub label: String,
     pub enabled: bool,
     pub status: LspServerConnectionStatus,

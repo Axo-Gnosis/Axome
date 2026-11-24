@@ -29,9 +29,9 @@ use crate::{
         activity_map,
         axo::AxoService,
         db::DatabaseService,
-        extensions::{ExtensionService, LoadedExtensionCatalog},
         harnesses::resolve_harness_launch,
         history::{HistoryRow, HistorySource},
+        integrations::{IntegrationService, LoadedIntegrationCatalog},
         session_watcher::SessionWatcher,
         settings_resolution::SettingsResolver,
     },
@@ -300,13 +300,13 @@ fn source_folders(conn: &Connection, key: &SourceKey) -> rusqlite::Result<BTreeS
 }
 
 pub(crate) fn configured_keys(dirs: &crate::HostDirs, folder: Option<&Path>) -> Vec<SourceKey> {
-    let catalog = ExtensionService::current();
+    let catalog = IntegrationService::current();
     let resolver = SettingsResolver::load(dirs, &catalog.settings_ids);
     keys_for(&catalog, &resolver, folder)
 }
 
 fn keys_for(
-    catalog: &LoadedExtensionCatalog,
+    catalog: &LoadedIntegrationCatalog,
     resolver: &SettingsResolver<'_>,
     folder: Option<&Path>,
 ) -> Vec<SourceKey> {
@@ -733,7 +733,7 @@ impl SessionIndexService {
     }
 
     pub(crate) fn activity_map(&self) -> Result<Vec<DiscoveredProject>, ApiError> {
-        let catalog = ExtensionService::current();
+        let catalog = IntegrationService::current();
         let resolver = SettingsResolver::load(&self.dirs, &catalog.settings_ids);
         let mut enabled: HashMap<String, HashSet<SourceKey>> = HashMap::new();
         enabled.insert(
@@ -972,6 +972,7 @@ mod tests {
             Arc::clone(&db),
             crate::HostDirs::under(&_dir.0),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            None,
             Arc::new(|_| Ok(())),
         );
         let service = SessionIndexService::new(
@@ -998,6 +999,7 @@ mod tests {
             Arc::clone(&db),
             crate::HostDirs::under(&_dir.0),
             axome_protocol::server_config::Supervision::ProcessGroup,
+            None,
             Arc::new(|_| Ok(())),
         );
         let service = SessionIndexService::new(

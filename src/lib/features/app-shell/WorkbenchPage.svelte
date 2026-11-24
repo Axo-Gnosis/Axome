@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { platform } from '$lib/platform'
-  import { loadExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
+  import { loadIntegrationCatalog } from '$lib/features/integrations/catalog.svelte'
   import WorkbenchView from '$lib/features/app-shell/WorkbenchView.svelte'
   import { loadRecentFolders } from '$lib/features/folders/state.svelte'
   import { loadHarnesses } from '$lib/features/sessions/harnesses/state.svelte'
@@ -33,8 +33,8 @@
 
     void loadHarnesses().catch(() => {})
     void loadShells().catch(() => {})
-    void loadExtensionCatalog().catch((error) => {
-      logClientError('extension catalog preload failed', { error })
+    void loadIntegrationCatalog().catch((error) => {
+      logClientError('integration catalog preload failed', { error })
     })
 
     void (async () => {

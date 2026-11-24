@@ -12,6 +12,7 @@
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
   import { AgentBlock, UserBlock } from '$lib/features/chat/elements/transcript'
+  import ExtensionDiagnostics from '$lib/features/chat/elements/transcript/ExtensionDiagnostics.svelte'
   import { isActiveJob, jobTone, pickJob, transcriptJobs } from '$lib/features/chat/jobs'
   import { getChatModels } from '$lib/features/chat/models.svelte'
   import { transcriptTurns } from '$lib/features/chat/turns'
@@ -51,6 +52,7 @@
   const collapsedTeams = new SvelteSet<string>()
   let overrides = $state<Record<string, BlockView>>({})
   let childComposer = $state<PromptInput>()
+  let childAskTime = $state<number | null>(null)
 
   const childJobs = $derived((controller.state?.live.jobs ?? []).filter((j): j is ChildJob => j.kind.kind === 'child'))
 
@@ -95,6 +97,21 @@
   const models = $derived(getChatModels(folderPath))
   const available = $derived(models.catalog?.models ?? [])
   const childState = $derived(childController?.state ?? null)
+  const liveExtensions = $derived(!!childState && !childState.readOnly)
+  $effect(() => {
+    if (liveExtensions) return childController?.holdExtensions(folderPath)
+  })
+  const childAsking = $derived(!!childState?.live.questions.length)
+  const childHasDeadline = $derived(childState?.live.questions.some((ask) => ask.deadlineMs !== null) ?? false)
+  $effect(() => {
+    if (!childHasDeadline) {
+      childAskTime = null
+      return
+    }
+    childAskTime = Date.now()
+    const timer = setInterval(() => (childAskTime = Date.now()), 1000)
+    return () => clearInterval(timer)
+  })
   const childTurns = $derived(
     childState ? transcriptTurns(childState.entries, childState.streaming, childState.live) : []
   )
@@ -172,6 +189,7 @@
               >
             </div>
           </div>
+          <ExtensionDiagnostics controller={childController} {folderPath} />
           <Conversation>
             {#if !childState}
               <div class="py-4 text-center text-xs text-muted">
@@ -201,7 +219,7 @@
                   {folderPath}
                   sessionId={selectedChild.kind.sessionId}
                   canBranch={false}
-                  now={turn.running ? now : 0}
+                  now={childAskTime ?? now}
                   expansion="collapsed"
                   {overrides}
                   {onView}
@@ -220,9 +238,14 @@
                   bind:parts={childController.draft}
                   owner={{ folderPath, sessionId: selectedChild.kind.sessionId }}
                   models={available}
+                  extensions={childController.extensions}
                   running={childState?.live.running ?? false}
                   disabled={childController.connection !== 'live'}
-                  placeholder={childState?.live.running ? 'Steer subagent…' : 'Follow up with subagent…'}
+                  placeholder={childAsking
+                    ? 'Or reply here to steer instead…'
+                    : childState?.live.running
+                      ? 'Steer subagent…'
+                      : 'Follow up with subagent…'}
                   commands={childState?.commands ?? []}
                   onCommand={(n, a) => childController.runCommand(n, a)}
                   onSubmit={() => childController.send()}

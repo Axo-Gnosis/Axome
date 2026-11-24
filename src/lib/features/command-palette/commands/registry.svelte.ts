@@ -40,7 +40,7 @@ import {
   openGlobalSettingsFile,
   openSettings,
   reloadEnvironment,
-  reloadExtensions,
+  reloadIntegrations,
   reloadView,
   reopenTab,
   rerunLastFolderTask,
@@ -327,13 +327,13 @@ export function getAppCommandDefinitions(): AppCommandDefinition[] {
       run: openFolderSettingsFile
     }),
     appCommand({
-      id: 'reload-extensions',
-      label: 'Reload Extensions',
+      id: 'reload-integrations',
+      label: 'Reload Integrations',
       group: 'General',
       icon: RefreshCwIcon,
-      keywords: ['extensions', 'reload', 'languages', 'grammars', 'formatters', 'lsp'],
+      keywords: ['integrations', 'reload', 'languages', 'grammars', 'formatters', 'lsp'],
       terminalPolicy: 'skip-shell',
-      run: reloadExtensions
+      run: reloadIntegrations
     }),
     appCommand({
       id: 'reload-environment',

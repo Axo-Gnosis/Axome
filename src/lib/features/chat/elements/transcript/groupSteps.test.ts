@@ -4,6 +4,7 @@ import type { ChatDeliverable, ChatNotice } from '$lib/types/backend'
 import { transcriptJobs } from '../../jobs'
 import type { Step, ToolStep, Turn } from '../../turns'
 import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep, type TranscriptStep } from './groupSteps'
+import { toolHeader } from '../tool/toolHeader'
 
 const none = new Map()
 
@@ -69,6 +70,30 @@ test('only adjacent same-name tools and adjacent thinking merge, preserving boun
   const read = tool('read')
   const write = tool('write', 'write')
   assert.deepEqual(groupSteps([read, write, read]), [read, write, read])
+})
+
+test('a record-bearing send remains a normal tool step instead of a receipt or job', () => {
+  const details = {
+    to: 'child',
+    kind: 'steer',
+    sessionId: 'child',
+    files: [{ ledger: { path: '/repo/entry.md', sha256: 'hash', access: 'read' } }]
+  }
+  const send = tool('send', 'send', 'send', details)
+  send.status = 'error'
+  send.result = {
+    kind: 'toolResult',
+    toolName: 'send',
+    callId: send.callId,
+    isError: true,
+    content: [],
+    details,
+    deliverables: [],
+    durationMs: null
+  }
+  const grouped = groupSteps([send])
+  assert.deepEqual(grouped, [send])
+  assert.deepEqual(segmentSteps(grouped, none), [work('work:send', [send])])
 })
 
 test('visible messages end each work fold, preserving the entire turn sequence', () => {
@@ -178,6 +203,40 @@ function done(id: string, name: string, args: unknown, details: unknown, deliver
   }
   return call
 }
+
+test('only marked failed calls break groups and folds, including coordination receipts', () => {
+  const details = { blocked: { origin: 'extension gate (scope abc123)' } }
+  const reason = { type: 'text' as const, text: 'Tool execution was blocked' }
+  const fail = (call: ToolStep) => {
+    call.status = 'error'
+    call.result!.isError = true
+    call.result!.content = call.output = [reason]
+    return call
+  }
+  const first = tool('first', 'bash')
+  const stopped = fail(done('blocked-bash', 'bash', { command: 'printf hello' }, details))
+  const ordinary = fail(done('ordinary', 'bash', {}, null))
+  const successful = done('successful', 'bash', {}, details)
+  const send = fail(done('blocked-send', 'send', { to: 'child' }, details))
+  const grouped = groupSteps([first, stopped, ordinary, successful, send])
+  const after = { kind: 'toolGroup' as const, id: ordinary.id, calls: [ordinary, successful] }
+  assert.deepEqual(grouped, [first, stopped, after, send])
+  assert.deepEqual(segmentSteps(grouped, none), [
+    work('work:first', [first]),
+    stopped,
+    work('work:ordinary', [after]),
+    send
+  ])
+
+  const header = toolHeader(stopped, '/repo')
+  assert.equal(header.verb, 'Blocked')
+  assert.equal(header.command, 'printf hello')
+  assert.equal(header.status, null)
+  assert.deepEqual(header.blocked, { extension: { id: 'gate', scoped: true }, reason: reason.text })
+  assert.equal(toolHeader(ordinary, '/repo').blocked, null)
+  assert.equal(toolHeader(successful, '/repo').blocked, null)
+})
+
 const text = (id: string): Step => ({ id, entryId: id, ...times, kind: 'text', text: id })
 const notice = (id: string, value: ChatNotice): Step => ({ id, entryId: id, ...times, kind: 'notice', notice: value })
 const child = (jobId: string, note: boolean): ChatDeliverable => ({
@@ -195,7 +254,6 @@ function turnOf(steps: Step[]): Turn {
   return {
     id: 'turn:0',
     user: null,
-    config: { model: null, thinking: null },
     steps,
     assistants: [],
     end: null,

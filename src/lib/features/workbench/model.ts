@@ -104,6 +104,7 @@ export interface TurnDiffFile {
   omitted: boolean
   additions: number | null
   deletions: number | null
+  unfinished: boolean
 }
 
 export interface TurnDiffSource {

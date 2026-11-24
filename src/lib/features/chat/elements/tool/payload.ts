@@ -1,4 +1,6 @@
 import { patchRows, type DiffResult } from '$lib/features/chat/lineDiff'
+import { isPathWithin, splitRemotePath } from '$lib/utils/paths'
+import type { ToolStep } from '../../turns'
 
 export const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -9,6 +11,35 @@ export const integer = (value: unknown): value is number =>
 const encoder = new TextEncoder()
 export const pathText = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && !/[\u0000-\u001f\u007f]/.test(value)
+
+type BlockedCall = { origin: string | null }
+
+export function blockedCall(details: unknown): BlockedCall | null {
+  const marker = record(details).blocked
+  if (marker === null || typeof marker !== 'object' || Array.isArray(marker)) return null
+  const { origin } = record(marker)
+  return origin == null || typeof origin === 'string' ? { origin: origin ?? null } : null
+}
+
+export function blockedToolResult(result: ToolStep['result']): BlockedCall | null {
+  return result?.isError === true ? blockedCall(result.details) : null
+}
+
+export type ExtensionOrigin = { id: string; scoped: boolean }
+
+/** Mirrors axo_extensions::ExtensionOrigin::parse; the scope key isn't display data. */
+export function parseExtensionOrigin(label: string | null): ExtensionOrigin | null {
+  const prefix = 'extension '
+  if (!label?.startsWith(prefix)) return null
+  const rest = label.slice(prefix.length)
+  const delimiter = ' (scope '
+  const split = rest.indexOf(delimiter)
+  const id = split === -1 ? rest : rest.slice(0, split)
+  if (!id || id.includes(' ')) return null
+  if (split === -1) return { id, scoped: false }
+  const key = rest.slice(split + delimiter.length, -1)
+  return rest.endsWith(')') && key && !key.includes(' ') ? { id, scoped: true } : null
+}
 
 export type Truncation = Record<string, unknown> & { outputLines: number; outputBytes: number }
 
@@ -58,6 +89,30 @@ export interface ToolFileChange {
   raw: Record<string, unknown>
 }
 
+export interface ToolFileRecord {
+  ledger: { path: string; sha256: string; access: 'read' | 'modify' }
+  change: ToolFileChange | null
+}
+
+export function displayFilePath(path: string, folderPath: string): string {
+  const root = path.startsWith('axome://') ? folderPath : (splitRemotePath(folderPath)?.path ?? folderPath)
+  return isPathWithin(root, path) ? path.slice(root.replace(/\/+$/, '').length + 1) || '.' : path
+}
+
+export function fileRecords(details: unknown): ToolFileRecord[] {
+  const files = record(details).files
+  if (!Array.isArray(files)) return []
+  const records: ToolFileRecord[] = []
+  for (const file of files) {
+    const { ledger, change } = record(file)
+    const { path, sha256, access } = record(ledger)
+    if (!pathText(path) || typeof sha256 !== 'string' || (access !== 'read' && access !== 'modify')) continue
+    const parsed = parseFileChange(change)
+    records.push({ ledger: { path, sha256, access }, change: parsed?.path === path ? parsed : null })
+  }
+  return records
+}
+
 function snapshotBlob(value: unknown): ToolSnapshotBlob | null {
   const fields = record(value)
   if (typeof fields.sha256 !== 'string' || typeof fields.binary !== 'boolean' || !integer(fields.bytes)) return null
@@ -78,9 +133,8 @@ function lineDiff(value: unknown): ToolLineDiff | undefined {
   }
 }
 
-/** Parses `details.change` (`axo::FileChange`) from a `write` or `edit` result. */
-export function fileChange(details: unknown): ToolFileChange | null {
-  const raw = record(record(details).change)
+function parseFileChange(value: unknown): ToolFileChange | null {
+  const raw = record(value)
   if (!pathText(raw.path) || typeof raw.key !== 'string' || !raw.key || typeof raw.created !== 'boolean') {
     return null
   }
@@ -103,9 +157,10 @@ export function fileChange(details: unknown): ToolFileChange | null {
 /** Unified patch rows from a parsed file change; empty when unchanged, null when absent or truncated. */
 export function editDiff(change: ToolFileChange | null): DiffResult | null {
   const diff = change?.diff
-  if (!diff) return null
-  if (typeof diff.patch === 'string') return patchRows(diff.patch)
-  return !change.created && !diff.patchTruncated && diff.additions === 0 && diff.deletions === 0
-    ? { rows: [], added: 0, removed: 0 }
-    : null
+  if (!diff || diff.patchTruncated) return null
+  if (typeof diff.patch === 'string') {
+    const parsed = patchRows(diff.patch)
+    return parsed.added === diff.additions && parsed.removed === diff.deletions ? parsed : null
+  }
+  return !change.created && diff.additions === 0 && diff.deletions === 0 ? { rows: [], added: 0, removed: 0 } : null
 }

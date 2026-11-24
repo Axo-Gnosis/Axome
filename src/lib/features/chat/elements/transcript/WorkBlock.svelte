@@ -17,7 +17,6 @@
     liveJobs,
     expansion,
     overrides,
-    asking,
     onView,
     render,
     stop
@@ -29,7 +28,6 @@
     liveJobs: ChatJob[]
     expansion: BlockView
     overrides: Record<string, BlockView>
-    asking: Set<string>
     onView: (id: string, view: BlockView) => void
     render: Snippet<[TranscriptStep]>
     stop?: Snippet
@@ -55,16 +53,7 @@
       .filter(Boolean)
       .join(' · ')
   )
-  // Questions must remain answerable even when the surrounding work is folded.
-  const askingSteps = $derived(
-    segment.steps.filter((step) =>
-      step.kind === 'tool'
-        ? asking.has(step.callId)
-        : step.kind === 'toolGroup' && step.calls.some((call) => asking.has(call.callId))
-    )
-  )
   const waiting = $derived.by(() => {
-    if (askingSteps.length) return 'waiting on you'
     if (
       !segment.steps.some(
         (step) => step.kind === 'receipt' && step.call.name === 'wait' && step.call.status === 'running'
@@ -108,10 +97,8 @@
     {#if running && stop}{@render stop()}{/if}
   </div>
   {#if open}
-    <div data-disclose transition:disclose={{ duration: askingSteps.length ? 0 : 150 }} class="min-w-0 pt-1.5">
+    <div data-disclose transition:disclose={{ duration: 150 }} class="min-w-0 pt-1.5">
       {@render rail(segment.steps)}
     </div>
-  {:else if askingSteps.length}
-    <div class="min-w-0 pt-1.5">{@render rail(askingSteps)}</div>
   {/if}
 </div>

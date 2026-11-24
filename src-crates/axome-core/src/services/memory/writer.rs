@@ -248,7 +248,10 @@ impl MemoryService {
                 .create_session(SessionOptions {
                     cwd,
                     agent: Some("memory-writer".into()),
-                    agents: queued.agents.clone(),
+                    definitions: axo::Definitions {
+                        agents: queued.agents.clone(),
+                        ..Default::default()
+                    },
                     ask_enabled: false,
                     keywords_enabled: false,
                     tools: vec![],

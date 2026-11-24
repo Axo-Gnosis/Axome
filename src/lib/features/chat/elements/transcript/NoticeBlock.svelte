@@ -7,14 +7,26 @@
 
   let {
     notice,
+    timestamp,
     folderPath,
     sessionId
   }: {
     /** Job wakes fold into their job's card or row. */
     notice: Exclude<ChatNotice, { kind: 'jobWake' }>
+    timestamp: string | null
     folderPath: string
     sessionId: string | null
   } = $props()
+  const time = $derived(
+    timestamp && Number.isFinite(Date.parse(timestamp))
+      ? new Date(timestamp).toLocaleTimeString([], {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        })
+      : null
+  )
 </script>
 
 {#if notice.kind === 'mail'}
@@ -28,6 +40,15 @@
       <Chip tone="accent" class="font-mono">{notice.sender}</Chip>
     </div>
     <Message.Response text={notice.text} streaming={false} {folderPath} {sessionId} />
+  </div>
+{:else if notice.kind === 'extension'}
+  <div data-slot="notice-block" class="flex min-w-0 flex-col gap-1.5">
+    <div class="text-xs text-muted">
+      <span class="font-mono">{notice.id}</span> · posted{#if time}
+        · <time datetime={timestamp ?? undefined} class="font-mono">{time}</time>
+      {/if}
+    </div>
+    {#if notice.text}<Message.Response text={notice.text} streaming={false} {folderPath} {sessionId} />{/if}
   </div>
 {:else if notice.kind === 'turnBudget' || notice.kind === 'yieldNudge'}
   <div data-slot="notice-block" class="flex items-center gap-2 text-xs text-warning">

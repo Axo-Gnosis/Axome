@@ -11,8 +11,13 @@
   import type { AxoProvider, AxoProvidersPayload } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { onMount } from 'svelte'
-  import ApiKeyDialog from './ApiKeyDialog.svelte'
-  import ProviderLoginDialog from './ProviderLoginDialog.svelte'
+  import ProviderCredentials, {
+    credentialReminder,
+    isConfigured,
+    isReady,
+    sourceDetail,
+    sourceLabel
+  } from './ProviderCredentials.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
 
   const host = getSettingsHost()
@@ -37,14 +42,16 @@
   }
   let busy = $state(false)
   let error = $state<string | null>(null)
-  let keyProvider = $state<string | null>(null)
-  let key = $state('')
-  let loginProvider = $state<string | null>(null)
-  const actionsDisabled = $derived(busy || loginProvider !== null)
+  let credentialClaimed = $state<string | null>(null)
+  function claimCredentials(id: string) {
+    if (credentialClaimed !== null) return null
+    credentialClaimed = id
+    return () => {
+      credentialClaimed = null
+    }
+  }
   let query = $state('')
 
-  const isReady = (provider: AxoProvider) => provider.status.kind === 'ready'
-  const isConfigured = (provider: AxoProvider) => provider.status.kind !== 'needsCredentials'
   const all = $derived(providers.payload?.providers ?? [])
   const configuredCount = $derived(all.filter(isConfigured).length)
   const readyModels = $derived(all.filter(isReady).reduce((sum, provider) => sum + provider.models, 0))
@@ -59,38 +66,25 @@
   const unconfigured = $derived(matches.filter((provider) => !isConfigured(provider)))
 
   onMount(() => {
-    const subscription = backend.axo.onModelsChanged(({ server }) => {
-      if (server === getSettingsServer()) void refresh()
+    const server = getSettingsServer()
+    const changed = (event: { server: string | null }) => {
+      if (event.server === server) void refresh()
+    }
+    const subscriptions = [backend.axo.onModelsChanged(changed), backend.axo.onExtensionsChanged(changed)]
+    void Promise.allSettled(subscriptions).then(() => {
+      if (!disposed) void refresh()
     })
-    void refresh()
+    let disposed = false
     return () => {
-      void subscription.then((unsubscribe) => unsubscribe())
+      disposed = true
+      refreshGeneration++
+      for (const subscription of subscriptions)
+        void subscription.then(
+          (stop) => stop(),
+          () => {}
+        )
     }
   })
-
-  // The group and status dot already say "not configured"; the badge names only a credential source.
-  function sourceLabel(provider: AxoProvider): string | null {
-    switch (provider.source.kind) {
-      case 'config':
-        return 'models.jsonc'
-      case 'apiKey':
-        return 'Stored key'
-      case 'oauth':
-        return 'Logged in'
-      case 'env':
-        return 'Environment'
-      case 'none':
-        return provider.requiresKey ? null : 'No key needed'
-    }
-  }
-
-  function sourceDetail(provider: AxoProvider): string | null {
-    if (provider.source.kind === 'env')
-      return `${provider.source.name} is set in the environment. Unset it to stop using it.`
-    if (provider.source.kind === 'none' && provider.requiresKey && provider.env.length)
-      return `Set ${provider.env.join(' or ')}`
-    return null
-  }
 
   async function run(action: () => Promise<unknown>) {
     busy = true
@@ -102,14 +96,6 @@
     } finally {
       busy = false
     }
-  }
-
-  async function saveKey() {
-    if (!keyProvider || !key.trim()) return
-    await backend.axo.setProviderKey(keyProvider, key, host)
-    await refresh()
-    key = ''
-    keyProvider = null
   }
 </script>
 
@@ -143,7 +129,7 @@
   {#if providers.payload?.modelsFile.error}
     <Alert.Root variant="danger">models.jsonc: {providers.payload.modelsFile.error}</Alert.Root>
   {/if}
-  {#if (error && keyProvider === null) || providers.error}
+  {#if error || providers.error}
     <Alert.Root variant="danger">{error ?? providers.error}</Alert.Root>
   {/if}
 
@@ -188,36 +174,17 @@
       <p class="truncate font-mono text-xs text-subtle" title={detail}>{detail}</p>
     {/if}
     <div class="mt-auto flex flex-wrap gap-1.5 border-t border-edge pt-2.5">
-      {#if provider.login}
-        <Button
-          size="xs"
-          variant={live ? 'default' : 'accent'}
-          disabled={actionsDisabled}
-          onclick={() => (loginProvider = provider.id)}>Log In</Button
-        >
-      {/if}
-      {#if provider.requiresKey}
-        <Button
-          size="xs"
-          disabled={actionsDisabled}
-          onclick={() => {
-            keyProvider = provider.id
-            key = ''
-            error = null
-          }}>{provider.source.kind === 'apiKey' ? 'Update Key' : 'Add Key'}</Button
-        >
-      {/if}
-      {#if provider.source.kind === 'apiKey' || provider.source.kind === 'oauth'}
-        <Button
-          size="xs"
-          disabled={actionsDisabled}
-          onclick={() =>
-            run(async () => {
-              await backend.axo.removeProvider(provider.id, host)
-              await refresh()
-            })}>{provider.source.kind === 'oauth' ? 'Log Out' : 'Remove'}</Button
-        >
-      {/if}
+      <ProviderCredentials
+        {provider}
+        {host}
+        scopeFolder={null}
+        disabled={busy ||
+          (credentialClaimed !== null && credentialClaimed !== provider.id) ||
+          providers.loading ||
+          providers.error !== null}
+        claimCredentials={() => claimCredentials(provider.id)}
+        onChanged={() => void refresh()}
+      />
     </div>
   </article>
 {/snippet}
@@ -240,22 +207,7 @@
   {/if}
   {#if providers.payload}
     <p class="pb-5 text-xs text-subtle">
-      Remove and Log Out delete stored credentials only. Keys in models.jsonc or the environment remain in effect.
+      {credentialReminder}
     </p>
   {/if}
 </div>
-
-<ApiKeyDialog
-  open={keyProvider !== null}
-  title={`Set Key · ${keyProvider}`}
-  bind:key
-  {busy}
-  {error}
-  onSave={() => void run(saveKey)}
-  onClose={() => {
-    keyProvider = null
-    key = ''
-  }}
-/>
-
-<ProviderLoginDialog bind:provider={loginProvider} {host} onDone={() => void refresh()} />

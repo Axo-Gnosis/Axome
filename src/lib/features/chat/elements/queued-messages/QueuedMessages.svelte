@@ -125,6 +125,9 @@
                 {#if part.type === 'text'}{part.text}{:else}<PartChip {part} {owner} />{/if}
               {/each}
             </div>
+            {#if item.from?.kind === 'extension'}
+              <span class="pt-0.5 text-xs text-muted">sent by <span class="font-mono">{item.from.id}</span></span>
+            {/if}
 
             <div class="flex shrink-0 items-center gap-0.5">
               {#if running || held}

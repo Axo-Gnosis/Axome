@@ -8,7 +8,7 @@
   import Icon from '$lib/icons/Icon.svelte'
   import { getLspServers, getLspServersLoading, loadLspServers } from '$lib/features/settings/state/lspSettings.svelte'
   import { getFormatterStatuses, loadFormatterStatuses } from '$lib/features/settings/state/formatterSettings.svelte'
-  import { getFormatterPolicy } from '$lib/features/extensions/catalog.svelte'
+  import { getFormatterPolicy } from '$lib/features/integrations/catalog.svelte'
   import { notify } from '$lib/features/notifications/state.svelte'
   import {
     getSettings,

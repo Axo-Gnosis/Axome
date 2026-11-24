@@ -15,6 +15,7 @@
     max = 100,
     step = 1,
     ticks = false,
+    disabled = false,
     onValueChange,
     class: className,
     'aria-label': ariaLabel
@@ -24,6 +25,7 @@
     max?: number
     step?: number
     ticks?: boolean
+    disabled?: boolean
     onValueChange?: (value: number) => void
     class?: string
     'aria-label'?: string
@@ -38,7 +40,7 @@
   {max}
   {step}
   {onValueChange}
-  aria-label={ariaLabel}
+  {disabled}
   class={cn(
     'relative flex h-5 w-full cursor-pointer touch-none items-center select-none data-disabled:pointer-events-none data-disabled:opacity-50',
     className
@@ -59,6 +61,7 @@
     {#each thumbItems as { index } (index)}
       <SliderPrimitive.Thumb
         {index}
+        aria-label={ariaLabel}
         class="block size-5 rounded-full border border-edge bg-max transition-colors focus-visible:shadow-focus-ring focus-visible:outline-none"
       />
     {/each}

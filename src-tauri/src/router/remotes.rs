@@ -503,6 +503,9 @@ async fn run_events(router: Weak<RouterInner>, slot: Weak<RemoteSlot>, server: S
             }
         }
         backoff.reset();
+        let _ = (router_now.events)(DesktopEvent::ExtensionsChanged {
+            server: server.clone(),
+        });
         drop(router_now);
         drop(slot_now);
 
@@ -635,6 +638,23 @@ fn remote_host_event(server: &str, event: HostEventWire) -> Option<DesktopEvent>
             return Some(DesktopEvent::ModelsChanged {
                 server: server.into(),
             })
+        }
+        HostEventWire::ExtensionsChanged(()) => {
+            return Some(DesktopEvent::ExtensionsChanged {
+                server: server.into(),
+            });
+        }
+        HostEventWire::ExtensionStopped {
+            id,
+            folder,
+            problem,
+        } => {
+            return Some(DesktopEvent::ExtensionStopped {
+                server: server.into(),
+                id,
+                folder: folder.map(|folder| Target::remote_uri(server, &folder)),
+                problem,
+            });
         }
         HostEventWire::RecentFoldersChanged(_) => return None,
     }))

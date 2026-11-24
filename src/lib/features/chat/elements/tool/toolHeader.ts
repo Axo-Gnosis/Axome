@@ -16,10 +16,18 @@ import type { StatusTone } from '$lib/components/ui/status-dot'
 import { formatCount, formatDuration } from '$lib/features/chat/format'
 import { contentLines } from '$lib/features/chat/lineDiff'
 import type { ToolStep } from '$lib/features/chat/turns'
-import { isPathWithin, splitRemotePath } from '$lib/utils/paths'
+import { parseAskBlocks } from '../ask/askDocument'
 import { formatCommandExit, parseBashDetails } from './bashOutput'
 import { readOutput, readPath, readStartLine } from './readOutput'
-import { fileChange, record } from './payload'
+import {
+  blockedToolResult,
+  displayFilePath,
+  fileRecords,
+  parseExtensionOrigin,
+  record,
+  type ExtensionOrigin,
+  type ToolFileRecord
+} from './payload'
 import { searchOutput } from './searchOutput'
 import { browserHeaderSummary } from './browserOutput'
 import { parseSearchDocs, parseWebFetch, parseWebSearch, urlDisplay } from './webOutput'
@@ -35,11 +43,13 @@ export type ToolHeader = {
   line: number | undefined
   pathLabel: string
   command: string | null
-  /** Edit line counts, shown as git's net line change. */
+  /** Total additions and deletions across every recorded change, if all are known. */
   lines: { added: number; removed: number } | null
   meta: string
   tone: StatusTone
   status: { label: string; tone: 'danger' } | null
+  unfinished: string | null
+  blocked: { extension: ExtensionOrigin | null; reason: string } | null
 }
 
 const tools: Record<string, { verbs: [done: string, running: string]; icon: IconData; noun?: string }> = {
@@ -80,29 +90,59 @@ function searchCount(call: ToolStep): number | null {
   return count || null
 }
 
-export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
+export function toolHeader(
+  call: ToolStep,
+  folderPath: string,
+  records: ToolFileRecord[] = fileRecords(call.result?.details)
+): ToolHeader {
   const args = record(call.arguments)
   const search = call.name === 'grep' || call.name === 'find'
-  const path =
-    call.name === 'read'
-      ? readPath(call)
-      : search
-        ? typeof args.path === 'string' && args.path
+  const single = records.length === 1 ? records[0] : null
+  const multi = records.length > 1
+  const path = multi
+    ? null
+    : call.name === 'read'
+      ? readPath(call, records)
+      : single
+        ? (single.change?.url ?? single.ledger.path)
+        : typeof args.path === 'string' && (!search || args.path)
           ? args.path
-          : '.'
-        : typeof args.path === 'string'
-          ? args.path
-          : null
-  const root = path?.startsWith('axome://') ? folderPath : (splitRemotePath(folderPath)?.path ?? folderPath)
-  const relative =
-    path !== null && isPathWithin(root, path) ? path.slice(root.replace(/\/+$/, '').length + 1) || '.' : (path ?? '')
+          : search
+            ? '.'
+            : null
   let summary = ''
-  let pathLabel = relative
+  let pathLabel = path === null ? '' : path === single?.change?.url ? path : displayFilePath(path, folderPath)
   let command: string | null = null
   let detail = ''
   let lines: ToolHeader['lines'] = null
+  let hasChange = false
+  let allCounts = true
+  let added = 0
+  let removed = 0
+  for (const { change } of records) {
+    if (!change) continue
+    hasChange = true
+    if (!change.diff) {
+      allCounts = false
+      continue
+    }
+    added += change.diff.additions
+    removed += change.diff.deletions
+  }
+  if (hasChange && allCounts) lines = { added, removed }
   const failed = call.status === 'error'
-  let line: number | undefined
+  const marker = blockedToolResult(call.result)
+  const unfinished = call.result?.isError === true && records.length > 0
+  const firstOutput = call.output[0]
+  const stoppedEdit =
+    unfinished &&
+    !marker &&
+    hasChange &&
+    call.name === 'edit' &&
+    call.output.length === 1 &&
+    firstOutput?.type === 'text' &&
+    firstOutput.text === 'Operation aborted'
+  let line = single?.change?.diff?.firstChangedLine
   let durationMs = call.result?.durationMs ?? null
   let tone: StatusTone = failed ? 'danger' : call.status === 'running' ? 'working' : 'success'
   let status: ToolHeader['status'] = failed ? { label: 'Failed', tone: 'danger' } : null
@@ -124,11 +164,11 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
       break
     }
     case 'read': {
-      const source = readOutput(call)
-      if (source?.endLine !== undefined) {
+      const source = readOutput(call, records)
+      if (path !== null && source?.endLine !== undefined) {
         line = source.startLine
         pathLabel += `:${line}${source.endLine !== line ? `-${source.endLine}` : ''}`
-      } else if (!source) {
+      } else if (path !== null && !source && line === undefined) {
         line = readStartLine(args)
         if (line !== undefined && args.offset != null) pathLabel += `:${line}`
       }
@@ -136,12 +176,7 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
     }
     case 'edit':
     case 'write': {
-      const diff = failed ? undefined : fileChange(call.result?.details)?.diff
-      if (diff) {
-        lines = { added: diff.additions, removed: diff.deletions }
-        if (diff.firstChangedLine) line = diff.firstChangedLine
-      }
-      if (call.name === 'write' && typeof args.content === 'string')
+      if (call.name === 'write' && !multi && typeof args.content === 'string')
         detail = `${contentLines(args.content).length} lines`
       break
     }
@@ -199,30 +234,61 @@ export function toolHeader(call: ToolStep, folderPath: string): ToolHeader {
       break
     }
     case 'ask': {
-      const question = Array.isArray(args.questions) ? args.questions[0] : null
-      summary =
-        question !== null && typeof question === 'object' && typeof question.question === 'string'
-          ? question.question
-          : ''
+      const question = parseAskBlocks(call.arguments)?.find((block) => block.type !== 'markdown')
+      summary = question?.question ?? ''
       break
     }
     default:
-      summary = JSON.stringify(call.arguments) ?? ''
+      if (!multi) summary = JSON.stringify(call.arguments) ?? ''
   }
   const name = call.name || 'tool'
   const verb = tools[name]?.verbs
+  if (multi) summary = [`${records.length} files`, summary].filter(Boolean).join(' · ')
+  if (marker && (!verb || (!summary && path === null && !command))) {
+    summary = summary ? `${name} · ${summary}` : name
+  }
+  let unfinishedMessage: string | null = null
+  if (stoppedEdit) {
+    const paths = new Map<string, string>()
+    for (const { change } of records) {
+      if (change) paths.set(change.key, change.url ?? displayFilePath(change.path, folderPath))
+    }
+    const savedPath = paths.values().next().value
+    unfinishedMessage =
+      paths.size === 1 && savedPath !== undefined
+        ? `You stopped this edit after it had saved the file. The change below is in ${savedPath}.`
+        : 'You stopped this edit after it had saved files. The changes below are in those files.'
+    status = null
+  } else if (unfinished) {
+    unfinishedMessage = hasChange
+      ? 'This call did not finish. The recorded file changes below were saved before it ended.'
+      : 'This call did not finish. Its recorded file accesses are shown below.'
+  }
+  const reason = marker ? call.output.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n') : ''
   return {
     name,
-    verb: verb ? verb[call.status === 'running' ? 1 : 0] : name,
-    known: verb !== undefined,
+    verb: marker ? 'Blocked' : stoppedEdit ? 'Edit stopped' : verb ? verb[call.status === 'running' ? 1 : 0] : name,
+    known: marker !== null || verb !== undefined,
     summary: summary.replace(/[\r\n]+/g, ' '),
     path,
     line,
     pathLabel,
     command,
     lines,
-    meta: [failed ? '' : detail, durationMs != null ? formatDuration(durationMs) : ''].filter(Boolean).join(' · '),
-    tone,
-    status
+    meta: [
+      stoppedEdit ? 'saved before it stopped' : failed ? '' : detail,
+      durationMs != null ? formatDuration(durationMs) : ''
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    tone: marker ? 'danger' : tone,
+    status: marker ? null : status,
+    unfinished: unfinishedMessage,
+    blocked: marker
+      ? {
+          extension: parseExtensionOrigin(marker.origin),
+          reason: reason.trim() ? reason : 'Tool execution was blocked'
+        }
+      : null
   }
 }

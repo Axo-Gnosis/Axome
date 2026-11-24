@@ -1,0 +1,330 @@
+import type { ChatAnswer, ChatAskBlock, ChatAskOption } from '$lib/types/backend'
+import { record } from '../tool/payload'
+
+export type AskQuestion = Exclude<ChatAskBlock, { type: 'markdown' }>
+
+export interface AskQuestionDraft {
+  selected: string[]
+  text: string
+  otherOpen: boolean
+  other: string
+  noteOpen: boolean
+  note: string
+  skipped: boolean
+}
+
+export interface AskDraft {
+  blocks: ChatAskBlock[]
+  questions: Record<string, AskQuestionDraft>
+  busy: boolean
+  errors: Record<string, string>
+  error: string | null
+}
+
+export interface AskValidation {
+  answers: ChatAnswer[]
+  errors: Record<string, string>
+  error: string | null
+  ready: number
+  total: number
+}
+
+const UNAVAILABLE = 'This question document is unavailable.'
+const blank = (text: string) => /^[\p{White_Space}]*$/u.test(text)
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+const optionalBool = (value: unknown): value is boolean | undefined => value === undefined || typeof value === 'boolean'
+const nullableString = (value: unknown): value is string | null | undefined =>
+  value == null || typeof value === 'string'
+const nullableNumber = (value: unknown): value is number | null | undefined => value == null || finite(value)
+const only = (object: Record<string, unknown>, keys: string[]) => Object.keys(object).every((key) => keys.includes(key))
+
+export function askKey(id: string): string {
+  return '$' + id
+}
+
+export function parseAskBlocks(arguments_: unknown): ChatAskBlock[] | null {
+  const { blocks: input } = record(arguments_)
+  if (!Array.isArray(input)) return null
+  const blocks: ChatAskBlock[] = []
+  for (const raw of input) {
+    const block = record(raw)
+    if (block.type === 'markdown') {
+      if (typeof block.text !== 'string' || !only(block, ['type', 'text'])) return null
+      blocks.push({ type: 'markdown', text: block.text })
+      continue
+    }
+    const { type, id, question, optional } = block
+    if (typeof id !== 'string' || typeof question !== 'string' || !optionalBool(optional)) return null
+    const base = { id, question, optional: optional ?? false }
+    const keys = ['type', 'id', 'question', 'optional']
+    switch (type) {
+      case 'choice': {
+        const { multi, options: rawOptions } = block
+        if (!Array.isArray(rawOptions) || !optionalBool(multi) || !only(block, [...keys, 'multi', 'options']))
+          return null
+        const options: ChatAskOption[] = []
+        for (const rawOption of rawOptions) {
+          const option = record(rawOption)
+          const { value, label, description, recommended } = option
+          if (
+            typeof value !== 'string' ||
+            typeof label !== 'string' ||
+            !nullableString(description) ||
+            !optionalBool(recommended) ||
+            !only(option, ['value', 'label', 'description', 'recommended'])
+          )
+            return null
+          options.push({ value, label, description: description ?? null, recommended: recommended ?? false })
+        }
+        blocks.push({ type, ...base, options, multi: multi ?? false })
+        break
+      }
+      case 'text': {
+        const { multiline, placeholder, prefill } = block
+        if (
+          !optionalBool(multiline) ||
+          !nullableString(placeholder) ||
+          !nullableString(prefill) ||
+          !only(block, [...keys, 'multiline', 'placeholder', 'prefill'])
+        )
+          return null
+        blocks.push({
+          type,
+          ...base,
+          multiline: multiline ?? false,
+          placeholder: placeholder ?? null,
+          prefill: prefill ?? null
+        })
+        break
+      }
+      case 'number': {
+        const { integer, min, max, default: suggested } = block
+        if (
+          !optionalBool(integer) ||
+          !nullableNumber(min) ||
+          !nullableNumber(max) ||
+          !nullableNumber(suggested) ||
+          !only(block, [...keys, 'integer', 'min', 'max', 'default'])
+        )
+          return null
+        blocks.push({
+          type,
+          ...base,
+          integer: integer ?? false,
+          min: min ?? null,
+          max: max ?? null,
+          default: suggested ?? null
+        })
+        break
+      }
+      default:
+        return null
+    }
+  }
+  return validDocument(blocks) ? blocks : null
+}
+
+function validDocument(blocks: ChatAskBlock[]): boolean {
+  const ids = new Set<string>()
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    if (blank(block.id) || ids.has(block.id)) return false
+    ids.add(block.id)
+    if (block.type === 'choice') {
+      const values = block.options.map((option) => option.value)
+      if (values.length < 2 || new Set(values).size !== values.length || values.some(blank)) return false
+      if (!block.multi && block.options.filter((option) => option.recommended).length > 1) return false
+    } else if (block.type === 'number') {
+      const { min, max, integer, default: suggested } = block
+      if (![min, max, suggested].every(nullableNumber)) return false
+      if (min !== null && max !== null && (min > max || (integer && Math.ceil(min) > Math.floor(max)))) return false
+      if (suggested !== null && numberError(block, suggested)) return false
+    }
+  }
+  return ids.size > 0
+}
+
+export function createAskDraft(blocks: ChatAskBlock[]): AskDraft {
+  const questions: AskDraft['questions'] = {}
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    questions[askKey(block.id)] = {
+      selected:
+        block.type === 'choice'
+          ? block.options.filter((option) => option.recommended).map((option) => option.value)
+          : [],
+      text:
+        block.type === 'text'
+          ? (block.prefill ?? '')
+          : block.type === 'number' && block.default !== null
+            ? String(block.default)
+            : '',
+      otherOpen: false,
+      other: '',
+      noteOpen: false,
+      note: '',
+      skipped: false
+    }
+  }
+  return { blocks, questions, busy: false, errors: {}, error: null }
+}
+
+function numberError(question: Extract<AskQuestion, { type: 'number' }>, value: number): string | null {
+  if (!finite(value)) return 'Enter a number.'
+  const { min, max, integer } = question
+  if ((min !== null && value < min) || (max !== null && value > max)) {
+    if (min !== null && max !== null) return `Must be between ${min} and ${max}.`
+    return min !== null ? `Must be at least ${min}.` : `Must be at most ${max}.`
+  }
+  return integer && !Number.isInteger(value) ? 'Enter a whole number.' : null
+}
+
+// Keep resolve_one's ordering: normalize empty fields, check omission, then check their types.
+function answerError(question: AskQuestion, answer?: ChatAnswer): string | null {
+  let value = answer?.value
+  if ((typeof value === 'string' && blank(value)) || (Array.isArray(value) && !value.length)) value = undefined
+  const other = answer?.other !== undefined && !blank(answer.other)
+  const note = answer?.note !== undefined && !blank(answer.note)
+  if (value === undefined && !other) {
+    if (note) return 'A note needs an answer.'
+    if (question.optional) return null
+    return question.type === 'choice'
+      ? 'Pick an option or type your own answer.'
+      : question.type === 'text'
+        ? 'Enter an answer.'
+        : 'Enter a number.'
+  }
+  switch (question.type) {
+    case 'choice': {
+      if (!question.multi && value !== undefined && other) return 'answer an option or `other`, not both'
+      if (value === undefined) return null
+      if (!question.multi && typeof value !== 'string') return 'expects one option value'
+      if (question.multi && !Array.isArray(value)) return 'expects a list of option values'
+      const seen = new Set<string>()
+      for (const pick of Array.isArray(value) ? value : [String(value)]) {
+        if (!question.options.some((option) => option.value === pick)) return `\`${pick}\` is not an option`
+        if (seen.has(pick)) return `\`${pick}\` is picked twice`
+        seen.add(pick)
+      }
+      return null
+    }
+    case 'text':
+      if (other || note) return 'a text answer takes no `other` or `note`'
+      return typeof value === 'string' ? null : 'expects text'
+    case 'number':
+      if (other) return 'a number answer takes no `other`'
+      return typeof value === 'number' ? numberError(question, value) : 'expects a number'
+  }
+}
+
+export function validateAskAnswers(
+  blocks: ChatAskBlock[],
+  answers: ChatAnswer[]
+): { errors: Record<string, string>; error: string | null } {
+  const errors: Record<string, string> = {}
+  if (!validDocument(blocks)) return { errors, error: UNAVAILABLE }
+  const byId = new Map<string, ChatAnswer>()
+  for (const answer of answers) {
+    if (byId.has(answer.id)) {
+      const reason = 'answered twice'
+      if (blocks.some((block) => block.type !== 'markdown' && block.id === answer.id)) {
+        errors[askKey(answer.id)] = reason
+        return { errors, error: null }
+      }
+      return { errors, error: `question \`${answer.id}\`: ${reason}` }
+    }
+    byId.set(answer.id, answer)
+  }
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    const reason = answerError(block, byId.get(block.id))
+    if (reason) errors[askKey(block.id)] = reason
+    byId.delete(block.id)
+  }
+  const unknown = Object.keys(errors).length ? undefined : [...byId.keys()].sort()[0]
+  return { errors, error: unknown === undefined ? null : `no question \`${unknown}\`` }
+}
+
+export function askNumberValue(text: string): number | null {
+  const literal = text.trim()
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(literal)) return null
+  const value = Number(literal)
+  return finite(value) ? value : null
+}
+
+export function buildAskAnswers(blocks: ChatAskBlock[], questions: Record<string, AskQuestionDraft>): AskValidation {
+  const answers: ChatAnswer[] = []
+  const unfinished: Record<string, string> = {}
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    const key = askKey(block.id)
+    const draft = questions[key]
+    const answer: ChatAnswer = { id: block.id }
+    answers.push(answer)
+    if (!draft || draft.skipped) continue
+    if (block.type === 'choice') {
+      if (draft.selected.length) answer.value = block.multi ? [...draft.selected] : draft.selected[0]
+      if (draft.otherOpen) {
+        if (blank(draft.other)) unfinished[key] = 'Type your answer, or pick one of the options.'
+        else answer.other = draft.other
+      }
+    } else if (!blank(draft.text)) {
+      if (block.type === 'text') answer.value = draft.text
+      else {
+        const value = askNumberValue(draft.text)
+        if (value === null) unfinished[key] = 'Enter a number.'
+        else answer.value = value
+      }
+    }
+    if (draft.noteOpen && !blank(draft.note)) answer.note = draft.note
+  }
+  const { errors, error } = validateAskAnswers(blocks, answers)
+  Object.assign(errors, unfinished)
+  const total = answers.length
+  return { answers, errors, error, total, ready: error ? 0 : total - Object.keys(errors).length }
+}
+
+export function askDecimalPlaces(value: number): number {
+  const [mantissa, exponent = '0'] = String(value).split('e')
+  return Math.max(0, (mantissa.split('.')[1]?.length ?? 0) - Number(exponent))
+}
+
+export function askNumberStep(question: Extract<AskQuestion, { type: 'number' }>): number {
+  if (question.integer) return 1
+  const digits = Math.max(
+    ...[question.default, question.min, question.max].map((value) => (value === null ? 0 : askDecimalPlaces(value)))
+  )
+  return Number(`1e-${digits || 1}`)
+}
+
+const ASK_CONTROL = ':is(input, textarea, button):not(:disabled)'
+
+/** Focuses the first invalid question's invalid (else first) control inside `root`, else root's first control. */
+export function focusAskControl(root: ParentNode): boolean {
+  const field = root.querySelector('[data-invalid]') ?? root
+  const control =
+    field.querySelector<HTMLElement>(`${ASK_CONTROL}[aria-invalid="true"]`) ??
+    field.querySelector<HTMLElement>(ASK_CONTROL)
+  control?.focus({ preventScroll: true })
+  return control !== null
+}
+
+export function askCountdown(deadlineMs: number, now: number): string {
+  const seconds = Math.ceil(Math.max(0, deadlineMs - now) / 1000)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+export function askRefusal(message: string, blocks: ChatAskBlock[]): { id: string | null; message: string } {
+  const reason = message.replace(/^Invalid argument: /, '')
+  let id: string | null = null
+  let length = 0
+  for (const block of blocks) {
+    if (block.type === 'markdown') continue
+    const prefix = `question \`${block.id}\`: `
+    if (prefix.length > length && reason.startsWith(prefix)) {
+      id = block.id
+      length = prefix.length
+    }
+  }
+  return { id, message: reason.slice(length) }
+}

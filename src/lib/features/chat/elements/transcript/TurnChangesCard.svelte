@@ -37,13 +37,16 @@
   let open = $state(false)
   let squashed = $state.raw<{ key: string; files: TurnChangedFile[] } | null>(null)
 
-  const changeKey = $derived(changes.files.map((file) => `${file.key}:${file.afterSha}:${file.mutations}`).join('|'))
+  const changeKey = $derived(
+    changes.files.map((file) => `${file.key}:${file.afterSha}:${file.mutations}:${file.unfinished}`).join('|')
+  )
   const files = $derived(squashed?.key === changeKey ? squashed.files : changes.files)
   const summary = $derived(summarizeTurnChanges(files))
 
   $effect(() => {
     const key = changeKey
     const raw = changes.raw
+    const original = changes.files
     const folder = folderPath
     const session = sessionId
     if (!changes.needsBlobSquash || !folder || !session) return
@@ -52,7 +55,7 @@
       .squashChanges(folder, session, raw)
       .then((result) => {
         if (cancelled) return
-        squashed = { key, files: applySquashedChanges(result, folder) }
+        squashed = { key, files: applySquashedChanges(result, folder, original) }
       })
       .catch((cause) => console.warn('Squashing turn changes failed', cause))
     return () => {
@@ -70,7 +73,8 @@
       binary: file.binary,
       omitted: file.omitted,
       additions: file.additions,
-      deletions: file.deletions
+      deletions: file.deletions,
+      unfinished: file.unfinished
     }))
     openTurnDiff(folderPath, sessionId, turn.id, label, entries, initialFile)
   }
@@ -89,7 +93,7 @@
         <span class="truncate font-medium">{formatCount(files.length, 'file')} changed</span>
         <span class="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
           {#if summary.additions > 0}<span class="text-success">+{summary.additions}</span>{/if}
-          {#if summary.deletions > 0}<span class="text-danger">-{summary.deletions}</span>{/if}
+          {#if summary.deletions > 0}<span class="text-danger">−{summary.deletions}</span>{/if}
           {#if summary.hasUnknownCounts}<span class="text-subtle">…</span>{/if}
         </span>
       </button>
@@ -97,6 +101,11 @@
         <Button type="button" variant="outline" size="xs" onclick={() => review(null)}>Review</Button>
       {/if}
     </div>
+    {#if summary.unfinished > 0}
+      <p class="px-3 pb-2 text-xs text-warning">
+        {summary.unfinished === 1 ? '1 from an unfinished call' : `${summary.unfinished} from unfinished calls`}
+      </p>
+    {/if}
     {#if open}
       <div
         data-disclose
@@ -118,6 +127,7 @@
             <span class="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={file.displayPath}
               >{file.displayPath}</span
             >
+            {#if file.unfinished}<span class="shrink-0 text-2xs text-warning">unfinished call</span>{/if}
             {#if file.discontinuous}
               <span class="shrink-0 text-2xs text-warning" title="Modified outside file tools mid-turn">gapped</span>
             {/if}
@@ -128,7 +138,7 @@
             {/if}
             <span class="flex shrink-0 items-center gap-1 font-mono text-2xs tabular-nums">
               {#if (file.additions ?? 0) > 0}<span class="text-success">+{file.additions}</span>{/if}
-              {#if (file.deletions ?? 0) > 0}<span class="text-danger">-{file.deletions}</span>{/if}
+              {#if (file.deletions ?? 0) > 0}<span class="text-danger">−{file.deletions}</span>{/if}
             </span>
           </button>
         {/each}

@@ -2,8 +2,8 @@ use crate::{
     errors::ApiError,
     services::{
         env::EnvironmentService,
-        extensions::ExtensionService,
         harnesses,
+        integrations::IntegrationService,
         settings::SettingsService,
         settings_resolution::{
             harness_config_record, load_settings_layer, parse_error_diagnostic,
@@ -25,7 +25,7 @@ impl Host {
         self.watch_settings_paths(None);
         let resolved = resolve_effective_settings_for_folder_path(&self.dirs, None);
         let harnesses = harnesses::detect_all(
-            &ExtensionService::current(),
+            &IntegrationService::current(),
             &resolved.settings,
             &EnvironmentService::current().base,
         )
@@ -36,8 +36,8 @@ impl Host {
         })
         .collect();
         let mut lsp = resolved.settings.lsp;
-        let extensions = ExtensionService::current();
-        for server in &extensions.lsp_servers {
+        let integrations = IntegrationService::current();
+        for server in &integrations.lsp_servers {
             lsp.servers
                 .entry(server.server_definition_id.clone())
                 .or_default();

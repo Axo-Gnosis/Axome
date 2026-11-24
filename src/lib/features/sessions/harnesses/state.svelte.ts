@@ -5,7 +5,7 @@
 // responses never clobber another folder.
 
 import { backend } from '$lib/api/backend'
-import { getExtensionCatalog, loadExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
+import { getIntegrationCatalog, loadIntegrationCatalog } from '$lib/features/integrations/catalog.svelte'
 import { launchLabel } from '$lib/features/sessions/harnesses/catalog'
 import { createFolderKeyedStore } from '$lib/state/folderKeyedStore.svelte'
 import type { HarnessDescriptor, HarnessListing, HarnessStatus, SettingsChangedEvent } from '$lib/types/backend'
@@ -32,7 +32,7 @@ export async function loadHarnesses() {
 
 /** Detect harnesses inside the folder's environment. On failure the global listing applies. */
 export async function loadHarnessesForFolder(folderPath: string, isActive: () => boolean = () => true) {
-  void loadExtensionCatalog(folderPath).catch(() => {})
+  void loadIntegrationCatalog(folderPath).catch(() => {})
   const generation = folderHarnesses.generation(folderPath)
   loading = true
   try {
@@ -84,7 +84,7 @@ export interface LaunchOption {
 export function getLaunchOptions(folderPath: string | null): LaunchOption[] {
   const listing = getHarnessListing(folderPath)
   const options: LaunchOption[] = []
-  for (const harness of getExtensionCatalog(folderPath)?.runtime.harnesses ?? []) {
+  for (const harness of getIntegrationCatalog(folderPath)?.runtime.harnesses ?? []) {
     const status = listing.harnesses.find((entry) => entry.id === harness.id) ?? null
     if (status?.enabled === false) continue
     options.push({ harness, preset: null, status, label: harness.label })

@@ -1,7 +1,7 @@
 //! `memory_search`, the one memory tool: everything else about notes is plain file
 //! work on `memory://` (see `scheme.rs`).
 
-use std::{path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use axo::{HostTool, SessionTools};
@@ -13,9 +13,9 @@ use serde_json::{json, Value};
 
 use super::{FolderMemory, MemoryService, SearchRequest};
 
-const GUIDELINES: &[&str] = &[
-    "Long-term memory holds notes from past sessions: decisions and their reasons, project facts, and the user's preferences. Search it when a task depends on history that is not in the repository or this conversation.",
-    "Memory records what was true when written. When it conflicts with the current code or the user, those win.",
+const GUIDELINES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("Long-term memory holds notes from past sessions: decisions and their reasons, project facts, and the user's preferences. Search it when a task depends on history that is not in the repository or this conversation."),
+    Cow::Borrowed("Memory records what was true when written. When it conflicts with the current code or the user, those win."),
 ];
 
 pub fn host_tools(memory: &Arc<MemoryService>, folder: &Path) -> Vec<HostTool> {
@@ -95,7 +95,7 @@ impl Tool for SearchTool {
     fn replay(&self, _call: &ToolCall) -> Replay {
         Replay::Safe
     }
-    fn prompt_guidelines(&self) -> &[&str] {
+    fn prompt_guidelines(&self) -> &[Cow<'static, str>] {
         GUIDELINES
     }
     async fn execute(&self, cx: ToolContext) -> Result<ToolOutput, ToolError> {

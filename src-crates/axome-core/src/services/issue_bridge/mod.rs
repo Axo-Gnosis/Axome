@@ -11,19 +11,20 @@
 //! - [`protocol`] — wire format and error classification
 //! - [`server`] — accept loop and per-connection NDJSON I/O
 //! - [`dispatch`] — method router into [`IssueService`]
-//! - [`socket`] — socket path resolution and private-dir creation
+//! - [`socket`] — socket path resolution
 
 mod dispatch;
 mod protocol;
 mod server;
 mod socket;
 
+use crate::dirs::create_private_dir;
 use crate::events::{EventSink, HostEvent};
 use crate::services::issues::IssueService;
 use parking_lot::Mutex;
 use protocol::PROTOCOL_VERSION;
 use server::run_bridge;
-use socket::{create_private_dir, socket_path_for};
+use socket::socket_path_for;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

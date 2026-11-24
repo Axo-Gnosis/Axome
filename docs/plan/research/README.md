@@ -5,6 +5,22 @@ Surveys of axo as Axome sees it. Each was made by a read-only subagent against a
 - **Labels:** claims marked [INFERENCE] were not verified directly.
 - **Axome side:** reports cite Axome at its HEAD of the day where they mention it. Axome had not changed between the `6cdaeb4` and `843cd73` surveys; later surveys follow Axome's own adoption work.
 
+## axo `deda8e6` (2026-11-22): pin-bump survey from `5c3f418`
+
+Started as an inventory; the last four reports are recommendations answering Toph's review. The topic is [T13](../plan.md#t13-axo-deda8e6-extensions-definitions-service-tiers).
+
+| File | Question |
+|---|---|
+| [`axo-deda8e6/compile-probe.md`](axo-deda8e6/compile-probe.md) | What breaks when Axome HEAD compiles against `deda8e6` (20 production + 6 test errors by cause), silent wire drift (`details.files`), and what happens to existing auth slots, child journals and tool records on upgrade |
+| [`axo-deda8e6/session-api-and-definitions.md`](axo-deda8e6/session-api-and-definitions.md) | `SessionOptions::definitions`, live definitions and layers, registered commands, `axo::ext` dispatch, paging, `Arc<SessionEvent>`/`QueueChanged`, child observation, one-off completions, changed tool trait and errors |
+| [`axo-deda8e6/behavior-data-and-config.md`](axo-deda8e6/behavior-data-and-config.md) | Behavior Axome feels without new calls: journal/header compatibility, delivery and mode ordering, file-record envelope and hard-stop records, bounded reads, command capture, prompt layout, new settings keys, error surfaces |
+| [`axo-deda8e6/providers-credentials-and-tiers.md`](axo-deda8e6/providers-credentials-and-tiers.md) | Per-origin credential slots, owned registrations and layers, transactional reload/refresh, service tiers end to end (selectors, `/tier`, settings, journal, transport, cost), and whether handoff items S/L/U landed |
+| [`axo-deda8e6/extensions.md`](axo-deda8e6/extensions.md) | The Bun extension bridge as an embedding host sees it: `ExtensionOptions`, manager status/events, install/update/rollback, contributions, callable API, lifecycle hook, failure and trust model, and where it meets Axome (including Axome's own unrelated `extension.json` system and Bun packaging) |
+| [`axo-deda8e6/service-tier-ux.md`](axo-deda8e6/service-tier-ux.md) | Q66: where tiers are chosen and shown (Codex, Claude Code, OMP, OpenCode, Zed, Cursor compared); chosen, effective and recorded tier; selector, Settings and turn-footer changes |
+| [`axo-deda8e6/extension-runtime-inputs.md`](axo-deda8e6/extension-runtime-inputs.md) | Q70: Bun packaging, directories, env, engine-owned manager, the `Lifecycle` hook over tabs and folders, `axome-server`; proposed axo handoff for folder-scoped extensions. Its `auto_install: false` is overridden in T13 |
+| [`axo-deda8e6/extension-management-ux.md`](axo-deda8e6/extension-management-ux.md) | Q71: how OMP, pi, Claude Code, OpenCode, Goose, Zed, VS Code and Obsidian manage extensions; the recommended Settings → Agent → Extensions page, install sources, trust, diagnostics |
+| [`axo-deda8e6/extension-systems-clash.md`](axo-deda8e6/extension-systems-clash.md) | Q72: every clash between Axome's language/LSP/harness packages and axo's Bun extensions, four resolution options, and the recommended rename to Integrations |
+
 ## axo `614089b` (2026-11-20): pin-bump survey from `a0ec20d`
 
 | File | Question |

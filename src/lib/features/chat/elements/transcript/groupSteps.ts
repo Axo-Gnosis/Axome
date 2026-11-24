@@ -1,6 +1,7 @@
 import type { ChatDeliverable } from '$lib/types/backend'
 import { jobKind, resolveJob, type JobKind, type TranscriptJob } from '../../jobs'
 import { parseBashDetails } from '../tool/bashOutput'
+import { blockedToolResult } from '../tool/payload'
 import { isReceiptTool, killReceipt, sendReceipt, spawnReceipt, waitReceipt } from '../tool/receipt'
 import type { Step, ToolStep } from '../../turns'
 
@@ -31,11 +32,21 @@ export type TranscriptStep = GroupedStep | JobStep
 
 export const REDACTED_THINKING = 'Thinking is redacted.'
 
+// Ask documents and policy blocks stay visible at their original transcript position.
+function standaloneTool(call: ToolStep): boolean {
+  return call.name === 'ask' || blockedToolResult(call.result) !== null
+}
+
 export function groupSteps(steps: Step[]): GroupedStep[] {
   const grouped: GroupedStep[] = []
   for (let index = 0; index < steps.length; index++) {
     const first = steps[index]
     if (first.kind === 'tool') {
+      if (standaloneTool(first)) {
+        grouped.push(first)
+        continue
+      }
+      // A receipt with file records needs ordinary tool rendering, including its output.
       if (isReceiptTool(first)) {
         grouped.push({ kind: 'receipt', id: first.id, call: first })
         continue
@@ -43,7 +54,7 @@ export function groupSteps(steps: Step[]): GroupedStep[] {
       const calls = [first]
       while (true) {
         const call = steps[index + 1]
-        if (call?.kind !== 'tool' || call.name !== first.name || isReceiptTool(call)) break
+        if (call?.kind !== 'tool' || call.name !== first.name || standaloneTool(call) || isReceiptTool(call)) break
         calls.push(call)
         index++
       }
@@ -74,6 +85,7 @@ export type TranscriptSegment = TranscriptStep | WorkSegment
 function foldable(step: GroupedStep): boolean {
   switch (step.kind) {
     case 'tool':
+      return !standaloneTool(step)
     case 'toolGroup':
     case 'thinking':
       return true

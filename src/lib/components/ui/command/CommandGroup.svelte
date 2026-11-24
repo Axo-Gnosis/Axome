@@ -14,11 +14,13 @@
   let {
     class: className,
     heading,
+    headingContent,
     children,
     ...rest
   }: {
     class?: string
     heading?: string
+    headingContent?: Snippet
     children?: Snippet
     value?: string
     forceMount?: boolean
@@ -26,9 +28,9 @@
 </script>
 
 <Command.Group class={cn('overflow-hidden p-1', className)} {...rest}>
-  {#if heading}
+  {#if heading || headingContent}
     <Command.GroupHeading class={commandGroupHeadingVariants()}>
-      {heading}
+      {#if headingContent}{@render headingContent()}{:else}{heading}{/if}
     </Command.GroupHeading>
   {/if}
   <Command.GroupItems>

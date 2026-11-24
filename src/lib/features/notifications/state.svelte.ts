@@ -5,9 +5,15 @@
 
 export type NotificationTone = 'neutral' | 'success' | 'warning' | 'error'
 
+export type NotificationAction = {
+  label: string
+  run: () => void | Promise<void>
+}
+
 export interface NotificationOptions {
   description?: string
   loading?: boolean
+  actions?: NotificationAction[]
 }
 
 export interface NotificationUpdate {
@@ -15,6 +21,7 @@ export interface NotificationUpdate {
   title?: string
   description?: string
   loading?: boolean
+  actions?: NotificationAction[]
 }
 
 export interface Notification {
@@ -26,6 +33,7 @@ export interface Notification {
   updatedAt: number
   active: boolean
   loading: boolean
+  actions?: NotificationAction[]
 }
 
 const TOAST_DURATION_MS = 4000
@@ -65,6 +73,7 @@ function createNotificationEntry(tone: NotificationTone, title: string, options:
     tone,
     title,
     description: options.description,
+    actions: options.actions?.slice(),
     timestamp,
     updatedAt: timestamp,
     active: true,
@@ -81,6 +90,7 @@ function updateNotification(id: string, update: NotificationUpdate): void {
   if (update.tone !== undefined) notification.tone = update.tone
   if (update.title !== undefined) notification.title = update.title
   if (update.description !== undefined) notification.description = update.description
+  if (update.actions !== undefined) notification.actions = update.actions.slice()
 
   if (update.loading !== undefined) {
     notification.loading = update.loading

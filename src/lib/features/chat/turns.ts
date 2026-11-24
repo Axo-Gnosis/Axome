@@ -1,4 +1,4 @@
-import type { ChatBlock, ChatContent, ChatEntry, ChatEntryBody, ChatLive, ChatThinking } from '$lib/types/backend'
+import type { ChatBlock, ChatContent, ChatEntry, ChatEntryBody, ChatLive } from '$lib/types/backend'
 import { record } from './elements/tool/payload'
 
 export type UserEntry = ChatEntry & { body: Extract<ChatEntryBody, { kind: 'user' }> }
@@ -33,18 +33,16 @@ export type Step =
                 | 'branchSummary'
                 | 'modelChange'
                 | 'thinkingChange'
+                | 'serviceTierChange'
                 | 'contextMoved'
                 | 'agentChange'
                 | 'modeChange'
             }
           >
       ))
-/** Recorded settings for this turn; null when absent from the transcript. */
-export type TurnConfig = { model: string | null; thinking: ChatThinking | null }
 export type Turn = {
   id: string
   user: UserEntry | null
-  config: TurnConfig
   steps: Step[]
   assistants: AssistantEntry[]
   end: Extract<ChatEntryBody, { kind: 'runEnd' }> | null
@@ -61,12 +59,10 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
   }
   const runs = new Map(live.tools.map((run) => [run.callId, run]))
   let current: Turn | undefined
-  const settings: TurnConfig = { model: null, thinking: null }
   function start(user: UserEntry | null, timestamp: string | null = user?.timestamp ?? null): Turn {
     const turn: Turn = {
       id: user?.id ?? `turn:${turns.length}`,
       user,
-      config: { ...settings },
       steps: [],
       assistants: [],
       end: null,
@@ -128,10 +124,12 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
       current = start(entry as UserEntry)
       continue
     }
-    if (body.kind === 'modelChange') settings.model = body.model
-    if (body.kind === 'thinkingChange') settings.thinking = body.thinking
     // Selections before any content are the session's starting config, not command results.
-    if (!current && (body.kind === 'modelChange' || body.kind === 'thinkingChange')) continue
+    if (
+      !current &&
+      (body.kind === 'modelChange' || body.kind === 'thinkingChange' || body.kind === 'serviceTierChange')
+    )
+      continue
     if (current && current.end !== null && (body.kind === 'assistant' || body.kind === 'notice')) {
       current = undefined
     }
@@ -151,7 +149,6 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     // Only the run's own entries time a reply; picker changes and maintenance recorded later don't.
     if (body.kind === 'assistant' || body.kind === 'notice' || body.kind === 'runEnd') current.endedAt = entry.timestamp
     if (body.kind === 'assistant') {
-      current.config = { model: body.model, thinking: settings.thinking }
       current.assistants.push(entry as AssistantEntry)
       blocks(current, body.blocks, entry.id, entry.timestamp)
     } else if (body.kind === 'runEnd') current.end = body

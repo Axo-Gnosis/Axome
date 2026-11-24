@@ -4,15 +4,15 @@
   and a searchable popover listing roles (as @chips) and models grouped by
   provider. Used by the chat composer and the agent settings.
 
-  Values are axo selectors: `provider/model` or `@role`; `''` is the "none"
-  choice when `none` is given.
+  Values are axo selectors, optionally with effort and tier suffixes.
+  `''` is the "none" choice when `none` is given.
 
   @param value - current selector
   @param models - available models
   @param loaded - false while the model list is still unknown; an unlisted value is then shown plainly, not as unavailable
   @param roles - roles offered first; omit where a role can't be chosen
   @param none - label of the empty choice (e.g. "Inherits @default"); omitted = no empty choice
-  @param custom - offer typed `provider/model` or `@role` text that isn't listed
+  @param custom - offer typed model, role or suffix-only selectors that aren't listed
   @param variant - `ghost` (composer toolbar) or `field` (form control)
   @param label - accessible name and tooltip
 -->
@@ -30,13 +30,13 @@
   import { cn } from '$lib/utils/cn'
   import { splitTokens } from '$lib/utils/queryTokens'
   import { ArrowDown01Icon, CheckIcon } from '@hugeicons/core-free-icons'
-  import { splitSelector, ROLE_NAME } from './selector'
+  import { modelForSelector, splitSelector, TIER_LABELS, type SelectorParts } from './selector'
 
   let {
     value,
     models,
     loaded = true,
-    roles = [],
+    roles,
     none,
     custom = false,
     variant = 'field',
@@ -68,30 +68,29 @@
 
   const providers = $derived([...Map.groupBy(models, (model) => model.provider)])
 
-  /** A selector's model and effort suffix; the suffix only counts when the rest names a known model. */
-  function resolve(selector: string | null): { model: ChatModel | null; effort: string | null } {
-    if (!selector) return { model: null, effort: null }
-    const exact = models.find((model) => model.selector === selector)
-    if (exact) return { model: exact, effort: null }
-    const split = splitSelector(selector)
-    const base = models.find((model) => model.selector === split.model)
-    return base ? { model: base, effort: split.effort } : { model: null, effort: null }
-  }
-
-  const current = $derived(resolve(value))
-  const currentRole = $derived(value.startsWith('@') ? roles.find((role) => `@${role.name}` === value) : undefined)
+  const parts = $derived(splitSelector(value, models))
+  const current = $derived(modelForSelector(value, models, roles))
+  const currentRole = $derived(roles?.find((role) => `@${role.name}` === parts?.model))
   const typed = $derived(search.trim())
+  const typedParts = $derived(splitSelector(typed, models))
+  const invalidTyped = $derived(
+    custom && !!typed && (!typedParts || (typedParts.model.startsWith('@') && roles === undefined))
+  )
   const offerTyped = $derived(
     custom &&
-      (typed.includes('/') || (roles.length > 0 && typed.startsWith('@') && ROLE_NAME.test(typed.slice(1)))) &&
+      !!typed &&
+      !invalidTyped &&
       !models.some((model) => model.selector === typed) &&
-      !roles.some((role) => `@${role.name}` === typed)
+      !roles?.some((role) => `@${role.name}` === typed)
   )
 
-  function roleTarget(role: ChatModelRole): string {
-    if (!role.model) return 'Not set'
-    const { model, effort } = resolve(role.model)
-    return model ? `${model.name}${effort ? ` · ${effort}` : ''}` : role.model
+  function roleTarget(role: ChatModelRole, overrides?: SelectorParts): string {
+    const target = role.model ? splitSelector(role.model, models) : null
+    const model = role.model ? modelForSelector(role.model, models) : undefined
+    const effort = overrides?.effort ?? target?.effort
+    const tier = overrides?.tier ?? target?.tier
+    const name = model?.name ?? (target ? target.model || "Chat's model" : (role.model ?? 'Not set'))
+    return `${name}${effort ? ` · ${effort}` : ''}${tier && tier !== 'standard' ? ` · ${TIER_LABELS[tier]}` : ''}`
   }
 
   function choose(next: string) {
@@ -111,21 +110,28 @@
 </script>
 
 {#snippet summary()}
-  {#if value.startsWith('@')}
+  {#if currentRole}
     <Chip tone="accent" class="font-mono">{value}</Chip>
     {#if variant === 'field'}
-      <span class="truncate text-muted">{currentRole ? roleTarget(currentRole) : 'Unknown role'}</span>
+      <span class="truncate text-muted">{roleTarget(currentRole, parts ?? undefined)}</span>
     {/if}
-  {:else if current.model}
-    {#if variant === 'field'}<span class="shrink-0 text-muted">{current.model.provider} /</span>{/if}
-    <span class="truncate {variant === 'field' ? 'text-bright' : ''}">{current.model.name}</span>
-    {#if current.effort}<span class="shrink-0 text-xs text-subtle">· {current.effort}</span>{/if}
+  {:else if current}
+    {#if variant === 'field'}<span class="shrink-0 text-muted">{current.provider} /</span>{/if}
+    <span class="truncate {variant === 'field' ? 'text-bright' : ''}">{current.name}</span>
+    {#if parts?.effort}<span class="shrink-0 text-xs text-muted">· {parts.effort}</span>{/if}
+    {#if parts?.tier && parts.tier !== 'standard'}
+      <span class="shrink-0 text-xs text-muted">· {TIER_LABELS[parts.tier]}</span>
+    {/if}
     {#if variant === 'field'}
-      <span class="shrink-0 text-xs text-subtle">{formatTokens(current.model.contextWindow)}</span>
+      <span class="shrink-0 text-xs text-subtle">{formatTokens(current.contextWindow)}</span>
     {/if}
   {:else if value}
     <span class="truncate">{value}</span>
-    {#if loaded}<span class="shrink-0 text-danger">· unavailable</span>{/if}
+    {#if !parts}
+      <span class="shrink-0 text-danger">· invalid selector</span>
+    {:else if loaded && parts.model}
+      <span class="shrink-0 text-danger">· {parts.model.startsWith('@') ? 'unknown role' : 'unavailable'}</span>
+    {/if}
   {:else}
     <span class="truncate text-subtle italic">{none ?? 'Choose a model'}</span>
   {/if}
@@ -182,7 +188,11 @@
     <Command.Root class="rounded-lg bg-transparent" {label} {filter}>
       <Command.Input placeholder="Search models and roles…" bind:value={search} />
       <Command.List class="max-h-80 overflow-y-auto">
-        {#if !offerTyped}<Command.Empty>No matches</Command.Empty>{/if}
+        {#if invalidTyped}
+          <p role="status" class="px-3 py-1.5 text-sm text-danger-bright">Invalid model selector</p>
+        {:else if !offerTyped}
+          <Command.Empty>No matches</Command.Empty>
+        {/if}
         {#if none}
           <Command.Group>
             <Command.Item value={`none ${none}`} onSelect={() => choose('')}>
@@ -198,7 +208,7 @@
             </Command.Item>
           </Command.Group>
         {/if}
-        {#if roles.length}
+        {#if roles?.length}
           <Command.Group heading="Roles">
             {#each roles as role (role.name)}
               <Command.Item
@@ -208,22 +218,26 @@
               >
                 <Chip tone="accent" class="font-mono">@{role.name}</Chip>
                 <span class="min-w-0 flex-1 truncate text-xs text-muted">{roleTarget(role)}</span>
-                {@render check(value === `@${role.name}`)}
+                {@render check(currentRole?.name === role.name)}
               </Command.Item>
             {/each}
           </Command.Group>
         {/if}
         {#each providers as [provider, list] (provider)}
           <Command.Group heading={provider}>
+            {#snippet headingContent()}
+              <span class="uppercase">{provider}</span>
+              {#if list[0].origin}<span class="ms-2 font-mono">{list[0].origin}</span>{/if}
+            {/snippet}
             {#each list as model (model.selector)}
               <Command.Item
                 value={model.selector}
-                keywords={[model.name, model.provider]}
+                keywords={[model.name, model.provider, model.origin ?? '']}
                 onSelect={() => choose(model.selector)}
               >
                 <span class="min-w-0 flex-1 truncate">{model.name}</span>
                 <span class="shrink-0 text-xs text-subtle">{formatTokens(model.contextWindow)}</span>
-                {@render check(current.model?.selector === model.selector && !value.startsWith('@'))}
+                {@render check(parts?.model === model.selector)}
               </Command.Item>
             {/each}
           </Command.Group>

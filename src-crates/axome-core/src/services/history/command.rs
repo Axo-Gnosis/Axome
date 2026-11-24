@@ -211,7 +211,7 @@ fn read_rows(stdout: impl Read) -> Result<Listing, String> {
                 cwd: field("cwd"),
                 title: field("title"),
                 last_message,
-                // Extension commands count meaningful user/assistant messages.
+                // Integration commands count meaningful user/assistant messages.
                 message_count,
                 created_at: field("created_at"),
                 updated_at: field("updated_at"),

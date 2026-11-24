@@ -2,6 +2,7 @@
 
 - **Target repository:** `/repo/rust/axo`, branch `main`. Toph makes these changes; Axome's implementers never modify axo.
 - **Inspected revision:** `614089b8a801d26b04e65330abc47924f4973cf1`
+- **Status:** fulfilled in `118a716` (2026-11-23): `Models::subscribe`, `Models::logout`, and `Option` costs on models and usage. Adopted in [`../plan.md`](../plan.md) T13.
 - **Source decisions:** [`../design.md`](../design.md) ([P22](../design.md#decisions), [P24](../design.md#decisions), [P27](../design.md#decisions)) and [`../plan.md`](../plan.md) ([T11](../plan.md#t11-axo-614089b-providers-login-and-the-live-catalog))
 - **Evidence:** [`../research/axo-614089b/`](../research/README.md)
 

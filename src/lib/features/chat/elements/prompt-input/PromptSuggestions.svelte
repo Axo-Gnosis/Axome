@@ -10,6 +10,8 @@
     /** Field names shown as pills after the label. */
     fields?: string[]
     detail?: string
+    origin?: string
+    stopped?: boolean
     /** Why the row can't be picked right now. */
     blocked?: string
     /** A folder's path that Tab types in to list its contents. */
@@ -91,10 +93,15 @@
           >
             {#if item.icon}<Icon icon={item.icon} />{/if}
             <span class="shrink-0">{item.label}</span>
+            {#if item.origin}<span class="shrink-0 font-mono text-xs text-muted">{item.origin}</span>{/if}
             {#each item.fields ?? [] as field (field)}
               <span class="shrink-0 rounded-sm bg-overlay px-1.5 text-xs text-muted">{field}</span>
             {/each}
-            {#if item.detail}<span class="ml-auto min-w-0 truncate ps-4 text-xs text-subtle">{item.detail}</span>{/if}
+            {#if item.stopped}
+              <span class="ml-auto min-w-0 truncate ps-4 text-xs text-muted">stopped · Retry in Settings</span>
+            {:else if item.detail}
+              <span class="ml-auto min-w-0 truncate ps-4 text-xs text-subtle">{item.detail}</span>
+            {/if}
             {#if item.blocked}<span class="shrink-0 text-xs text-muted {item.detail ? '' : 'ml-auto'}"
                 >{item.blocked}</span
               >{/if}

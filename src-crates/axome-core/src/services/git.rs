@@ -2369,7 +2369,7 @@ pub(crate) fn git_line(path: &Path, args: &[&str]) -> Option<String> {
 
 /// Every Axome git spawn: cwd = repo, never prompts on a terminal or opens an
 /// editor, and speaks untranslated English so stderr matching stays stable.
-fn git_command(path: &Path) -> Command {
+pub(crate) fn git_command(path: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .env_clear()

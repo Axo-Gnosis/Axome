@@ -86,7 +86,7 @@
       await initMonaco(m)
       if (folderPath) {
         await ensureFolderLanguageSupport(m, folderPath).catch((error) =>
-          console.warn('Extension language support failed', error)
+          console.warn('Integration language support failed', error)
         )
       }
       if (disposed || !containerEl) return

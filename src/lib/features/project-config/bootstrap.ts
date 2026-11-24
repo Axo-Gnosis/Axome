@@ -2,7 +2,7 @@
 //
 // Pulls every JSON schema declared by each host's Rust backend and pushes it
 // into the Monaco schema registry, scoped by folderUri. Schemas load per host
-// because settings schemas enumerate that host's extension ids. Matching config
+// because settings schemas enumerate that host's integration ids. Matching config
 // files get autocomplete, validation, and hover docs.
 //
 // Adding a new config schema is a backend-only change:
@@ -13,12 +13,12 @@
 import { backend } from '$lib/api/backend'
 import { registerSchema } from '$lib/features/editor/schemas/registry'
 import { REMOTE_MODEL_SCHEME } from '$lib/features/editor/renderers/monaco/text/modelCache'
-import { extensionHostKey } from '$lib/features/extensions/catalog.svelte'
+import { integrationHostKey } from '$lib/features/integrations/catalog.svelte'
 
 const loads = new Map<string, Promise<void>>()
 
 export function initProjectSchemas(folderPath?: string | null): Promise<void> {
-  const host = extensionHostKey(folderPath)
+  const host = integrationHostKey(folderPath)
   const existing = loads.get(host)
   if (existing) return existing
   const load = backend.configSchemas

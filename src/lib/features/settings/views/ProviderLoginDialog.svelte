@@ -13,10 +13,14 @@
   let {
     provider = $bindable(null),
     host,
+    scopeFolder,
+    disabled = false,
     onDone
   }: {
     provider?: string | null
     host: string | null
+    scopeFolder: string | null
+    disabled?: boolean
     onDone: () => void
   } = $props()
 
@@ -46,6 +50,7 @@
     const name = provider
     if (name === null) return
     const owner = host
+    const scope = scopeFolder
     const current = ++generation
     let timer: ReturnType<typeof setTimeout>
     let lastUrl: string | undefined
@@ -88,7 +93,7 @@
     }
 
     void backend.axo
-      .loginStart(name, owner)
+      .loginStart(name, owner, scope)
       .then(({ loginId: id }) => {
         if (current !== generation) return cancel(id, owner)
         loginId = id
@@ -106,7 +111,7 @@
   })
 
   async function submit(id: number, answer: string) {
-    if (!loginId || submitted === id) return
+    if (disabled || !loginId || submitted === id) return
     const current = generation
     submitted = id
     error = null
@@ -175,17 +180,19 @@
                   type={question.secret ? 'password' : 'text'}
                   placeholder={question.placeholder ?? undefined}
                   bind:value
-                  disabled={submitted === question.id}
+                  disabled={disabled || submitted === question.id}
                 />
               </label>
-              <Button type="submit" disabled={!value || submitted === question.id}>Submit</Button>
+              <Button type="submit" disabled={disabled || !value || submitted === question.id}>Submit</Button>
             </form>
           {:else}
             <p class="text-sm text-muted">{question.message}</p>
             <div class="flex flex-wrap gap-2">
               {#each question.options as option (option.id)}
-                <Button size="sm" disabled={submitted === question.id} onclick={() => submit(question.id, option.id)}
-                  >{option.label}</Button
+                <Button
+                  size="sm"
+                  disabled={disabled || submitted === question.id}
+                  onclick={() => submit(question.id, option.id)}>{option.label}</Button
                 >
               {/each}
             </div>

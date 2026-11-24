@@ -25,6 +25,15 @@ pub enum DesktopEvent {
     ModelsChanged {
         server: String,
     },
+    ExtensionsChanged {
+        server: String,
+    },
+    ExtensionStopped {
+        server: String,
+        id: String,
+        folder: Option<String>,
+        problem: axome_protocol::axo::AxoExtensionProblem,
+    },
 }
 
 pub fn channel_sink<T: Serialize + Send + Sync + 'static>(
@@ -47,6 +56,14 @@ pub fn desktop_event_sink(
                 app.emit("models-changed", json!({ "server": server })),
             DesktopEvent::Host(HostEvent::ModelsChanged) =>
                 app.emit("models-changed", json!({ "server": null })),
+            DesktopEvent::ExtensionsChanged { server } =>
+                app.emit("extensions-changed", json!({ "server": server })),
+            DesktopEvent::Host(HostEvent::ExtensionsChanged) =>
+                app.emit("extensions-changed", json!({ "server": null })),
+            DesktopEvent::ExtensionStopped { server, id, folder, problem } =>
+                app.emit("extension-stopped", json!({ "server": server, "id": id, "folder": folder, "problem": problem })),
+            DesktopEvent::Host(HostEvent::ExtensionStopped { id, folder, problem }) =>
+                app.emit("extension-stopped", json!({ "server": null, "id": id, "folder": folder, "problem": problem })),
             DesktopEvent::RemoteRunStatus { run_id, state } =>
                 app.emit("remote-run-status", json!({ "runId": run_id, "state": state })),
             DesktopEvent::Host(HostEvent::FilesChanged(payload)) => app.emit("files-changed", payload),

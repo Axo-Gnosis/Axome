@@ -1,7 +1,7 @@
 use crate::{errors::ApiError, events::EventSink, services::folders::resolve_folder, Host};
 use axome_protocol::chat::{
     ChatAnswer, ChatEvent, ChatForkInfo, ChatJobOutput, ChatLinkTarget, ChatLiveSummary,
-    ChatModelCatalog, ChatPart, ChatThinking,
+    ChatModelCatalog, ChatPart, ChatServiceTier, ChatThinking,
 };
 
 impl Host {
@@ -15,10 +15,11 @@ impl Host {
         folder_path: String,
         model: String,
         thinking: ChatThinking,
+        service_tier: ChatServiceTier,
     ) -> Result<String, ApiError> {
         let folder = resolve_folder(&folder_path)?;
         self.axo
-            .block_on(self.axo.create(&folder, model, thinking))?
+            .block_on(self.axo.create(&folder, model, thinking, service_tier))?
     }
 
     pub fn chat_prompt(

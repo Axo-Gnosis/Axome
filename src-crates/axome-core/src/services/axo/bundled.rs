@@ -73,13 +73,22 @@ pub(super) fn modes() -> &'static [ModeSpec] {
     &BUNDLED_MODES
 }
 
+pub(super) fn definitions(modes: Vec<ModeSpec>) -> axo::Definitions {
+    axo::Definitions {
+        agents: agents().to_vec(),
+        modes,
+        keywords: keywords().to_vec(),
+        ..Default::default()
+    }
+}
+
 /// The catalog for `root`, with the bundled agents, modes and keywords as the base layer.
 pub(super) fn catalog(
     axo: &axo::Axo,
     root: &Path,
     access: axo::ProjectAccess,
 ) -> Result<axo::Catalog, axo::Error> {
-    axo.catalog(root, Some(access), agents(), modes(), keywords())
+    axo.catalog(root, Some(access), &definitions(modes().to_vec()))
 }
 
 /// The bundled modes for a session, with `{{plansDir}}` filled in for its folder.

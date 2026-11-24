@@ -27,9 +27,10 @@ parking_lot = "0.12"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
-axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af686b77992c55278811" }
-axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af686b77992c55278811" }
-axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "5c3f418a5548f161aeb0af686b77992c55278811" }
+axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "9dd6fa160f8306435e914faf37ffba531b84fcd0" }
+axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "9dd6fa160f8306435e914faf37ffba531b84fcd0" }
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "9dd6fa160f8306435e914faf37ffba531b84fcd0" }
+axo-extensions = { git = "https://git.ryot.foo/toph/axo.git", rev = "9dd6fa160f8306435e914faf37ffba531b84fcd0" }
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"

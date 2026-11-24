@@ -1,26 +1,26 @@
 import type * as MonacoModule from 'monaco-editor'
 import type { HighlighterCore, LanguageRegistration } from 'shiki/core'
 import { backend } from '$lib/api/backend'
-import { extensionHostKey, loadExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
+import { integrationHostKey, loadIntegrationCatalog } from '$lib/features/integrations/catalog.svelte'
 import { ensureLspLanguageProviders } from '$lib/features/editor/lsp/registry'
 import { ensureFormattingProviders } from '$lib/features/editor/renderers/monaco/core/formatters'
 import { registerFrontmatterSupport } from '$lib/features/editor/renderers/monaco/core/languages/frontmatter'
 import { registerNixLanguage } from '$lib/features/editor/renderers/monaco/core/languages/nix'
 import { registerAxomeTheme, AXOME_SHIKI_THEME } from '$lib/features/editor/renderers/monaco/core/monacoTheme'
 import { initProjectSchemas } from '$lib/features/project-config/bootstrap'
-import type { ExtensionGrammar } from '$lib/types/backend'
+import type { IntegrationGrammar } from '$lib/types/backend'
 
 type Monaco = typeof MonacoModule
 
 const loads = new Map<string, Promise<void>>()
-const grammars = new Map<string, ExtensionGrammar>()
+const grammars = new Map<string, IntegrationGrammar>()
 let batchChain = Promise.resolve()
 let highlighter: HighlighterCore | null = null
 let grammarsChanged = false
 let originalEditorMethods: Pick<Monaco['editor'], 'setTheme' | 'create'> | null = null
 
 export function ensureFolderLanguageSupport(monaco: Monaco, folderPath: string | null): Promise<void> {
-  const key = extensionHostKey(folderPath)
+  const key = integrationHostKey(folderPath)
   const existing = loads.get(key)
   if (existing) return existing
 
@@ -39,8 +39,8 @@ async function loadFolderLanguageSupport(monaco: Monaco, folderPath: string | nu
   registerFrontmatterSupport(monaco)
   void initProjectSchemas(folderPath).catch((error) => console.warn('Config schema load failed', error))
   const [catalog, folderGrammars] = await Promise.all([
-    loadExtensionCatalog(folderPath),
-    backend.extensions.getGrammars(folderPath)
+    loadIntegrationCatalog(folderPath),
+    backend.integrations.getGrammars(folderPath)
   ])
   const existing = new Set(monaco.languages.getLanguages().map((language) => language.id))
   for (const language of catalog.runtime.languages) {

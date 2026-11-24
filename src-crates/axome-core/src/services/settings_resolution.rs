@@ -1,8 +1,8 @@
 use crate::services::{
-    extensions::ExtensionService,
+    integrations::IntegrationService,
     settings::{SettingsJsoncLayer, SettingsService},
 };
-use axome_protocol::extensions::{FORMATTER_DISABLED, FORMATTER_LSP};
+use axome_protocol::integrations::{FORMATTER_DISABLED, FORMATTER_LSP};
 use axome_protocol::settings::{
     EffectiveSettings, HarnessConfigRecord, HarnessSettings, LspServerConfigRecord,
     LspServerSettings, SettingsDiagnostic, SettingsDiagnosticCode, SettingsDiagnosticSeverity,
@@ -44,7 +44,7 @@ pub fn resolve_effective_settings_for_folder_path(
     dirs: &crate::HostDirs,
     folder_path: Option<&Path>,
 ) -> ResolvedSettings {
-    let catalog = ExtensionService::current();
+    let catalog = IntegrationService::current();
     SettingsResolver::load(dirs, &catalog.settings_ids).resolve_folder_path(folder_path)
 }
 
@@ -379,6 +379,9 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     "/axo/project",
     "/axo/homeAgentsDir",
     "/axo/modelRoles",
+    "/axo/serviceTier",
+    "/axo/extensions",
+    "/axo/projectExtensions",
     "/axo/subagents",
     "/axo/extendedContext",
     "/axo/webSearch",
@@ -520,6 +523,12 @@ mod tests {
             settings_layer_schema(SettingsLayerKind::Global, &SettingsCatalogIds::default());
         assert!(schema.pointer("/properties/window").is_some());
         assert!(schema.pointer("/properties/remotes").is_some());
+        assert!(schema
+            .pointer("/definitions/AxoSettings/properties/serviceTier")
+            .is_some());
+        assert!(schema
+            .pointer("/definitions/AxoSubagentSettings/properties/serviceTier")
+            .is_some());
     }
 
     #[test]
@@ -530,6 +539,12 @@ mod tests {
         assert!(schema.pointer("/properties/typography").is_none());
         assert!(schema.pointer("/properties/remotes").is_none());
         assert!(schema.pointer("/properties/nix").is_some());
+        assert!(schema
+            .pointer("/definitions/AxoSettings/properties/serviceTier")
+            .is_none());
+        assert!(schema
+            .pointer("/definitions/AxoSettings/properties/subagents")
+            .is_none());
     }
 
     fn loaded(layer: SettingsLayerKind, name: &str, value: Value) -> SettingsLayerLoad {
@@ -713,7 +728,10 @@ mod tests {
                         "project": { "access": "trust" },
                         "homeAgentsDir": true,
                         "modelRoles": { "work": "provider/model" },
-                        "subagents": { "maxDepth": 9 },
+                        "serviceTier": { "onModelChange": "keep" },
+                        "extensions": [{ "id": "scratch" }],
+                        "projectExtensions": { "/project": [{ "id": "scratch" }] },
+                        "subagents": { "maxDepth": 9, "serviceTier": "inherit" },
                         "extendedContext": true,
                         "webSearch": { "enabled": false },
                         "browser": { "enabled": false, "executablePath": "/tmp/evil" },
@@ -752,7 +770,17 @@ mod tests {
         );
         assert!(!resolved.settings.axo.home_agents_dir);
         assert!(resolved.settings.axo.model_roles.is_empty());
+        assert!(resolved.settings.axo.extensions.is_empty());
+        assert!(resolved.settings.axo.project_extensions.is_empty());
+        assert_eq!(
+            resolved.settings.axo.service_tier.on_model_change,
+            axome_protocol::axo_settings::AxoTierOnModelChange::Reset
+        );
         assert_eq!(resolved.settings.axo.subagents.max_depth, 1);
+        assert_eq!(
+            resolved.settings.axo.subagents.service_tier,
+            axome_protocol::axo_settings::AxoSubagentTier::Standard
+        );
         assert!(!resolved.settings.axo.extended_context);
         assert!(resolved.settings.axo.web_search.enabled);
         assert!(resolved.settings.axo.browser.enabled);

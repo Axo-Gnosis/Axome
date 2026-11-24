@@ -214,11 +214,11 @@ macro_rules! axome_rpc_ops {
             #[route(none)]
             ActivityMapRefresh => activity_map_refresh() -> Vec<$crate::activity_map::DiscoveredProject>;
             #[route(server)]
-            ExtensionsGetCatalog => extensions_get_catalog() -> $crate::extensions::ExtensionCatalog;
+            IntegrationsGetCatalog => integrations_get_catalog() -> $crate::integrations::IntegrationCatalog;
             #[route(server)]
-            ExtensionsGetGrammars => extensions_get_grammars() -> Vec<$crate::extensions::ExtensionGrammar>;
+            IntegrationsGetGrammars => integrations_get_grammars() -> Vec<$crate::integrations::IntegrationGrammar>;
             #[route(server)]
-            ExtensionsReload => extensions_reload() -> ();
+            IntegrationsReload => integrations_reload() -> ();
             #[route(server)]
             EnvironmentReload => environment_reload() -> ();
             #[route(server)]
@@ -625,7 +625,7 @@ macro_rules! axome_rpc_ops {
             #[route(opt_folder_path)]
             FormattingListFormatters => formatting_list_formatters(
                 folder_path: Option<String>,
-            ) -> Vec<$crate::extensions::FormatterStatus>;
+            ) -> Vec<$crate::integrations::FormatterStatus>;
             #[route(opt_folder_path)]
             SettingsGetEffective => settings_get_effective(
                 folder_path: Option<String>,
@@ -633,23 +633,49 @@ macro_rules! axome_rpc_ops {
             #[route(server)]
             SettingsGet => settings_get() -> $crate::settings::SettingsPayload;
             #[route(server)]
-            AxoProviders => axo_providers() -> $crate::axo::AxoProvidersPayload;
+            AxoProviders => axo_providers(scope_folder: Option<String>) -> $crate::axo::AxoProvidersPayload;
             #[route(server)]
             AxoModels => axo_models() -> Vec<$crate::chat::ChatModel>;
             #[route(server)]
-            AxoProviderSetKey => axo_provider_set_key(provider: String, key: String) -> ();
+            AxoProviderSetKey => axo_provider_set_key(provider: String, key: String, scope_folder: Option<String>) -> ();
             #[route(server)]
-            AxoProviderRemove => axo_provider_remove(provider: String) -> ();
+            AxoProviderRemove => axo_provider_remove(provider: String, scope_folder: Option<String>) -> Option<String>;
             #[route(server)]
             AxoModelsRefresh => axo_models_refresh() -> ();
             #[route(server)]
-            AxoLoginStart => axo_login_start(provider: String) -> $crate::axo::AxoLoginStarted;
+            AxoLoginStart => axo_login_start(provider: String, scope_folder: Option<String>) -> $crate::axo::AxoLoginStarted;
             #[route(server)]
             AxoLoginSubmit => axo_login_submit(login_id: String, question_id: u32, answer: String) -> ();
             #[route(server)]
             AxoLoginStatus => axo_login_status(login_id: String) -> $crate::axo::AxoLoginStatus;
             #[route(server)]
             AxoLoginCancel => axo_login_cancel(login_id: String) -> ();
+            #[route(server)]
+            AxoExtensionsGet => axo_extensions_get(scope_folder: Option<String>) -> $crate::axo::AxoExtensions;
+            #[route(server)]
+            AxoExtensionsSetEnabled => axo_extensions_set_enabled(enabled: Vec<$crate::axo::AxoEnabledExtension>) -> ();
+            #[route(server)]
+            AxoProjectExtensionsSetEnabled => axo_project_extensions_set_enabled(scope_folder: String, enabled: Vec<$crate::axo::AxoEnabledExtension>) -> ();
+            #[route(server)]
+            AxoExtensionRetry => axo_extension_retry(id: String, scope_folder: Option<String>) -> ();
+            #[route(server)]
+            AxoExtensionReload => axo_extension_reload(id: String, scope_folder: Option<String>) -> ();
+            #[route(server)]
+            AxoExtensionInstallDependencies => axo_extension_install_dependencies(id: String, scope_folder: Option<String>) -> ();
+            #[route(server)]
+            AxoExtensionInspect => axo_extension_inspect(source: $crate::axo::AxoExtensionSource) -> $crate::axo::AxoExtensionStage;
+            #[route(server)]
+            AxoExtensionStageDiscard => axo_extension_stage_discard(stage_id: String) -> ();
+            #[route(server)]
+            AxoExtensionInstall => axo_extension_install(stage_id: String, replace_origin: bool) -> $crate::axo::AxoInstallOutcome;
+            #[route(server)]
+            AxoExtensionRollback => axo_extension_rollback(id: String) -> ();
+            #[route(server)]
+            AxoExtensionUninstall => axo_extension_uninstall(id: String, delete_data: bool) -> ();
+            #[route(server)]
+            AxoExtensionsMemory => axo_extensions_memory(scope_folder: Option<String>) -> Vec<$crate::axo::AxoRunnerMemory>;
+            #[route(server)]
+            AxoExtensionsCheckBun => axo_extensions_check_bun() -> ();
             #[route(server)]
             AxoKeywords => axo_keywords() -> Vec<$crate::axo::AxoKeywordInfo>;
             #[route(server)]
@@ -742,7 +768,12 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatModels => chat_models(folder_path: String) -> $crate::chat::ChatModelCatalog;
             #[route(folder_path)]
-            ChatCreate => chat_create(folder_path: String, model: String, thinking: $crate::chat::ChatThinking) -> String;
+            ChatCreate => chat_create(
+                folder_path: String,
+                model: String,
+                thinking: $crate::chat::ChatThinking,
+                service_tier: $crate::chat::ChatServiceTier,
+            ) -> String;
             #[route(folder_path)]
             ChatPrompt => chat_prompt(folder_path: String, session_id: String, request_id: String, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
@@ -1061,6 +1092,12 @@ pub enum HostEventWire {
     WorkbenchesChanged(()),
     /// The model registry changed: models, providers, or credentials.
     ModelsChanged(()),
+    ExtensionsChanged(()),
+    ExtensionStopped {
+        id: String,
+        folder: Option<String>,
+        problem: crate::axo::AxoExtensionProblem,
+    },
 }
 
 /// Wire mirror of `axome_core::errors::ApiError` plus transport-level auth.
@@ -1350,5 +1387,123 @@ mod tests {
             serde_json::from_value::<Open>(encoded).unwrap(),
             Open::WorkbenchRpc { workbench, request: Request::WorkbenchList {} } if workbench == "wb-1"
         ));
+    }
+
+    #[test]
+    fn extension_operations_round_trip_and_keep_scope_separate() {
+        use serde_json::{from_value, json, to_value};
+        let cases = [
+            ("axo_extensions_get", json!({"scope_folder": "/project"})),
+            (
+                "axo_extensions_set_enabled",
+                json!({"enabled": [{"id": "scratch", "group": null}]}),
+            ),
+            (
+                "axo_project_extensions_set_enabled",
+                json!({"scope_folder": "/project", "enabled": []}),
+            ),
+            (
+                "axo_extension_retry",
+                json!({"id": "scratch", "scope_folder": null}),
+            ),
+            (
+                "axo_extension_reload",
+                json!({"id": "scratch", "scope_folder": "/project"}),
+            ),
+            (
+                "axo_extension_install_dependencies",
+                json!({"id": "scratch", "scope_folder": null}),
+            ),
+            (
+                "axo_extension_inspect",
+                json!({"source": {"type": "git", "url": "https://example.test/repo", "gitRef": "main"}}),
+            ),
+            ("axo_extension_stage_discard", json!({"stage_id": "stage"})),
+            (
+                "axo_extension_install",
+                json!({"stage_id": "stage", "replace_origin": true}),
+            ),
+            ("axo_extension_rollback", json!({"id": "lab/scratch"})),
+            (
+                "axo_extension_uninstall",
+                json!({"id": "lab/scratch", "delete_data": false}),
+            ),
+            ("axo_extensions_memory", json!({"scope_folder": null})),
+            ("axo_extensions_check_bun", json!({})),
+        ];
+        for (method, params) in cases {
+            let request = json!({"method": method, "params": params});
+            assert_eq!(
+                to_value(from_value::<Request>(request.clone()).unwrap()).unwrap(),
+                request
+            );
+        }
+        for (method, mut params) in [
+            ("axo_extensions_get", json!({})),
+            ("axo_providers", json!({})),
+            (
+                "axo_provider_set_key",
+                json!({"provider": "provider", "key": "key"}),
+            ),
+            ("axo_provider_remove", json!({"provider": "provider"})),
+            ("axo_login_start", json!({"provider": "provider"})),
+        ] {
+            let request =
+                from_value::<Request>(json!({"method": method, "params": params})).unwrap();
+            params["scope_folder"] = serde_json::Value::Null;
+            assert_eq!(
+                to_value(request).unwrap(),
+                json!({"method": method, "params": params})
+            );
+        }
+    }
+
+    #[test]
+    fn extension_payloads_preserve_tags_and_nullable_fields() {
+        use crate::axo::*;
+        use serde_json::{from_value, json, to_value};
+        let changed = json!({"kind": "extensions_changed", "payload": null});
+        assert_eq!(
+            to_value(HostEventWire::ExtensionsChanged(())).unwrap(),
+            changed
+        );
+        let stopped = json!({"kind": "extension_stopped", "payload": {
+            "id": "scratch", "folder": null, "problem": {"kind": "crash", "message": "runner stopped"}
+        }});
+        assert_eq!(
+            to_value(from_value::<HostEventWire>(stopped.clone()).unwrap()).unwrap(),
+            stopped
+        );
+        let folder = json!({"type": "folder", "path": "/project"});
+        assert_eq!(
+            to_value(from_value::<AxoExtensionSource>(folder.clone()).unwrap()).unwrap(),
+            folder
+        );
+        let hidden = json!({"type": "extension", "id": "lab/scratch"});
+        assert_eq!(
+            to_value(from_value::<AxoHiddenProvider>(hidden.clone()).unwrap()).unwrap(),
+            hidden
+        );
+        let origin = json!({"type": "originChanged", "installed": "old", "offered": "new"});
+        assert_eq!(
+            to_value(from_value::<AxoInstallOutcome>(origin.clone()).unwrap()).unwrap(),
+            origin
+        );
+        let failed = json!({"type": "failed", "title": "broken", "output": null});
+        assert_eq!(
+            to_value(from_value::<AxoInstallOutcome>(failed.clone()).unwrap()).unwrap(),
+            failed
+        );
+        let installed = json!({"type": "installed", "extension": {
+            "id": "lab/scratch", "origin": "installed", "enabled": false, "position": null,
+            "group": null, "phase": null, "problem": null, "dataDir": "/data/lab/scratch", "failure": null,
+            "adds": {"providers": [], "tools": [], "commands": [], "toolPolicy": [], "spawnHook": false},
+            "install": {"origin": "example.test/repo", "revision": "abcdef", "gitRef": "main",
+                "url": "https://example.test/repo", "installedAt": 7, "previous": null}
+        }});
+        assert_eq!(
+            to_value(from_value::<AxoInstallOutcome>(installed.clone()).unwrap()).unwrap(),
+            installed
+        );
     }
 }

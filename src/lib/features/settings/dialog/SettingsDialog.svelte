@@ -12,9 +12,9 @@
 -->
 
 <script lang="ts">
-  import { getSettingsPages, loadExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
+  import { getSettingsPages, loadIntegrationCatalog } from '$lib/features/integrations/catalog.svelte'
   import FileIcon from '$lib/icons/FileIcon.svelte'
-  import { IconButton } from '$lib/components/ui/button'
+  import { Button, IconButton } from '$lib/components/ui/button'
   import { WindowDialog } from '$lib/components/ui/dialog'
   import { ScrollArea } from '$lib/components/ui/scroll-area'
   import { Spinner } from '$lib/components/ui/progress'
@@ -37,10 +37,12 @@
     Wrench01Icon
   } from '@hugeicons/core-free-icons'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
-  import { getSettingsHost, getSettingsServer, loadSettings } from '$lib/features/settings/state/settings.svelte'
-  import { getActiveFolderPath } from '$lib/features/workbench/state.svelte'
+  import { loadSettings } from '$lib/features/settings/state/settings.svelte'
+  import { localHostLabel } from '$lib/features/browser/state.svelte'
+  import { getErrorMessage } from '$lib/utils/client-error'
+  import { splitRemotePath } from '$lib/utils/paths'
   import { platform } from '$lib/platform'
-  import { onMount, type Component } from 'svelte'
+  import { onMount, untrack, type Component } from 'svelte'
 
   import AppearanceView from '$lib/features/settings/views/AppearanceView.svelte'
   import KeyboardShortcutsView from '$lib/features/settings/views/KeyboardShortcutsView.svelte'
@@ -54,10 +56,19 @@
   import ModelsView from '$lib/features/settings/views/ModelsView.svelte'
   import BehaviorView from '$lib/features/settings/views/BehaviorView.svelte'
   import ToolsView from '$lib/features/settings/views/ToolsView.svelte'
+  import ExtensionsView from '$lib/features/settings/views/ExtensionsView.svelte'
   import MemoryView from '$lib/features/settings/views/MemoryView.svelte'
   import ProjectAccessView from '$lib/features/settings/views/ProjectAccessView.svelte'
   import { getSaveStatus } from '../views/autoSaver.svelte'
-  import { getPageSections, getSettingsPage, setSettingsPage } from './state.svelte'
+  import {
+    getExtensionContextFolder,
+    getExtensionSettingsTarget,
+    getPageSections,
+    getSettingsLoadFolder,
+    getSettingsPage,
+    openExtensionSettings,
+    setSettingsPage
+  } from './state.svelte'
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props()
 
@@ -151,6 +162,15 @@
           icon: icon(Wrench01Icon)
         },
         {
+          id: 'extensions',
+          view: ExtensionsView,
+          host: true,
+          label: 'Extensions',
+          description:
+            'Packages that add tools, commands and model providers to chats. They run as your account on {host}. Changes also update open root chats.',
+          icon: icon(PackageIcon)
+        },
+        {
           id: 'memory',
           view: MemoryView,
           host: true,
@@ -191,7 +211,11 @@
     }
   ]
 
-  let languagePages = $derived(getSettingsPages(getSettingsHost()))
+  const loadFolder = $derived(getSettingsLoadFolder())
+  const server = $derived(loadFolder ? (splitRemotePath(loadFolder)?.server ?? null) : null)
+  const host = $derived(server === null ? null : loadFolder)
+  const hostLabel = $derived(server ?? localHostLabel().toLowerCase())
+  let languagePages = $derived(getSettingsPages(host))
   let groups = $derived<NavGroup[]>([
     ...STATIC_GROUPS.map((group) => ({
       ...group,
@@ -214,14 +238,15 @@
 
   let activeItem = $derived(items.find((item) => item.id === getSettingsPage()) ?? items[0])
 
-  // Host sections show the loaded owner's values and save to the host captured
-  // by each editor, even if the active folder moves before a write flushes.
-  let hostSectionServer = $derived(activeItem.host ? getSettingsServer() : null)
+  const hostSectionServer = $derived(activeItem.host ? server : null)
+  const extensionTarget = $derived(activeItem.id === 'extensions' ? getExtensionSettingsTarget() : null)
+  const extensionFolder = $derived(getExtensionContextFolder())
 
-  // Host-section editors seed drafts from the loaded owner's values, so they
-  // re-mount when ownership moves rather than flushing stale drafts to a new
-  // host. The key is stable while the desktop owns the sections.
-  let hostKey = $derived(getSettingsHost() ?? 'local')
+  function backToExtensions() {
+    if (!extensionTarget) return
+    openExtensionSettings({ ...extensionTarget, id: null })
+    viewport?.scrollTo({ top: 0 })
+  }
 
   // SECTIONS //
 
@@ -273,7 +298,8 @@
   })
 
   function openPage(id: string) {
-    setSettingsPage(id)
+    if (id === 'extensions' && extensionTarget?.id !== null && extensionTarget) backToExtensions()
+    else setSettingsPage(id)
     viewport?.scrollTo({ top: 0 })
   }
 
@@ -298,13 +324,32 @@
 
   // SETTINGS LOAD //
 
-  // Host-section reads probe harness binaries on the owning machine, so load
-  // only while open. Reloading on every active-folder change keeps the
-  // values, the caption and the file a save lands in on one host.
+  let load = $state<{ folder: string | null; error: string | null } | null>(null)
+  let attempt = $state(0)
   $effect(() => {
     if (!open) return
-    void loadSettings(getActiveFolderPath())
-    void loadExtensionCatalog(getActiveFolderPath()).catch(() => {})
+    const folder = host
+    void attempt
+    let active = true
+    load = null
+    void untrack(() => loadSettings(folder)).then(
+      () => {
+        if (active) load = { folder, error: null }
+      },
+      (error: unknown) => {
+        if (active) load = { folder, error: getErrorMessage(error) }
+      }
+    )
+    void untrack(() => loadIntegrationCatalog(folder)).catch(() => {})
+    return () => {
+      active = false
+      load = null
+    }
+  })
+
+  $effect(() => {
+    void extensionTarget?.id
+    untrack(() => viewport?.scrollTo({ top: 0 }))
   })
 
   // VERSION //
@@ -396,14 +441,22 @@
 
   <main class="flex min-w-0 flex-1 flex-col">
     <header class="flex h-12 shrink-0 items-center justify-between border-b border-edge px-5">
-      <h1 class="truncate text-md font-semibold text-bright">{activeItem.label}</h1>
+      {#if extensionTarget?.id}
+        <div class="flex min-w-0 items-center gap-2 text-md">
+          <Button variant="text" size="sm" onclick={backToExtensions}>Extensions</Button>
+          <span aria-hidden="true" class="text-muted">/</span>
+          <h1 class="truncate font-mono text-bright">{extensionTarget.id}</h1>
+        </div>
+      {:else}
+        <h1 class="truncate text-md font-semibold text-bright">{activeItem.label}</h1>
+      {/if}
       <IconButton tooltip="Close" onclick={onClose}><Icon icon={Cancel01Icon} size={14} /></IconButton>
     </header>
 
     <ScrollArea class="min-h-0 flex-1" bind:viewportRef={viewport}>
       <div bind:this={content} class="mx-auto flex w-full max-w-4xl flex-col px-10 py-10">
         <div class="mb-8 flex flex-col gap-1.5 border-b border-edge pb-6">
-          <p class="text-base text-muted">{activeItem.description}</p>
+          <p class="text-base text-muted">{activeItem.description.replace('{host}', hostLabel)}</p>
           {#if hostSectionServer}
             <p class="text-xs text-subtle">
               These settings live on <span class="font-mono text-fg">{hostSectionServer}</span>
@@ -413,9 +466,22 @@
 
         <!-- Own container so the view's first section is a first child (no top hairline). -->
         <div class="flex flex-col">
-          {#key activeItem.host ? `${hostKey}/${activeItem.id}` : activeItem.id}
-            <activeItem.view {...activeItem.props} />
-          {/key}
+          {#if open}
+            {#if activeItem.host && (load === null || load.folder !== host)}
+              <p class="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading settings…</p>
+            {:else if activeItem.host && load?.error}
+              <p role="alert" class="mb-2 text-sm text-danger-bright">{load.error}</p>
+              <Button class="self-start" size="sm" onclick={() => attempt++}>Try Again</Button>
+            {:else if activeItem.id === 'extensions'}
+              {#key JSON.stringify([server, extensionFolder])}
+                <ExtensionsView {host} folderPath={extensionFolder} {hostLabel} />
+              {/key}
+            {:else}
+              {#key activeItem.host ? `${host ?? 'local'}/${activeItem.id}` : activeItem.id}
+                <activeItem.view {...activeItem.props} />
+              {/key}
+            {/if}
+          {/if}
         </div>
       </div></ScrollArea
     >

@@ -29,8 +29,9 @@
   import TitleBar from '$lib/features/app-shell/titlebar/TitleBar.svelte'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import { initWindowControls } from '$lib/features/app-shell/window-controls/state.svelte'
-  import { isSettingsOpen, setSettingsOpen } from '$lib/features/settings/dialog/state.svelte'
+  import { isSettingsOpen, openExtensionSettings, setSettingsOpen } from '$lib/features/settings/dialog/state.svelte'
   import { isAnyModalOpen } from '$lib/utils/modalRegistry.svelte'
+  import { splitRemotePath } from '$lib/utils/paths'
   import { setupGlobalShortcuts } from '$lib/features/command-palette/shortcuts/keybindings.svelte'
   import { confirmDiscardDirtyText } from '$lib/features/workbench/surfaces/text/service.svelte'
   import {
@@ -123,6 +124,35 @@
         refreshLoadedSessionIndexes((folderPath) => event.layer === 'global' || folderPath === event.folder_path)
       }),
       backend.axo.onModelsChanged(({ server }) => void reloadChatModels(server)),
+      backend.axo.onExtensionsChanged(({ server }) => void reloadChatModels(server)),
+      backend.axo.onExtensionStopped(({ server, id, folder, problem }) => {
+        if (disposed) return
+        const hostFolder = server ? (folder ?? `axome://${server}/`) : null
+        const scopeFolder = folder && (splitRemotePath(folder)?.path ?? folder)
+        const viewDetails = {
+          label: 'View Details',
+          run: () => openExtensionSettings({ hostFolder, projectFolder: folder, id })
+        }
+        let retrying = false
+        const notification = notify.error(`${id} stopped`, problem.message, {
+          actions: [
+            viewDetails,
+            {
+              label: 'Retry',
+              async run() {
+                if (retrying) return
+                retrying = true
+                try {
+                  await backend.axo.retryExtension(id, scopeFolder, hostFolder)
+                  notify.update(notification, { actions: [viewDetails] })
+                } finally {
+                  retrying = false
+                }
+              }
+            }
+          ]
+        })
+      }),
       backend.issues.onChanged(({ folderPath }) => void refreshIssuesForFolder(folderPath)),
       backend.nix.onChanged(({ folderPath }) => {
         refreshNixForFolder(folderPath)

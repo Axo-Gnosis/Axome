@@ -2,6 +2,8 @@
   import { Button } from '$lib/components/ui/button'
   import { NetLineChange } from '$lib/components/ui/net-line-change'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
+  import { chatExtensionTarget, findExtension } from '$lib/features/chat/extensions'
+  import { openExtensionSettings } from '$lib/features/settings/dialog/state.svelte'
   import { formatDuration } from '$lib/features/chat/format'
   import type { ToolStep } from '$lib/features/chat/turns'
   import type { BlockView } from '$lib/features/chat/view'
@@ -9,8 +11,7 @@
   import { CircleXIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
   import FileIcon from '$lib/icons/FileIcon.svelte'
-  import { AskSummary } from '../ask'
-  import { askOutcome, questionLabel } from '../ask/askResult'
+  import { AskDocument, AskSummary } from '../ask'
   import BashCommand from '../tool/BashCommand.svelte'
   import BashOutput from '../tool/BashOutput.svelte'
   import BrowserOutput from '../tool/BrowserOutput.svelte'
@@ -25,6 +26,7 @@
   import { openReferenceResult } from '../tool/referenceNavigation'
   import { toolHeader, toolIcon } from '../tool/toolHeader'
   import { parseBrowserOutput } from '../tool/browserOutput'
+  import { fileRecords } from '../tool/payload'
   import { parseSearchDocs, parseWebFetch, parseWebSearch } from '../tool/webOutput'
   import RailRow from './RailRow.svelte'
   let {
@@ -37,8 +39,7 @@
     controller,
     nested = false,
     now,
-    onOpenJob,
-    onAnswer
+    onOpenJob
   }: {
     call: ToolStep
     expansion: BlockView
@@ -50,18 +51,24 @@
     nested?: boolean
     now: number
     onOpenJob?: (ref?: string) => void
-    /** Focuses the docked ask panel for a pending question. */
-    onAnswer?: () => void
   } = $props()
-  const header = $derived(toolHeader(call, folderPath))
+  const records = $derived(fileRecords(call.result?.details))
+  const header = $derived(toolHeader(call, folderPath, records))
+  const toolOwner = $derived.by(() => {
+    const origins = controller.state?.toolOrigins
+    return origins && Object.hasOwn(origins, call.name) ? origins[call.name] : null
+  })
+  const blockedWhileUnavailable = $derived.by(() => {
+    const origin = header.blocked?.extension
+    const state = controller.extensions
+    if (!origin || !state || state.stale) return null
+    const item = findExtension(state.payload, origin)
+    return item && item.phase !== 'ready' ? origin : null
+  })
   const asking = $derived(
-    controller.state?.live.questions.find((questions) => questions.callId === call.callId) ?? null
-  )
-  const askResult = $derived(call.name === 'ask' && !asking && call.status !== 'running' ? askOutcome(call) : null)
-  const askTarget = $derived(
-    asking && asking.questions.length > 1
-      ? `${asking.questions.length} questions: ${asking.questions.map(questionLabel).join(', ')}`
-      : (asking?.questions[0]?.question ?? '')
+    !header.blocked && call.name === 'ask'
+      ? (controller.state?.live.questions.find((questions) => questions.callId === call.callId) ?? null)
+      : null
   )
   const failed = $derived(call.status === 'error')
   // Bulk expansion opens calls; only their More control reveals unabridged output.
@@ -69,8 +76,6 @@
   const showFields = $derived(
     !['read', 'edit', 'write', 'web_search', 'web_fetch', 'search_docs', 'browser'].includes(call.name)
   )
-  // A dismissed ask is a tool error but reads as muted; its outcome decides the tone.
-  const tone = $derived(askResult ? (askResult.tone === 'danger' ? 'danger' : 'idle') : header.tone)
   const webSearch = $derived(!failed && call.name === 'web_search' ? parseWebSearch(call) : null)
   const webFetch = $derived(!failed && call.name === 'web_fetch' ? parseWebFetch(call) : null)
   const browser = $derived(!failed && call.name === 'browser' ? parseBrowserOutput(call) : null)
@@ -93,7 +98,10 @@
 
 {#snippet target()}
   {#if header.command !== null}
-    <BashCommand command={header.command} inline />
+    <span class="flex min-w-0 items-center gap-1.5">
+      {#if header.summary}<span class="shrink-0">{header.summary}</span>{/if}
+      <BashCommand command={header.command} inline />
+    </span>
   {:else}
     <span class="flex min-w-0 items-center gap-1.5">
       {#if header.summary}<span class="min-w-0 truncate">{header.summary}</span>{/if}
@@ -116,18 +124,11 @@
 {/snippet}
 
 {#snippet aside()}
-  {#if askResult}
-    <span
-      class={askResult.tone === 'answered'
-        ? 'text-fg'
-        : askResult.tone === 'danger'
-          ? 'text-danger-bright'
-          : 'text-muted'}>{askResult.text}</span
-    >
-  {:else}
-    {#if header.lines}<NetLineChange added={header.lines.added} removed={header.lines.removed} />{/if}
-    {#if header.meta}<span>{header.meta}</span>{/if}
-  {/if}
+  {#if header.lines}<NetLineChange added={header.lines.added} removed={header.lines.removed} split />{/if}
+  {#if toolOwner}<span class="font-mono">{toolOwner}</span>{/if}
+  {#if header.blocked?.extension}<span>by {header.blocked.extension.id}</span>{/if}
+  {#if header.unfinished}<span class="text-warning">unfinished call</span>{/if}
+  {#if header.meta}<span>{header.meta}</span>{/if}
   {#if call.status === 'running' && call.timestamp}
     <span class="tabular-nums">{formatDuration(Math.max(0, now - Date.parse(call.timestamp)))}</span>
   {/if}
@@ -142,7 +143,7 @@
       }}>Background</Button
     >
   {/if}
-  {#if header.status && !askResult}
+  {#if header.status}
     <span class="inline-flex items-center gap-1 text-danger-bright">
       <Icon icon={CircleXIcon} size={12} aria-hidden="true" />
       {header.status.label}
@@ -150,30 +151,25 @@
   {/if}
 {/snippet}
 
-{#snippet askingTarget()}{askTarget}{/snippet}
-
-{#snippet askingAside()}
-  {#if onAnswer}
-    <Button variant="text" size="xs" class="p-0 text-accent hover:text-accent-bright" onclick={onAnswer}
-      >Answer below</Button
-    >
+{#snippet fileOutput()}
+  {#if header.unfinished}
+    <p class="px-3 py-2 font-sans text-sm text-warning">{header.unfinished}</p>
+  {/if}
+  {#if records.length > 0}
+    <ToolDiff {call} {records} {folderPath} {sessionId} {view} onExpand={expand} />
   {/if}
 {/snippet}
 
 {#if asking}
-  <RailRow
-    icon={toolIcon(call.name)}
-    tone="working"
-    verb="Waiting for your answer"
-    {nested}
-    viewId={call.id}
-    target={askingTarget}
-    aside={askingAside}
-  />
+  <AskDocument pending={asking} {controller} {folderPath} {sessionId} {now} />
+  {@render fileOutput()}
+{:else if !header.blocked && call.name === 'ask' && call.status !== 'running'}
+  <AskSummary {call} {folderPath} {sessionId} />
+  {@render fileOutput()}
 {:else}
   <RailRow
     icon={toolIcon(call.name)}
-    {tone}
+    tone={header.tone}
     verb={header.verb}
     mono={!header.known}
     {nested}
@@ -184,12 +180,10 @@
     {target}
     {aside}
   >
-    {#if call.name === 'ask'}
-      <AskSummary {call} />
-    {:else if call.name === 'bash'}
+    {#if call.name === 'bash' && !header.blocked}
       <div class="px-3 py-2"><BashCommand command={header.command ?? ''} /></div>
       <BashOutput {call} {view} failed={header.tone === 'danger'} onExpand={expand} {folderPath} {sessionId} />
-    {:else if call.name === 'grep' || call.name === 'find'}
+    {:else if !header.blocked && (call.name === 'grep' || call.name === 'find')}
       <SearchOutput
         {call}
         {view}
@@ -206,11 +200,32 @@
       <DocsSearchOutput data={docs} {view} {folderPath} {sessionId} onExpand={expand} />
     {:else if call.name === 'read' && !failed}
       <ReadOutput {call} {folderPath} {view} onExpand={expand} />
-    {:else if (call.name === 'edit' || call.name === 'write') && !failed}
-      <ToolDiff {call} {folderPath} {view} onExpand={expand} />
     {:else}
+      {#if header.blocked && header.command}<div class="px-3 py-2"><BashCommand command={header.command} /></div>{/if}
       {#if showFields}<ToolFields {call} />{/if}
-      <ToolOutput parts={call.output} {view} {failed} onExpand={expand} />
+      {#if call.output.length}
+        <ToolOutput parts={call.output} {view} {failed} onExpand={expand} />
+      {/if}
     {/if}
+    {@render fileOutput()}
   </RailRow>
+  {#if header.blocked}
+    <div class="flex flex-wrap items-baseline gap-x-2 pb-1 text-sm text-danger-bright" class:pl-6={!nested}>
+      <p class="min-w-0 wrap-anywhere whitespace-pre-wrap">
+        {#if blockedWhileUnavailable}
+          {`${blockedWhileUnavailable.id} checks every ${call.name} call before it runs, and it isn't running right now. Nothing ran.`}
+        {:else}
+          {header.blocked.reason}
+        {/if}
+      </p>
+      {#if blockedWhileUnavailable}
+        <Button
+          variant="text"
+          size="xs"
+          onclick={() => openExtensionSettings(chatExtensionTarget(folderPath, blockedWhileUnavailable))}
+          >Open Extensions</Button
+        >
+      {/if}
+    </div>
+  {/if}
 {/if}

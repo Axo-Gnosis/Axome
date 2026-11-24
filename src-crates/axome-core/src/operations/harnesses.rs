@@ -1,7 +1,8 @@
 use crate::{
     errors::ApiError,
     services::{
-        env::EnvironmentService, extensions::ExtensionService, folders::resolve_folder, harnesses,
+        env::EnvironmentService, folders::resolve_folder, harnesses,
+        integrations::IntegrationService,
         settings_resolution::resolve_effective_settings_for_folder_path,
     },
     Host,
@@ -14,7 +15,7 @@ impl Host {
         let effective = resolve_effective_settings_for_folder_path(&self.dirs, None);
         Ok(HarnessListing {
             harnesses: harnesses::detect_all(
-                &ExtensionService::current(),
+                &IntegrationService::current(),
                 &effective.settings,
                 &EnvironmentService::current().base,
             ),
@@ -28,7 +29,7 @@ impl Host {
         let effective = resolve_effective_settings_for_folder_path(&self.dirs, Some(&folder));
         Ok(HarnessListing {
             harnesses: harnesses::detect_all(
-                &ExtensionService::current(),
+                &IntegrationService::current(),
                 &effective.settings,
                 &env,
             ),

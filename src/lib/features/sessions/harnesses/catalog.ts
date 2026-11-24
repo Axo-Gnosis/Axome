@@ -1,12 +1,12 @@
 import type { IconData } from '$lib/icons/Icon.svelte'
-import { getExtensionCatalog } from '$lib/features/extensions/catalog.svelte'
+import { getIntegrationCatalog } from '$lib/features/integrations/catalog.svelte'
 import type { HarnessDescriptor } from '$lib/types/backend'
 
 /** A brand mark's image URL, or Hugeicons icon data for generic options such as Terminal. */
 export type HarnessIconSource = string | IconData
 
 export function getHarness(folderPath: string | null | undefined, id: string): HarnessDescriptor | null {
-  return getExtensionCatalog(folderPath)?.runtime.harnesses.find((harness) => harness.id === id) ?? null
+  return getIntegrationCatalog(folderPath)?.runtime.harnesses.find((harness) => harness.id === id) ?? null
 }
 
 export function svgUrl(svg: string): string {

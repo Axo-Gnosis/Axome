@@ -13,8 +13,8 @@ impl BrowserPolicy {
         if trimmed.is_empty() {
             return Err("URL must not be empty".to_owned());
         }
-        let parsed = Url::parse(trimmed)
-            .map_err(|err| format!("Invalid URL '{trimmed}': {err}"))?;
+        let parsed =
+            Url::parse(trimmed).map_err(|err| format!("Invalid URL '{trimmed}': {err}"))?;
         match parsed.scheme() {
             "http" | "https" => Ok(parsed),
             scheme => Err(format!(
@@ -31,8 +31,12 @@ mod tests {
     #[test]
     fn allows_http_and_https() {
         let policy = BrowserPolicy;
-        assert!(policy.validate_navigation_url("http://localhost:5173").is_ok());
-        assert!(policy.validate_navigation_url("https://example.com/docs?q=1").is_ok());
+        assert!(policy
+            .validate_navigation_url("http://localhost:5173")
+            .is_ok());
+        assert!(policy
+            .validate_navigation_url("https://example.com/docs?q=1")
+            .is_ok());
     }
 
     #[test]

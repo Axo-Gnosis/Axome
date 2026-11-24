@@ -10,6 +10,13 @@ import {
 } from './transport'
 import type {
   AxoSettings,
+  AxoExtensions,
+  AxoEnabledExtension,
+  AxoExtensionProblem,
+  AxoExtensionSource,
+  AxoExtensionStage,
+  AxoInstallOutcome,
+  AxoRunnerMemory,
   AxoProvidersPayload,
   AxoWebToolsStatusPayload,
   AxoLoginStarted,
@@ -31,9 +38,10 @@ import type {
   ChatPlanThen,
   ChatSquashedChange,
   ChatSummariesChangedEvent,
+  ChatServiceTier,
   ChatThinking,
-  ExtensionCatalog,
-  ExtensionGrammar,
+  IntegrationCatalog,
+  IntegrationGrammar,
   FormatterStatus,
   CommitDetail,
   ConfigSchemaEntry,
@@ -241,8 +249,8 @@ export const backend = {
     models(folderPath: string): Promise<ChatModelCatalog> {
       return invoke<ChatModelCatalog>('chat_models', { folderPath })
     },
-    create(folderPath: string, model: string, thinking: ChatThinking): Promise<string> {
-      return invoke<string>('chat_create', { folderPath, model, thinking })
+    create(folderPath: string, model: string, thinking: ChatThinking, serviceTier: ChatServiceTier): Promise<string> {
+      return invoke<string>('chat_create', { folderPath, model, thinking, serviceTier })
     },
     prompt(folderPath: string, sessionId: string, requestId: string, parts: ChatPart[]): Promise<void> {
       return invoke<void>('chat_prompt', { folderPath, sessionId, requestId, parts })
@@ -271,7 +279,7 @@ export const backend = {
     dismiss(folderPath: string, sessionId: string, callId: string): Promise<void> {
       return invoke<void>('chat_dismiss', { folderPath, sessionId, callId })
     },
-    /** Runs a built-in catalog command with JSON arguments its schema accepts. */
+    /** Runs a catalog command with its accepted JSON arguments. */
     runCommand(folderPath: string, sessionId: string, name: string, args: Record<string, unknown>): Promise<void> {
       return invoke<void>('chat_run_command', { folderPath, sessionId, name, args })
     },
@@ -681,14 +689,23 @@ export const backend = {
     models(folderPath?: string | null): Promise<ChatModel[]> {
       return invoke('axo_models', { folderPath: folderPath ?? null })
     },
-    providers(folderPath?: string | null): Promise<AxoProvidersPayload> {
-      return invoke('axo_providers', { folderPath: folderPath ?? null })
+    providers(folderPath?: string | null, scopeFolder: string | null = null): Promise<AxoProvidersPayload> {
+      return invoke('axo_providers', { folderPath: folderPath ?? null, scopeFolder })
     },
-    setProviderKey(provider: string, key: string, folderPath?: string | null): Promise<void> {
-      return invoke('axo_provider_set_key', { provider, key, folderPath: folderPath ?? null })
+    setProviderKey(
+      provider: string,
+      key: string,
+      folderPath?: string | null,
+      scopeFolder: string | null = null
+    ): Promise<void> {
+      return invoke('axo_provider_set_key', { provider, key, folderPath: folderPath ?? null, scopeFolder })
     },
-    removeProvider(provider: string, folderPath?: string | null): Promise<void> {
-      return invoke('axo_provider_remove', { provider, folderPath: folderPath ?? null })
+    removeProvider(
+      provider: string,
+      folderPath?: string | null,
+      scopeFolder: string | null = null
+    ): Promise<string | null> {
+      return invoke('axo_provider_remove', { provider, folderPath: folderPath ?? null, scopeFolder })
     },
     refreshModels(folderPath?: string | null): Promise<void> {
       return invoke('axo_models_refresh', { folderPath: folderPath ?? null })
@@ -696,8 +713,68 @@ export const backend = {
     onModelsChanged(handler: (event: { server: string | null }) => void): Promise<Unsubscribe> {
       return getHostTransport().subscribe('models-changed', handler)
     },
-    loginStart(provider: string, folderPath?: string | null): Promise<AxoLoginStarted> {
-      return invoke('axo_login_start', { provider, folderPath: folderPath ?? null })
+    extensions(scopeFolder: string | null, host: string | null): Promise<AxoExtensions> {
+      return invoke('axo_extensions_get', { scopeFolder, folderPath: host })
+    },
+    setExtensionsEnabled(enabled: AxoEnabledExtension[], host: string | null): Promise<void> {
+      return invoke('axo_extensions_set_enabled', { enabled, folderPath: host })
+    },
+    setProjectExtensionsEnabled(
+      scopeFolder: string,
+      enabled: AxoEnabledExtension[],
+      host: string | null
+    ): Promise<void> {
+      return invoke('axo_project_extensions_set_enabled', { scopeFolder, enabled, folderPath: host })
+    },
+    retryExtension(id: string, scopeFolder: string | null, host: string | null): Promise<void> {
+      return invoke('axo_extension_retry', { id, scopeFolder, folderPath: host })
+    },
+    reloadExtension(id: string, scopeFolder: string | null, host: string | null): Promise<void> {
+      return invoke('axo_extension_reload', { id, scopeFolder, folderPath: host })
+    },
+    installExtensionDependencies(id: string, scopeFolder: string | null, host: string | null): Promise<void> {
+      return invoke('axo_extension_install_dependencies', { id, scopeFolder, folderPath: host })
+    },
+    inspectExtension(source: AxoExtensionSource, host: string | null): Promise<AxoExtensionStage> {
+      return invoke('axo_extension_inspect', { source, folderPath: host })
+    },
+    discardExtensionStage(stageId: string, host: string | null): Promise<void> {
+      return invoke('axo_extension_stage_discard', { stageId, folderPath: host })
+    },
+    installExtension(stageId: string, replaceOrigin: boolean, host: string | null): Promise<AxoInstallOutcome> {
+      return invoke('axo_extension_install', { stageId, replaceOrigin, folderPath: host })
+    },
+    rollbackExtension(id: string, host: string | null): Promise<void> {
+      return invoke('axo_extension_rollback', { id, folderPath: host })
+    },
+    uninstallExtension(id: string, deleteData: boolean, host: string | null): Promise<void> {
+      return invoke('axo_extension_uninstall', { id, deleteData, folderPath: host })
+    },
+    extensionsMemory(scopeFolder: string | null, host: string | null): Promise<AxoRunnerMemory[]> {
+      return invoke('axo_extensions_memory', { scopeFolder, folderPath: host })
+    },
+    checkExtensionsBun(host: string | null): Promise<void> {
+      return invoke('axo_extensions_check_bun', { folderPath: host })
+    },
+    onExtensionsChanged(handler: (event: { server: string | null }) => void): Promise<Unsubscribe> {
+      return getHostTransport().subscribe('extensions-changed', handler)
+    },
+    onExtensionStopped(
+      handler: (event: {
+        server: string | null
+        id: string
+        folder: string | null
+        problem: AxoExtensionProblem
+      }) => void
+    ): Promise<Unsubscribe> {
+      return getHostTransport().subscribe('extension-stopped', handler)
+    },
+    loginStart(
+      provider: string,
+      folderPath?: string | null,
+      scopeFolder: string | null = null
+    ): Promise<AxoLoginStarted> {
+      return invoke('axo_login_start', { provider, folderPath: folderPath ?? null, scopeFolder })
     },
     loginSubmit(loginId: string, questionId: number, answer: string, folderPath?: string | null): Promise<void> {
       return invoke('axo_login_submit', { loginId, questionId, answer, folderPath: folderPath ?? null })
@@ -793,15 +870,15 @@ export const backend = {
     }
   },
 
-  extensions: {
-    getCatalog(folderPath?: string | null): Promise<ExtensionCatalog> {
-      return invoke<ExtensionCatalog>('extensions_get_catalog', { folderPath: folderPath ?? null })
+  integrations: {
+    getCatalog(folderPath?: string | null): Promise<IntegrationCatalog> {
+      return invoke<IntegrationCatalog>('integrations_get_catalog', { folderPath: folderPath ?? null })
     },
-    getGrammars(folderPath?: string | null): Promise<ExtensionGrammar[]> {
-      return invoke<ExtensionGrammar[]>('extensions_get_grammars', { folderPath: folderPath ?? null })
+    getGrammars(folderPath?: string | null): Promise<IntegrationGrammar[]> {
+      return invoke<IntegrationGrammar[]>('integrations_get_grammars', { folderPath: folderPath ?? null })
     },
     reload(folderPath?: string | null): Promise<void> {
-      return invoke<void>('extensions_reload', { folderPath: folderPath ?? null })
+      return invoke<void>('integrations_reload', { folderPath: folderPath ?? null })
     }
   },
 

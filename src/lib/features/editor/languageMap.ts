@@ -4,7 +4,7 @@
 // vs "bash", "plaintext" vs "text"). This map is tailored for Monaco's
 // built-in Monarch tokenizers.
 
-import { getLanguageForFilePath } from '$lib/features/extensions/catalog.svelte'
+import { getLanguageForFilePath } from '$lib/features/integrations/catalog.svelte'
 import { basename } from '$lib/utils/paths'
 
 // Map of file extension (without dot) to Monaco language ID.
@@ -97,7 +97,7 @@ const EXT_TO_LANG: Record<string, string> = {
   sh: 'shell',
   bash: 'shell',
   zsh: 'shell',
-  fish: 'fish', // TextMate grammar from its bundled extension
+  fish: 'fish', // TextMate grammar from its bundled integration
   ksh: 'shell',
 
   // -- Data / query --
@@ -113,7 +113,7 @@ const EXT_TO_LANG: Record<string, string> = {
   cmake: 'cmake',
 
   // -- Svelte / Vue / frameworks --
-  svelte: 'svelte', // TextMate grammar from its bundled extension
+  svelte: 'svelte', // TextMate grammar from its bundled integration
   vue: 'html',
 
   // -- Misc --
@@ -127,7 +127,7 @@ const EXT_TO_LANG: Record<string, string> = {
   log: 'log',
   txt: 'plaintext',
   lock: 'plaintext',
-  nix: 'nix' // TextMate grammar from its bundled extension
+  nix: 'nix' // TextMate grammar from its bundled integration
 }
 
 // Exact filenames that map to a language (no extension needed).

@@ -175,10 +175,19 @@ impl AxoService {
         }
     }
 
-    pub(crate) async fn login_start(&self, provider: String) -> Result<AxoLoginStarted, ApiError> {
+    pub(crate) async fn login_start(
+        &self,
+        provider: String,
+        folder: Option<&std::path::Path>,
+    ) -> Result<AxoLoginStarted, ApiError> {
         let engine = self.engine().await?;
-        if !engine
-            .models
+        let models = {
+            let mut state = engine.extensions.mutation.lock().await;
+            self.ensure_open()?;
+            self.provider_models(&engine, &mut state, folder, &provider)
+                .await?
+        };
+        if !models
             .providers()
             .iter()
             .any(|info| info.id == provider && info.login)
@@ -196,33 +205,38 @@ impl AxoService {
         let login_id = uuid::Uuid::new_v4().to_string();
         let state = Arc::new(Mutex::new(LoginState::default()));
         let service = self.this.clone();
+        let folder = folder.map(std::path::Path::to_owned);
         let task = tokio::spawn({
             let state = state.clone();
             async move {
-                let result = engine
-                    .models
-                    .login(&provider, &Interaction(state.clone()))
-                    .await;
+                let interaction = Interaction(state.clone());
+                let mut login = std::pin::pin!(models.login(&provider, &interaction));
+                let result = if let Some(folder) = &folder {
+                    let first = {
+                        let current = engine.extensions.mutation.lock().await;
+                        match Self::check_active_project_provider(&current, folder, &provider) {
+                            Err(error) => {
+                                std::task::Poll::Ready(Err(axo_ai::Error::Auth(error.to_string())))
+                            }
+                            // axo captures the provider and credential slot on first poll.
+                            // Do not keep the gate while the user responds to login prompts.
+                            Ok(()) => futures_util::poll!(&mut login),
+                        }
+                    };
+                    match first {
+                        std::task::Poll::Ready(result) => result,
+                        std::task::Poll::Pending => login.await,
+                    }
+                } else {
+                    login.await
+                };
                 match &result {
                     Ok(()) => {
                         if let Some(service) = service.upgrade() {
                             if let Err(error) = service.reload_models().await {
                                 tracing::warn!(%error, "Reloading models after login failed");
                             }
-                        }
-                        if provider == axo_ai::auth::codex::PROVIDER {
-                            // ponytail: axo refreshes the Codex account list in the background with no signal; refresh here so lists update. Remove when Models::subscribe lands (docs/plan/handoff/axo-models-batch.md, S).
-                            // Detached: `Login.task` is aborted once the outcome is read.
-                            let engine = engine.clone();
-                            let service = service.clone();
-                            tokio::spawn(async move {
-                                if let Err(error) = engine.models.refresh().await {
-                                    tracing::warn!(%error, "Model refresh after Codex login failed");
-                                }
-                                if let Some(service) = service.upgrade() {
-                                    service.emit_models_changed();
-                                }
-                            });
+                            service.emit_models_changed();
                         }
                     }
                     Err(error) => tracing::warn!(%error, %provider, "Provider login failed"),

@@ -27,6 +27,7 @@
     expanded = $bindable(false),
     folderPath,
     sessionId,
+    filePath,
     depth = 0
   }: {
     code: string
@@ -35,6 +36,7 @@
     expanded?: boolean
     folderPath?: string
     sessionId?: string | null
+    filePath?: string | null
     depth?: number
   } = $props()
 
@@ -172,7 +174,7 @@
       {@attach measureBody(true)}
       class={cn('px-4 py-3', !expanded && 'max-h-72 overflow-y-auto', !previewing && 'hidden')}
     >
-      <MarkdownRenderer source={code} {folderPath} {sessionId} depth={depth + 1} class="p-0" />
+      <MarkdownRenderer source={code} {folderPath} {sessionId} {filePath} depth={depth + 1} class="p-0" />
     </div>
   {/if}
   {#if !previewing}

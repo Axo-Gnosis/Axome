@@ -1,3 +1,4 @@
+use crate::axo::AxoEnabledExtension;
 use crate::chat::ChatThinking;
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -9,6 +10,8 @@ pub const DEFAULT_PLANS_DIR: &str = ".axome/plans";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct AxoSettings {
+    pub extensions: Vec<AxoEnabledExtension>,
+    pub project_extensions: IndexMap<String, Vec<AxoEnabledExtension>>,
     pub default_model: Option<String>,
     /// Axome-owned: persona for new chats; axo ignores the key.
     pub default_agent: Option<String>,
@@ -16,6 +19,7 @@ pub struct AxoSettings {
     pub plans_dir: String,
     pub model_roles: IndexMap<String, String>,
     pub default_thinking_level: ChatThinking,
+    pub service_tier: AxoServiceTierSettings,
     pub home_agents_dir: bool,
     pub steering_mode: AxoQueueMode,
     pub follow_up_mode: AxoQueueMode,
@@ -37,11 +41,14 @@ pub struct AxoSettings {
 impl Default for AxoSettings {
     fn default() -> Self {
         Self {
+            extensions: Vec::new(),
+            project_extensions: IndexMap::new(),
             default_model: None,
             default_agent: None,
             plans_dir: DEFAULT_PLANS_DIR.to_owned(),
             model_roles: IndexMap::new(),
             default_thinking_level: ChatThinking::Medium,
+            service_tier: AxoServiceTierSettings::default(),
             home_agents_dir: false,
             steering_mode: AxoQueueMode::All,
             follow_up_mode: AxoQueueMode::OneAtATime,
@@ -69,6 +76,28 @@ impl Default for AxoSettings {
             browser: AxoBrowserSettings::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoServiceTierSettings {
+    pub on_model_change: AxoTierOnModelChange,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AxoTierOnModelChange {
+    #[default]
+    Reset,
+    Keep,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AxoSubagentTier {
+    #[default]
+    Standard,
+    Inherit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -220,6 +249,7 @@ pub struct AxoSubagentSettings {
     pub max_turns: u32,
     pub default_model: Option<String>,
     pub models: IndexMap<String, String>,
+    pub service_tier: AxoSubagentTier,
     pub context_files: AxoContextFiles,
 }
 
@@ -231,6 +261,7 @@ impl Default for AxoSubagentSettings {
             max_turns: 50,
             default_model: None,
             models: IndexMap::new(),
+            service_tier: AxoSubagentTier::default(),
             context_files: AxoContextFiles::Switch(false),
         }
     }

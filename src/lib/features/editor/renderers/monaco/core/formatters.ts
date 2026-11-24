@@ -1,5 +1,5 @@
 import { backend } from '$lib/api/backend'
-import { getFormatterPolicy } from '$lib/features/extensions/catalog.svelte'
+import { getFormatterPolicy } from '$lib/features/integrations/catalog.svelte'
 import { formatDocumentWithLsp, getLspDocumentContext } from '$lib/features/editor/lsp/registry'
 import { modelHostPath } from '$lib/features/editor/renderers/monaco/text/modelCache'
 import { getSettings, loadSettings } from '$lib/features/settings/state/settings.svelte'

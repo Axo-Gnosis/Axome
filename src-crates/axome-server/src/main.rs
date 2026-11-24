@@ -23,6 +23,9 @@ struct Cli {
     /// Web frontend used when `web.assetsDir` is unset; packaged launchers set this.
     #[arg(long, global = true)]
     web_assets_dir: Option<PathBuf>,
+    /// Bun executable; packaged launchers set this.
+    #[arg(long, global = true, value_name = "PATH")]
+    bun: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -94,6 +97,7 @@ async fn run() -> anyhow::Result<()> {
                 config_file: Some(config_file),
                 listen,
                 web_assets_dir: cli.web_assets_dir,
+                bun: cli.bun,
             })
             .await?;
             tracing::info!("listening on {}", handle.local_addr);

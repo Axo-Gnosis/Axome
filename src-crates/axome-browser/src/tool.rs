@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,11 +23,11 @@ use crate::tab::{
 const MAX_BATCH_STEPS: usize = 12;
 const DEFAULT_TAB: &str = "main";
 
-const GUIDELINES: &[&str] = &[
-    "Use `browser` for interactive web pages, localhost UI verification, console/network errors, JS evaluation, and screenshots. For static docs/URLs, prefer `web_fetch`.",
-    "Batch sequential operations in `steps` (e.g. `open` + `snapshot`, or `click` + `snapshot`) to save turns.",
-    "Prefer `snapshot` (AI ARIA tree with `@e1` refs) before acting; use `screenshot` when visual layout confirmation is needed.",
-    "New console errors, failed network requests, and auto-handled JS dialogs are appended automatically after each call.",
+const GUIDELINES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("Use `browser` for interactive web pages, localhost UI verification, console/network errors, JS evaluation, and screenshots. For static docs/URLs, prefer `web_fetch`."),
+    Cow::Borrowed("Batch sequential operations in `steps` (e.g. `open` + `snapshot`, or `click` + `snapshot`) to save turns."),
+    Cow::Borrowed("Prefer `snapshot` (AI ARIA tree with `@e1` refs) before acting; use `screenshot` when visual layout confirmation is needed."),
+    Cow::Borrowed("New console errors, failed network requests, and auto-handled JS dialogs are appended automatically after each call."),
 ];
 
 pub struct BrowserTool {
@@ -190,7 +191,9 @@ impl Drop for BrowserTool {
             let session_key = self.session_key.clone();
             let fallback_dir = self.fallback_spill_dir.clone();
             handle.spawn(async move {
-                service.release_tool_handle(&session_key, &fallback_dir).await;
+                service
+                    .release_tool_handle(&session_key, &fallback_dir)
+                    .await;
             });
         }
     }
@@ -218,7 +221,7 @@ impl Tool for BrowserTool {
         Replay::Never
     }
 
-    fn prompt_guidelines(&self) -> &[&str] {
+    fn prompt_guidelines(&self) -> &[Cow<'static, str>] {
         GUIDELINES
     }
 
@@ -488,9 +491,10 @@ impl BrowserTool {
     ) -> Result<StepOutcome, String> {
         let handle = self.service.session_handle(&self.session_key).await;
         let mut session = handle.lock().await;
-        let tab = session.tabs.get_mut(&tab_name).ok_or_else(|| {
-            format!("No open tab named '{tab_name}'. Call action 'open' first.")
-        })?;
+        let tab = session
+            .tabs
+            .get_mut(&tab_name)
+            .ok_or_else(|| format!("No open tab named '{tab_name}'. Call action 'open' first."))?;
         tab.touch();
 
         let action = step.action.clone();
@@ -605,7 +609,9 @@ impl BrowserTool {
                     )
                     .await;
                     let note = match &saved {
-                        Some(p) => format!("Captured screenshot ({} bytes, saved to {p})", bytes.len()),
+                        Some(p) => {
+                            format!("Captured screenshot ({} bytes, saved to {p})", bytes.len())
+                        }
                         None => format!("Captured screenshot ({} bytes)", bytes.len()),
                     };
                     spilled_path = saved;
@@ -732,12 +738,8 @@ impl BrowserTool {
                 }
 
                 "click_at" => {
-                    let x = step
-                        .x
-                        .ok_or_else(|| "click_at requires `x`".to_owned())?;
-                    let y = step
-                        .y
-                        .ok_or_else(|| "click_at requires `y`".to_owned())?;
+                    let x = step.x.ok_or_else(|| "click_at requires `x`".to_owned())?;
+                    let y = step.y.ok_or_else(|| "click_at requires `y`".to_owned())?;
                     tab.page
                         .mouse()
                         .click(x, y, None)
@@ -771,7 +773,9 @@ impl BrowserTool {
 
                 "wait_for" => {
                     let timeout = Duration::from_millis(
-                        step.timeout_ms.map(|t| t.clamp(100, 60_000)).unwrap_or(10_000),
+                        step.timeout_ms
+                            .map(|t| t.clamp(100, 60_000))
+                            .unwrap_or(10_000),
                     );
                     if let Some(sel) = clean_opt(step.selector.as_deref())
                         .or_else(|| clean_opt(step.target.as_deref()))
@@ -824,7 +828,10 @@ impl BrowserTool {
                 }
 
                 "logs" => {
-                    let entries = tab.telemetry.lock().all_console(step.clear.unwrap_or(false));
+                    let entries = tab
+                        .telemetry
+                        .lock()
+                        .all_console(step.clear.unwrap_or(false));
                     if entries.is_empty() {
                         "No console logs recorded.".to_owned()
                     } else {

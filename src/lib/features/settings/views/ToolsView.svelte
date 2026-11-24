@@ -111,7 +111,7 @@
   }
 </script>
 
-<!-- Selectors here may carry an effort suffix (`provider/model:high`); the pair edits both parts. -->
+<!-- The paired controls edit the model, effort and tier in one selector. -->
 {#snippet selectorPicker(path: string[], saved: string, label: string, none?: string)}
   <SelectorPicker
     class="flex-1"
@@ -198,6 +198,18 @@
       'Not set (uses @default)'
     )}
   </SettingRow>
+  <SettingRow label="Subagent tier" description="Used when a subagent model selector has no tier suffix.">
+    <Select
+      aria-label="Subagent tier"
+      value={settings?.subagents.serviceTier ?? 'standard'}
+      disabled={!settings}
+      items={[
+        { value: 'standard', label: 'Standard' },
+        { value: 'inherit', label: "Inherit parent's tier" }
+      ]}
+      onValueChange={(next) => fields.save(['subagents', 'serviceTier'], next)}
+    />
+  </SettingRow>
   <SettingRow
     label="Context files"
     description={settings && typeof settings.subagents.contextFiles !== 'boolean'
@@ -238,7 +250,6 @@
         models={available.models}
         {roles}
         modelLabel="Agent model"
-        effortLabel="Agent effort"
         onSelect={(joined) => (agentSelector = joined)}
       />
       <Button

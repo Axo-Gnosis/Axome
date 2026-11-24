@@ -37,6 +37,7 @@ pub struct ServeOptions {
     pub listen: Option<SocketAddr>,
     /// Frontend used when the config sets no `web.assetsDir`.
     pub web_assets_dir: Option<PathBuf>,
+    pub bun: Option<PathBuf>,
 }
 
 pub struct ServerHandle {
@@ -89,6 +90,7 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<ServerHandle> {
     let (host_events, _) = broadcast::channel(HOST_EVENT_CAPACITY);
     let event_sender = host_events.clone();
     let mut host_options = HostOptions::new(options.dirs, "server.db");
+    host_options.bun = options.bun;
     host_options.supervision = loaded.supervision;
     let host = Arc::new(Host::new(
         host_options,

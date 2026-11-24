@@ -2,13 +2,8 @@
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
   import { Chip } from '$lib/components/ui/chip'
-  import {
-    ModelPicker,
-    EffortPicker,
-    SelectorPicker,
-    levelsForSelector,
-    ROLE_NAME
-  } from '$lib/features/chat/elements/model-picker'
+  import { Select } from '$lib/components/ui/select'
+  import { EffortPicker, SelectorPicker, levelsForSelector, ROLE_NAME } from '$lib/features/chat/elements/model-picker'
   import { BUILTIN_ROLES, axoModels, settingsRoles } from '$lib/features/settings/state/axo.svelte'
   import SettingRow from '../dialog/SettingRow.svelte'
   import SettingsSection from '../dialog/SettingsSection.svelte'
@@ -26,6 +21,7 @@
     memory: 'Background memory capture. Runs after sessions; a local model keeps it free.'
   }
   let settings = $derived(fields.settings)
+  const defaultModel = $derived(String(fields.value(['defaultModel'], settings?.defaultModel ?? '')))
   // Settings are host-scoped and must load models even with no folder open.
   const available = axoModels(fields.host)
   let models = $derived(available.models)
@@ -56,28 +52,45 @@
 </script>
 
 <SettingsSection title="Defaults">
-  <SettingRow label="Default model" description="Model and effort for new chats. Unset uses @default." stacked as="div">
-    {@const defaultModel = String(fields.value(['defaultModel'], settings?.defaultModel ?? ''))}
-    <div class="flex items-center gap-2">
-      <ModelPicker
-        label="Default model"
-        class="min-w-0 flex-1"
-        value={defaultModel}
-        {models}
-        {roles}
-        none="Not set (uses @default)"
-        custom
-        disabled={!settings}
-        onSelect={(next) => fields.save(['defaultModel'], next || null, next)}
-      />
-      <EffortPicker
-        label="Default effort"
-        value={String(fields.value(['defaultThinkingLevel'], settings?.defaultThinkingLevel ?? 'medium'))}
-        levels={levelsForSelector(defaultModel, models, roles)}
-        disabled={!settings}
-        onSelect={(level) => fields.save(['defaultThinkingLevel'], level, level)}
-      />
-    </div>
+  <SettingRow
+    label="Default model"
+    description="Model, effort and tier for new chats. Unset uses @default."
+    stacked
+    as="div"
+  >
+    <SelectorPicker
+      modelLabel="Default model"
+      value={defaultModel}
+      {models}
+      {roles}
+      none="Not set (uses @default)"
+      disabled={!settings}
+      onSelect={(next) => fields.save(['defaultModel'], next || null, next)}
+    />
+  </SettingRow>
+  <SettingRow label="Default effort" description="Used when the default model selector has no effort suffix." as="div">
+    <EffortPicker
+      label="Default effort"
+      value={settings?.defaultThinkingLevel ?? 'medium'}
+      levels={levelsForSelector(defaultModel, models, roles)}
+      disabled={!settings}
+      onSelect={(level) => fields.save(['defaultThinkingLevel'], level)}
+    />
+  </SettingRow>
+  <SettingRow
+    label="Tier after switching model"
+    description="Whether Flex, Fast or Ultrafast survives a model change in a chat."
+  >
+    <Select
+      aria-label="Tier after switching model"
+      value={settings?.serviceTier.onModelChange ?? 'reset'}
+      disabled={!settings}
+      items={[
+        { value: 'reset', label: 'Reset to Standard' },
+        { value: 'keep', label: 'Keep selected tier' }
+      ]}
+      onValueChange={(next) => fields.save(['serviceTier', 'onModelChange'], next)}
+    />
   </SettingRow>
 </SettingsSection>
 
@@ -105,7 +118,6 @@
           {models}
           none={inherits}
           modelLabel={`Model for @${name}`}
-          effortLabel={`Effort for @${name}`}
           disabled={!settings || available.loading}
           onSelect={(joined) => update(name, joined)}
         />

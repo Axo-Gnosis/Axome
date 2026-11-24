@@ -35,6 +35,13 @@
     mountedCodeBlocks = []
   }
 
+  function replaceUnavailableImage(node: HTMLImageElement): void {
+    const fallback = document.createElement('span')
+    fallback.className = 'text-muted'
+    fallback.textContent = `Local image unavailable${node.alt ? `: ${node.alt}` : ''}`
+    node.replaceWith(fallback)
+  }
+
   // Document-scoped stream-backed images keyed by resolved project path; entries outlive source edits.
   interface ImageEntry {
     controller: AbortController
@@ -130,6 +137,7 @@
                   lang: block.lang,
                   folderPath,
                   sessionId,
+                  filePath,
                   depth
                 },
                 context: componentContext
@@ -138,16 +146,22 @@
           }
         }
         for (const [index, image] of result.images.entries()) {
-          void image.then((url) => {
+          void image.url.then((url) => {
             if (current !== generation) return
             const node = root.querySelector<HTMLImageElement>(`img[data-axome-image="${index}"]`)
             if (!node) return
             if (url === null) {
-              const fallback = document.createElement('span')
-              fallback.className = 'text-muted'
-              fallback.textContent = `Local image unavailable${node.alt ? `: ${node.alt}` : ''}`
-              node.replaceWith(fallback)
+              replaceUnavailableImage(node)
             } else {
+              if (image.local) {
+                node.addEventListener(
+                  'error',
+                  () => {
+                    if (current === generation && root.contains(node)) replaceUnavailableImage(node)
+                  },
+                  { once: true }
+                )
+              }
               node.src = url
               node.removeAttribute('aria-busy')
               node.removeAttribute('data-axome-image')

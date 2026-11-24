@@ -1,11 +1,11 @@
 use crate::errors::ApiError;
 use crate::host::Host;
-use crate::services::extensions::missing_requirement;
 use crate::services::folders::resolve_folder;
 use crate::services::harnesses::{
     resolve_harness_command, resolve_harness_launch, terminal_args, SessionLaunch,
 };
 use crate::services::history::{binding::PendingRun, HistorySource};
+use crate::services::integrations::missing_requirement;
 use crate::services::omp;
 use crate::services::pty::{CompletedRunSink, PtyRunState, PtySubscriber};
 use crate::services::runs::RunKind;

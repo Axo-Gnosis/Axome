@@ -1,6 +1,7 @@
 //! Multi-backend web search and extraction proxy providers with ordered fallback.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axo_ai::FileCredentialStore;
@@ -118,9 +119,11 @@ pub(crate) async fn run_search(
                     .as_ref()
                     .filter(|model| model.provider == provider);
                 let all = grounded.models.all();
-                let Some(auth_model) =
-                    preferred.or_else(|| all.iter().find(|model| model.provider == provider))
-                else {
+                let Some(auth_model) = preferred.or_else(|| {
+                    all.iter()
+                        .find(|model| model.provider == provider)
+                        .map(Arc::as_ref)
+                }) else {
                     continue;
                 };
                 let auth = match grounded.models.auth(auth_model).await {

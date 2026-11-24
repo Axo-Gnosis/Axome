@@ -9,6 +9,8 @@ const live: ChatLive = {
   maintenance: null,
   model: null,
   thinking: 'off',
+  serviceTier: 'standard',
+  effectiveServiceTier: 'standard',
   tools: [],
   queue: [],
   questions: [],
@@ -42,8 +44,11 @@ const user = entry('user:1', {
 const thought = { type: 'thinking', text: 'Thinking', redacted: false } as const
 const message = entry('answer', {
   kind: 'assistant',
+  providerUnavailable: false,
   blocks: [{ type: 'text', text: 'Done' }],
   model: 'test/model',
+  serviceTier: 'standard',
+  thinking: null,
   usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: 0.01 },
   stopReason: 'stop',
   error: null,
@@ -51,12 +56,15 @@ const message = entry('answer', {
 })
 const work = entry('work', {
   kind: 'assistant',
+  providerUnavailable: false,
   blocks: [
     thought,
     { type: 'text', text: 'Working' },
     { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'file' } }
   ],
   model: 'test/model',
+  serviceTier: 'fast',
+  thinking: 'high',
   usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: 0.01 },
   stopReason: 'toolUse',
   error: null,
@@ -137,11 +145,12 @@ test('failed tool results stay paired with their calls', () => {
   assert.equal(call.kind === 'tool' && call.status, 'error')
 })
 
-test('leading content has no fabricated user and leading model selections are dropped', () => {
+test('leading content has no fabricated user and leading selections are dropped', () => {
   const turns = transcriptTurns(
     [
       entry('model', { kind: 'modelChange', model: 'test/model' }),
-      entry('thinking', { kind: 'thinkingChange', thinking: 'high' }),
+      entry('thinking', { kind: 'thinkingChange', thinking: 'high', automatic: false, serviceTier: null }),
+      entry('tier', { kind: 'serviceTierChange', serviceTier: 'fast' }),
       message,
       user,
       work
@@ -160,9 +169,9 @@ test('leading content has no fabricated user and leading model selections are dr
   assert.equal(turns[1].id, user.id)
 })
 
-test('turn settings retain unchanged reasoning; later picker changes are command rows, not config', () => {
+test('later picker changes stay in the transcript as command rows', () => {
   const thinking = (id: string, level: 'low' | 'medium' | 'high') =>
-    entry(id, { kind: 'thinkingChange', thinking: level })
+    entry(id, { kind: 'thinkingChange', thinking: level, automatic: false, serviceTier: null })
   const turns = transcriptTurns(
     [
       thinking('t0', 'low'),
@@ -179,37 +188,43 @@ test('turn settings retain unchanged reasoning; later picker changes are command
     live
   )
   assert.deepEqual(
-    turns.map((turn) => turn.config),
-    [
-      { model: 'test/model', thinking: 'low' },
-      { model: null, thinking: 'high' },
-      { model: null, thinking: 'high' }
-    ]
-  )
-  assert.deepEqual(
     turns.map((turn) => turn.steps.map((step) => step.kind)),
     [['text', 'thinkingChange', 'thinkingChange'], ['thinkingChange', 'thinkingChange'], []]
   )
 })
 
-test('assistant settings reflect recorded reasoning, including off and mid-turn changes', () => {
+test('assistant effort and tier stay as recorded, independent of mid-turn or live selections', () => {
   const [turn] = transcriptTurns(
     [
       user,
-      entry('off', { kind: 'thinkingChange', thinking: 'off' }),
+      entry('off', { kind: 'thinkingChange', thinking: 'off', automatic: false, serviceTier: null }),
       work,
-      entry('high', { kind: 'thinkingChange', thinking: 'high' }),
+      entry('high', { kind: 'thinkingChange', thinking: 'high', automatic: true, serviceTier: 'flex' }),
       message,
-      entry('next', { kind: 'thinkingChange', thinking: 'low' })
+      entry('next', { kind: 'serviceTierChange', serviceTier: 'ultrafast' })
     ],
     null,
-    live
+    { ...live, thinking: 'medium', serviceTier: 'ultrafast' }
   )
-  assert.deepEqual(turn.config, { model: 'test/model', thinking: 'high' })
-  const [off] = transcriptTurns([entry('off', { kind: 'thinkingChange', thinking: 'off' }), user, message], null, live)
-  assert.equal(off.config.thinking, 'off')
-  const [unknown] = transcriptTurns([user, message], null, { ...live, thinking: 'high' })
-  assert.equal(unknown.config.thinking, null)
+  assert.deepEqual(
+    turn.assistants.map(({ body }) => [body.thinking, body.serviceTier]),
+    [
+      ['high', 'fast'],
+      [null, 'standard']
+    ]
+  )
+  assert.deepEqual(
+    turn.steps.find((step) => step.id === 'high'),
+    {
+      id: 'high',
+      entryId: 'high',
+      timestamp: message.timestamp,
+      kind: 'thinkingChange',
+      thinking: 'high',
+      automatic: true,
+      serviceTier: 'flex'
+    }
+  )
 })
 
 test('replayed turns retain text without an invented run end', () => {
@@ -251,6 +266,7 @@ test('later config and maintenance entries join the turn without extending its d
       { ...message, timestamp: endedAt },
       { ...end, timestamp: endedAt },
       { id: 'model', timestamp: '2026-01-01T01:00:00Z', body: { kind: 'modelChange', model: 'x/y' } },
+      { id: 'tier', timestamp: '2026-01-01T01:00:01Z', body: { kind: 'serviceTierChange', serviceTier: 'fast' } },
       { id: 'compact', timestamp: '2026-01-01T01:00:05Z', body: { kind: 'compaction', summary: 's', tokensBefore: 1 } }
     ],
     null,
@@ -259,13 +275,17 @@ test('later config and maintenance entries join the turn without extending its d
   assert.equal(turn.endedAt, endedAt)
   assert.equal(turnDurationMs(turn, Date.parse(endedAt) + 5000), 12_000)
   assert.ok(turn.steps.some((step) => step.kind === 'modelChange'))
+  assert.ok(turn.steps.some((step) => step.kind === 'serviceTierChange'))
 })
 
 test('compactionTokensAfter reads post-compaction assistant input tokens or falls back to live context for the latest checkpoint', () => {
   const afterMsg = entry('a-after', {
     kind: 'assistant',
+    providerUnavailable: false,
     blocks: [{ type: 'text', text: 'Continued' }],
     model: 'test/m',
+    serviceTier: 'standard',
+    thinking: null,
     usage: { input: 1200, output: 100, cacheRead: 38_800, cacheWrite: 0, totalTokens: 40_100, cost: 0 },
     stopReason: 'stop',
     error: null,
@@ -286,6 +306,7 @@ test('compactionTokensAfter reads post-compaction assistant input tokens or fall
 test('call tool calls unwrap with explicit, running, then result name and args precedence', () => {
   const callEntry = entry('call-msg', {
     kind: 'assistant',
+    providerUnavailable: false,
     blocks: [
       { type: 'toolCall', id: 'c1', name: 'call', arguments: { tool: 'read', args: { path: 'a.ts' } } },
       { type: 'toolCall', id: 'c2', name: 'call', arguments: {} },
@@ -293,6 +314,8 @@ test('call tool calls unwrap with explicit, running, then result name and args p
       { type: 'toolCall', id: 'c4', name: 'read', arguments: { path: 'b.ts' } }
     ],
     model: 'test/model',
+    serviceTier: 'standard',
+    thinking: null,
     usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: 0 },
     stopReason: 'toolUse',
     error: null,

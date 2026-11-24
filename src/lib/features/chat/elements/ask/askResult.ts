@@ -1,80 +1,88 @@
+import type { ChatAnswer, ChatAskBlock } from '$lib/types/backend'
+import { partsText } from '../../parts/parts'
 import type { ToolStep } from '../../turns'
 import { record } from '../tool/payload'
+import { askKey, parseAskBlocks, validateAskAnswers } from './askDocument'
 
-export type AskOutcome = { text: string; tone: 'answered' | 'muted' | 'danger' }
+export type AskOutcome = 'answered' | 'timedOut' | 'dismissed' | 'cancelled' | 'steered' | 'failed' | 'unavailable'
 
-/** One asked question joined with what the user chose; nothing chosen for steered, dismissed or failed calls. */
-export type AskAnswer = {
+export interface AskAnswerRow {
   id: string
-  question: string
-  options: { label: string; description: string | null }[]
-  selected: string[]
-  custom: string | null
-  timedOut: boolean
+  /** False when the recorded answer is `null` (skipped, or no suggestion at timeout). */
+  answered: boolean
+  text: string
+  note: string | null
+  suggested: boolean
 }
 
-// axo's tool errors for a dismissed ask (also an empty single-select answer) and a closed or aborted one.
-const DISMISSED = 'Ask tool was cancelled by the user'
-const CANCELLED = 'Ask input was cancelled'
-
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-
-/** `details` of a settled ask: one result for a single question, `{ results }` for several. */
-function results(details: unknown): Record<string, unknown>[] {
-  const value = record(details)
-  if (Array.isArray(value.results)) return value.results.map(record)
-  return typeof value.id === 'string' ? [value] : []
+export interface AskResult {
+  outcome: AskOutcome
+  blocks: ChatAskBlock[] | null
+  rows: Record<string, AskAnswerRow>
+  message: string | null
 }
 
-/** Picks and custom text of one result, as shown in a summary line. */
-export function answerText(selected: string[], custom: string | null): string {
-  return [selected.join(', '), custom === null ? '' : `"${custom}"`].filter(Boolean).join(', ') || 'none selected'
-}
-
-export function questionLabel(q: { header?: string | null }, index: number): string {
-  return q.header ?? `Q${index + 1}`
-}
-
-export function askOutcome(call: ToolStep): AskOutcome {
+export function parseAskResult(call: ToolStep): AskResult {
+  const blocks = parseAskBlocks(call.arguments)
+  const rows: AskResult['rows'] = {}
   if (call.status === 'error') {
-    const text = call.output.map((part) => (part.type === 'text' ? part.text : '')).join('\n')
-    if (text.includes(DISMISSED)) return { text: 'dismissed', tone: 'muted' }
-    if (text.includes(CANCELLED)) return { text: 'cancelled', tone: 'muted' }
-    return { text: 'Failed', tone: 'danger' }
+    const message = partsText(call.output.filter((part) => part.type === 'text'))
+    if (message === 'Ask tool was cancelled by the user') return { outcome: 'dismissed', blocks, rows, message: null }
+    if (message === 'Ask input was cancelled') return { outcome: 'cancelled', blocks, rows, message: null }
+    return { outcome: 'failed', blocks, rows, message: message || null }
   }
-  if (record(call.details).outcome === 'steered') return { text: 'answered by your message', tone: 'muted' }
-  const settled = results(call.details)
-  if (settled.length > 1) return { text: `${settled.length} answers`, tone: 'answered' }
-  const [result] = settled
-  if (!result) return { text: '', tone: 'muted' }
-  const custom = typeof result.customInput === 'string' ? result.customInput : null
-  const text = answerText(strings(result.selectedOptions), custom)
-  return { text: result.timedOut === true ? `${text} · auto-selected` : text, tone: 'answered' }
-}
+  const details = record(call.details)
+  if (call.status === 'done' && details.outcome === 'steered')
+    return { outcome: 'steered', blocks, rows, message: null }
+  const unavailable: AskResult = { outcome: 'unavailable', blocks, rows: {}, message: 'Question details unavailable.' }
+  if (!blocks || call.status !== 'done' || (details.timedOut !== undefined && typeof details.timedOut !== 'boolean'))
+    return unavailable
 
-export function askAnswers(call: ToolStep): AskAnswer[] {
-  const asked = record(call.arguments).questions
-  const settled = new Map(results(call.details).map((result) => [result.id, result]))
-  return (Array.isArray(asked) ? asked : []).map(record).flatMap((question): AskAnswer[] => {
-    if (typeof question.id !== 'string' || typeof question.question !== 'string') return []
-    const result = settled.get(question.id)
-    const options = (Array.isArray(question.options) ? question.options : [])
-      .map(record)
-      .flatMap((option) =>
-        typeof option.label === 'string'
-          ? [{ label: option.label, description: typeof option.description === 'string' ? option.description : null }]
-          : []
+  const answers = record(details.answers)
+  const questions = blocks.filter((block) => block.type !== 'markdown')
+  if (Object.keys(answers).length !== questions.length) return unavailable
+  const timedOut = details.timedOut === true
+  for (const question of questions) {
+    const { id } = question
+    if (!Object.hasOwn(answers, id)) return unavailable
+    const raw = answers[id]
+    if (raw === null) {
+      if (!timedOut && !question.optional) return unavailable
+      rows[askKey(id)] = { id, answered: false, text: 'no answer', note: null, suggested: false }
+      continue
+    }
+    const { value, other, note } = record(raw)
+    if (
+      value !== undefined &&
+      typeof value !== 'string' &&
+      typeof value !== 'number' &&
+      !(Array.isArray(value) && value.every((item) => typeof item === 'string'))
+    )
+      return unavailable
+    if ((other !== undefined && typeof other !== 'string') || (note !== undefined && typeof note !== 'string'))
+      return unavailable
+    const answer: ChatAnswer = { id, value, other, note }
+    const validation = validateAskAnswers([{ ...question, optional: false }], [answer])
+    if (validation.error || validation.errors[askKey(id)]) return unavailable
+
+    let text: string
+    if (question.type === 'choice') {
+      const picks = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+      const labels = picks.flatMap((pick) =>
+        question.options.filter((option) => option.value === pick).map((option) => option.label)
       )
-    return [
-      {
-        id: question.id,
-        question: question.question,
-        options,
-        selected: strings(result?.selectedOptions),
-        custom: typeof result?.customInput === 'string' ? result.customInput : null,
-        timedOut: result?.timedOut === true
-      }
-    ]
-  })
+      if (other && /[^\p{White_Space}]/u.test(other)) labels.push(`"${other}"`)
+      text = labels.join(', ')
+    } else {
+      text = question.type === 'number' ? String(value) : `"${value}"`
+    }
+    rows[askKey(id)] = {
+      id,
+      answered: true,
+      text,
+      note: note && /[^\p{White_Space}]/u.test(note) ? note : null,
+      suggested: timedOut
+    }
+  }
+  return { outcome: timedOut ? 'timedOut' : 'answered', blocks, rows, message: null }
 }

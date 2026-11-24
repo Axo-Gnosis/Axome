@@ -3,6 +3,7 @@ mod config;
 mod convert;
 mod engine;
 mod env;
+pub(crate) mod extensions;
 mod live;
 mod login;
 mod plan;
@@ -12,7 +13,7 @@ mod tests;
 mod web;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     ops::{ControlFlow, Deref},
     path::{Path, PathBuf},
@@ -26,14 +27,16 @@ use std::{
 use crate::{HostDirs, SUPERVISOR_ROUTE};
 use axo::store::{Entry, EntryId};
 use axo::{Axo, NavigateOptions, ProjectAccess, RecoveryPolicy, SessionOptions};
-use axo_ai::{FileCredentialStore, ThinkingLevel};
+use axo_ai::{FileCredentialStore, ServiceTier, ThinkingLevel};
 use axome_protocol::axo::AxoKeywordInfo;
+use axome_protocol::axo_settings::AxoSettings;
 use axome_protocol::chat::*;
 use axome_protocol::git::DiffFileContent;
 use axome_protocol::server_config::Supervision;
 use axome_protocol::session::{IndexedChildSession, MessageRole};
 use chrono::{DateTime, SecondsFormat, Utc};
 use engine::Engine;
+use extensions::{ExtensionOwner, ExtensionState, ProviderExtensionOrigin, SessionExtensions};
 use parking_lot::Mutex;
 use tokio::runtime::Handle;
 
@@ -52,6 +55,23 @@ use live::LiveSession;
 enum SessionTarget {
     Live(Arc<LiveSession>),
     Closed(Arc<Axo>, PathBuf),
+}
+
+fn model_choice_key(
+    choice: &axo::ModelChoice,
+) -> (
+    Option<(&str, &str)>,
+    Option<ThinkingLevel>,
+    Option<ServiceTier>,
+) {
+    (
+        choice
+            .model
+            .as_ref()
+            .map(|model| (model.provider.as_str(), model.id.as_str())),
+        choice.thinking,
+        choice.tier,
+    )
 }
 
 /// Text contents for a snapshot diff; binary when either side has a NUL byte or is not UTF-8.
@@ -95,6 +115,7 @@ pub(crate) struct AxoService {
     db: Arc<DatabaseService>,
     runtime: OnceLock<Handle>,
     dirs: HostDirs,
+    bun: Option<PathBuf>,
     supervision: Supervision,
     events: EventSink<HostEvent>,
     engine: tokio::sync::Mutex<EngineSlot>,
@@ -139,9 +160,23 @@ fn children_of<'a>(
 #[derive(Default)]
 struct EngineSlot {
     engine: Option<Arc<Engine>>,
+    models_watch: Option<tokio::task::JoinHandle<()>>,
     /// The `models.jsonc` error from the last build or reload.
     models_error: Option<String>,
     stamp: Option<(Option<(SystemTime, u64)>, bool)>,
+}
+
+impl Drop for EngineSlot {
+    fn drop(&mut self) {
+        if let Some(task) = self.models_watch.take() {
+            task.abort();
+        }
+    }
+}
+
+pub(crate) fn project_access(_folder: &Path) -> ProjectAccess {
+    // Workspace Trust (roadmap Phase 4) replaces this body.
+    ProjectAccess::Trust
 }
 
 pub(super) fn axo_error(error: axo::Error) -> ApiError {
@@ -168,6 +203,8 @@ pub(super) fn axo_error(error: axo::Error) -> ApiError {
         | axo::Error::NoPendingResult(_)
         | axo::Error::NotQueued(_) => ApiError::NotFound(error.to_string()),
         axo::Error::Ai(_)
+        | axo::Error::Completion { .. }
+        | axo::Error::SkillNotFound(_)
         | axo::Error::Agent(_)
         | axo::Error::Io { .. }
         | axo::Error::Config { .. }
@@ -218,6 +255,7 @@ impl AxoService {
         db: Arc<DatabaseService>,
         dirs: HostDirs,
         supervision: Supervision,
+        bun: Option<PathBuf>,
         events: EventSink<HostEvent>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this: &Weak<Self>| {
@@ -238,6 +276,7 @@ impl AxoService {
                 memory,
                 dirs,
                 supervision,
+                bun,
                 events,
                 engine: tokio::sync::Mutex::new(EngineSlot::default()),
                 login: tokio::sync::Mutex::new(None),
@@ -252,20 +291,22 @@ impl AxoService {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_engine_and_events(
+    pub(crate) async fn with_engine_and_events(
         db: Arc<DatabaseService>,
         dirs: HostDirs,
         engine: Engine,
         events: EventSink<HostEvent>,
     ) -> Arc<Self> {
-        let service = Self::new(db, dirs, Supervision::ProcessGroup, events);
+        let service = Self::new(db, dirs, Supervision::ProcessGroup, None, events);
+        service.bind_runtime();
         {
-            let mut slot = service.engine.try_lock().unwrap();
+            let mut slot = service.engine.lock().await;
+            engine.extensions.initialize(&service).await.unwrap();
+            slot.models_watch = Some(service.watch_models(&engine.models));
             slot.engine = Some(Arc::new(engine));
             slot.models_error = None;
             slot.stamp = Some((None, false));
         }
-        service.bind_runtime();
         service
     }
 
@@ -308,7 +349,6 @@ impl AxoService {
         };
         let extended_context = engine::read_extended_context(&self.dirs)?;
         let stamp = Some((models_stamp, extended_context));
-        let mut changed = false;
         let engine = match slot.engine.clone() {
             None => {
                 let supervision = match self.supervision {
@@ -326,9 +366,12 @@ impl AxoService {
                     self.credentials.clone(),
                     supervision,
                     extended_context,
+                    self.bun.as_deref(),
                 )
                 .await?;
                 let engine = Arc::new(engine);
+                engine.extensions.initialize(self).await?;
+                slot.models_watch = Some(self.watch_models(&engine.models));
                 slot.engine = Some(engine.clone());
                 slot.models_error = models_error;
                 slot.stamp = stamp;
@@ -339,15 +382,10 @@ impl AxoService {
                     slot.models_error =
                         engine::reload(&engine.models, &self.dirs, extended_context).await?;
                     slot.stamp = stamp;
-                    changed = true;
                 }
                 engine
             }
         };
-        drop(slot);
-        if changed {
-            self.emit_models_changed();
-        }
         Ok(engine)
     }
 
@@ -362,27 +400,24 @@ impl AxoService {
                 return;
             }
             // `engine()` compares the stamp under the slot lock, so a burst of watcher events
-            // reloads and emits at most once per file change.
+            // reloads at most once per file change.
             if let Err(error) = service.engine().await {
                 tracing::warn!(%error, "models.jsonc reload failed");
             }
         });
     }
 
-    /// Re-runs model discovery after a credential or config change and announces it.
+    /// Re-runs model discovery after a credential or config change.
     pub(crate) async fn reload_models(&self) -> Result<(), ApiError> {
-        {
-            let mut slot = self.engine.lock().await;
-            if let Some(engine) = slot.engine.clone() {
-                slot.models_error = engine::reload(
-                    &engine.models,
-                    &self.dirs,
-                    engine::read_extended_context(&self.dirs)?,
-                )
-                .await?;
-            }
+        let mut slot = self.engine.lock().await;
+        if let Some(engine) = slot.engine.as_ref() {
+            slot.models_error = engine::reload(
+                &engine.models,
+                &self.dirs,
+                engine::read_extended_context(&self.dirs)?,
+            )
+            .await?;
         }
-        self.emit_models_changed();
         Ok(())
     }
 
@@ -391,14 +426,26 @@ impl AxoService {
     pub(crate) async fn refresh_models(&self) -> Result<(), ApiError> {
         let engine = self.engine().await?;
         self.reload_models().await?;
-        let result = engine.models.refresh().await;
-        self.emit_models_changed();
-        result.map_err(|error| ApiError::Internal(format!("Model catalog refresh failed: {error}")))
+        engine
+            .models
+            .refresh()
+            .await
+            .map_err(|error| ApiError::Internal(format!("Model catalog refresh failed: {error}")))
     }
 
     /// The `models.jsonc` error from the last build or reload, if any.
     pub(crate) async fn models_error(&self) -> Option<String> {
         self.engine.lock().await.models_error.clone()
+    }
+
+    pub(super) fn watch_models(&self, models: &axo_ai::Models) -> tokio::task::JoinHandle<()> {
+        let mut changes = models.subscribe();
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                deliver(&events, HostEvent::ModelsChanged);
+            }
+        })
     }
 
     fn emit_models_changed(&self) {
@@ -409,31 +456,46 @@ impl AxoService {
         Ok(self.engine().await?.axo.clone())
     }
 
-    fn options(
+    async fn options<'a>(
         &self,
+        engine: &'a Engine,
+        state: &mut ExtensionState,
         folder: &Path,
         model: Option<String>,
         thinking: Option<ThinkingLevel>,
-    ) -> SessionOptions {
+    ) -> Result<(SessionOptions, SessionExtensions, ExtensionOwner<'a>), ApiError> {
+        let canonical = extensions::canonical_folder(folder)?;
+        let scope = engine.extensions.scope(state, self, &canonical).await?;
+        let (recorded, owner) = match scope {
+            Some(scope) => (
+                SessionExtensions::Project(canonical),
+                ExtensionOwner::Project(scope),
+            ),
+            None => (
+                SessionExtensions::Host,
+                ExtensionOwner::Host(&engine.extensions.manager),
+            ),
+        };
         let plans_dir = config::plans_dir(&self.dirs, folder).unwrap_or_else(|error| {
             tracing::warn!(%error, "could not read plansDir; using the default");
             axome_protocol::axo_settings::DEFAULT_PLANS_DIR.to_owned()
         });
         let mut tools = self.web.host_tools(folder);
-        tools.extend(self.browser.host_tools(config::browser_config(&self.dirs, folder)));
+        tools.extend(
+            self.browser
+                .host_tools(config::browser_config(&self.dirs, folder)),
+        );
         tools.extend(crate::services::memory::tools::host_tools(
             &self.memory,
             folder,
         ));
-        SessionOptions {
+        let options = owner.compose(SessionOptions {
             cwd: folder.to_owned(),
             model,
-            agents: bundled::agents().to_vec(),
-            modes: bundled::session_modes(&plans_dir),
-            keywords: bundled::keywords().to_vec(),
+            definitions: bundled::definitions(bundled::session_modes(&plans_dir)),
             thinking,
             ask_enabled: true,
-            project_access: Some(ProjectAccess::Trust),
+            project_access: Some(project_access(folder)),
             exec_env: Some(Arc::new(env::FolderExecEnv::new(
                 self.db.clone(),
                 folder.to_owned(),
@@ -443,7 +505,8 @@ impl AxoService {
             schemes: self.host_schemes(folder),
             recovery: RecoveryPolicy::Resume,
             ..Default::default()
-        }
+        });
+        Ok((options, recorded, owner))
     }
 
     fn host_schemes(&self, folder: &Path) -> Vec<Arc<dyn axo::Scheme>> {
@@ -505,13 +568,8 @@ impl AxoService {
         let infos = engine.axo.list_sessions(folder).await.map_err(axo_error)?;
         let (info, root_info) = find_session_and_root(&infos, id)?;
         if info.spawn.is_none() {
-            let session = engine
-                .axo
-                .open_session(&info.path, self.options(folder, None, None))
-                .await
-                .map_err(axo_error)?;
             return self
-                .register(folder.to_owned(), Arc::new(session), None, engine)
+                .reopen(folder, &info.path, &engine)
                 .await
                 .map(Loaded::Live);
         }
@@ -528,18 +586,49 @@ impl AxoService {
             let root = root_info
                 .ok_or_else(|| ApiError::NotFound("Parent root session no longer exists".into()))?;
             self.wait_retiring(&root.id).await;
-            let session = engine
-                .axo
-                .open_session(&root.path, self.options(folder, None, None))
-                .await
-                .map_err(axo_error)?;
-            self.register(folder.to_owned(), Arc::new(session), None, engine.clone())
-                .await?
+            self.reopen(folder, &root.path, &engine).await?
         };
         let child = engine.axo.session(id).await.map_err(axo_error)?;
-        self.register(folder.to_owned(), child, Some(root_held.id.clone()), engine)
+        self.register(
+            folder.to_owned(),
+            child,
+            Some(root_held.id.clone()),
+            engine,
+            (root_held.extension_owner.clone(), root_held.models.clone()),
+            None,
+        )
+        .await
+        .map(Loaded::Live)
+    }
+
+    async fn reopen(
+        &self,
+        folder: &Path,
+        path: &Path,
+        engine: &Arc<Engine>,
+    ) -> Result<Held<'_>, ApiError> {
+        let mut state = engine.extensions.mutation.lock().await;
+        self.ensure_open()?;
+        let (options, recorded, owner) =
+            self.options(engine, &mut state, folder, None, None).await?;
+        let models = options
+            .models
+            .clone()
+            .unwrap_or_else(|| engine.models.clone());
+        let session = engine
+            .axo
+            .open_session(path, options)
             .await
-            .map(Loaded::Live)
+            .map_err(axo_error)?;
+        self.register(
+            folder.to_owned(),
+            Arc::new(session),
+            None,
+            engine.clone(),
+            (recorded, models),
+            Some(owner),
+        )
+        .await
     }
 
     async fn register(
@@ -548,14 +637,24 @@ impl AxoService {
         session: Arc<axo::Session>,
         root_id: Option<String>,
         engine: Arc<Engine>,
+        selection: (SessionExtensions, Arc<axo_ai::Models>),
+        owner: Option<ExtensionOwner<'_>>,
     ) -> Result<Held<'_>, ApiError> {
         let is_root = root_id.is_none();
+        if let Some(owner) = &owner {
+            owner.attach(&session).await;
+        }
+        let diagnostics = owner
+            .as_ref()
+            .map_or_else(Vec::new, |owner| owner.session_diagnostics(session.id()));
         let live = LiveSession::start(
             self.this.clone(),
             folder.clone(),
             session,
             root_id.clone(),
             engine,
+            selection,
+            diagnostics,
         )
         .await;
         live.pin();
@@ -577,7 +676,10 @@ impl AxoService {
         };
         if let Some(error) = failure {
             live.unpin();
-            live.release().await;
+            if let Some(owner) = &owner {
+                owner.detach(&live.id);
+            }
+            live.release_detached().await;
             return Err(error);
         }
         if is_root {
@@ -788,8 +890,8 @@ impl AxoService {
     }
 
     pub(crate) async fn models(&self) -> Result<Vec<ChatModel>, ApiError> {
-        let engine = self.engine().await?;
-        Ok(Self::available_models(&engine).await)
+        let (registry, origins) = self.provider_origins_for_folder(None).await?;
+        Ok(Self::available_models(&registry, &origins).await)
     }
 
     /// Whether each provider with models can authenticate now, checked with its first model.
@@ -803,19 +905,31 @@ impl AxoService {
         auth
     }
 
-    async fn available_models(engine: &Engine) -> Vec<ChatModel> {
-        let auth = Self::provider_auth(&engine.models).await;
-        let all = engine.models.all();
+    async fn available_models(
+        registry: &axo_ai::Models,
+        origins: &HashMap<String, ProviderExtensionOrigin>,
+    ) -> Vec<ChatModel> {
+        let auth = Self::provider_auth(registry).await;
+        let all = registry.all();
         let mut models: Vec<_> = all
             .iter()
             .filter(|m| auth.get(&m.provider).is_some_and(Result::is_ok))
             .map(|m| ChatModel {
                 selector: format!("{}/{}", m.provider, m.id),
                 provider: m.provider.clone(),
+                origin: origins.get(&m.provider).map(|origin| origin.id.clone()),
                 name: m.name.clone(),
                 thinking: axo_ai::thinking::supported_levels(m)
                     .into_iter()
                     .map(convert::thinking_to_wire)
+                    .collect(),
+                service_tiers: m
+                    .service_tiers
+                    .iter()
+                    .filter(|&(&tier, _)| {
+                        tier != ServiceTier::Standard && m.effective_tier(tier) == tier
+                    })
+                    .map(|(&tier, &factor)| (convert::service_tier_to_wire(tier), factor))
                     .collect(),
                 context_window: m.context_window,
                 images: m.input.contains(&axo_ai::InputKind::Image),
@@ -844,15 +958,88 @@ impl AxoService {
         )
     }
 
+    pub(crate) fn validate_model_selectors(
+        &self,
+        previous: &AxoSettings,
+        settings: &AxoSettings,
+        models: &axo_ai::Models,
+    ) -> Result<(), ApiError> {
+        for (name, selector) in &settings.model_roles {
+            if !name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                || selector.starts_with('@')
+            {
+                return Err(ApiError::InvalidArgument(format!("Invalid model role {name}: use a lowercase role name and a model selector, not another role")));
+            }
+        }
+
+        let last_model = config::last_explicit_model(&self.db).map_err(axo_error)?;
+        let prepare = |settings: &AxoSettings| -> Result<axo::Settings, ApiError> {
+            let mut value = Some(
+                serde_json::to_value(settings)
+                    .map_err(|error| ApiError::Internal(error.to_string()))?,
+            );
+            if let Some(settings) = value.as_mut().and_then(serde_json::Value::as_object_mut) {
+                settings.remove("extensions");
+            }
+            config::fill_roles(&mut value, last_model.as_deref());
+            serde_json::from_value(value.expect("settings are present"))
+                .map_err(|error| ApiError::InvalidArgument(error.to_string()))
+        };
+        let candidate = prepare(settings)?;
+        let before = prepare(previous)?;
+        let validate = |selector: &str, prior: Option<&str>| -> Result<(), ApiError> {
+            let role_changed = || {
+                let Some(role) = selector.strip_prefix('@') else {
+                    return false;
+                };
+                let name = role.split(':').next().unwrap_or("");
+                if before.model_roles.get(name) == candidate.model_roles.get(name) {
+                    return false;
+                }
+                let bare = &selector[..name.len() + 1];
+                let old = before.resolve_model(models, bare).ok();
+                let new = candidate.resolve_model(models, bare).ok();
+                old.as_ref().map(model_choice_key) != new.as_ref().map(model_choice_key)
+            };
+            if prior != Some(selector) || role_changed() {
+                candidate
+                    .resolve_model(models, selector)
+                    .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
+            }
+            Ok(())
+        };
+
+        for (name, selector) in &settings.model_roles {
+            validate(selector, previous.model_roles.get(name).map(String::as_str))?;
+        }
+        if let Some(selector) = &settings.default_model {
+            validate(selector, previous.default_model.as_deref())?;
+        }
+        if let Some(selector) = &settings.subagents.default_model {
+            validate(selector, previous.subagents.default_model.as_deref())?;
+        }
+        for (name, selector) in &settings.subagents.models {
+            validate(
+                selector,
+                previous.subagents.models.get(name).map(String::as_str),
+            )?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn catalog(&self, folder: &Path) -> Result<ChatModelCatalog, ApiError> {
         let engine = self.engine().await?;
-        let models = Self::available_models(&engine).await;
+        let (registry, origins) = self.provider_origins_for_folder(Some(folder)).await?;
+        let models = Self::available_models(&registry, &origins).await;
         let catalog =
-            bundled::catalog(&engine.axo, folder, ProjectAccess::Trust).map_err(axo_error)?;
+            bundled::catalog(&engine.axo, folder, project_access(folder)).map_err(axo_error)?;
         let settings = &catalog.config.settings;
         let choice = settings
             .resolve_model(
-                &engine.models,
+                &registry,
                 settings.default_model.as_deref().unwrap_or("@default"),
             )
             .ok();
@@ -869,12 +1056,42 @@ impl AxoService {
             .flat_map(|roles| roles.keys())
             .map(|name| ChatModelRole {
                 name: name.clone(),
-                model: settings
-                    .resolve_model(&engine.models, &format!("@{name}"))
-                    .ok()
-                    .and_then(|choice| choice.model)
-                    .filter(|model| models.iter().any(|entry| entry.provider == model.provider))
-                    .map(|model| format!("{}/{}", model.provider, model.id)),
+                model: (|| {
+                    let original = settings.model_roles.get(name)?;
+                    let choice = settings
+                        .resolve_model(&registry, &format!("@{name}"))
+                        .ok()?;
+                    let mut selector = if let Some(model) = &choice.model {
+                        if !models.iter().any(|entry| entry.provider == model.provider) {
+                            return None;
+                        }
+                        format!("{}/{}", model.provider, model.id)
+                    } else {
+                        String::new()
+                    };
+                    for suffix in [
+                        choice.thinking.map(ThinkingLevel::as_str),
+                        choice.tier.map(ServiceTier::as_str),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        selector.push(':');
+                        selector.push_str(suffix);
+                    }
+                    // Reordering suffixes can accidentally name an actual model ID with colons.
+                    if settings
+                        .resolve_model(&registry, &selector)
+                        .as_ref()
+                        .is_ok_and(|canonical| {
+                            model_choice_key(canonical) == model_choice_key(&choice)
+                        })
+                    {
+                        Some(selector)
+                    } else {
+                        Some(original.clone())
+                    }
+                })(),
             })
             .collect();
         Ok(ChatModelCatalog {
@@ -883,6 +1100,12 @@ impl AxoService {
                 .and_then(|choice| choice.model.as_ref())
                 .map(|model| format!("{}/{}", model.provider, model.id))
                 .filter(|selector| models.iter().any(|model| &model.selector == selector)),
+            default_service_tier: convert::service_tier_to_wire(
+                choice
+                    .as_ref()
+                    .and_then(|choice| choice.tier)
+                    .unwrap_or_default(),
+            ),
             default_thinking: convert::thinking_to_wire(
                 choice
                     .and_then(|choice| choice.thinking)
@@ -898,22 +1121,50 @@ impl AxoService {
         folder: &Path,
         model: String,
         thinking: ChatThinking,
+        service_tier: ChatServiceTier,
     ) -> Result<String, ApiError> {
         let _opening = self.opening.lock().await;
         let engine = self.engine().await?;
-        let mut options = self.options(
-            folder,
-            Some(model),
-            Some(convert::thinking_from_wire(thinking)),
-        );
+        let mut state = engine.extensions.mutation.lock().await;
+        self.ensure_open()?;
+        let (mut options, recorded, owner) = self
+            .options(
+                &engine,
+                &mut state,
+                folder,
+                Some(model),
+                Some(convert::thinking_from_wire(thinking)),
+            )
+            .await?;
+        let models = options
+            .models
+            .clone()
+            .unwrap_or_else(|| engine.models.clone());
         options.agent = self.default_persona(&engine, folder)?;
         let session = engine
             .axo
             .create_session(options)
             .await
             .map_err(axo_error)?;
+        let tier = match service_tier {
+            ChatServiceTier::Standard => ServiceTier::Standard,
+            ChatServiceTier::Flex => ServiceTier::Flex,
+            ChatServiceTier::Fast => ServiceTier::Fast,
+            ChatServiceTier::Ultrafast => ServiceTier::Ultrafast,
+        };
+        session
+            .run_command(axo::Command::Tier { tier })
+            .await
+            .map_err(axo_error)?;
         let id = self
-            .register(folder.to_owned(), Arc::new(session), None, engine)
+            .register(
+                folder.to_owned(),
+                Arc::new(session),
+                None,
+                engine.clone(),
+                (recorded, models),
+                Some(owner),
+            )
             .await?
             .id
             .clone();
@@ -931,7 +1182,7 @@ impl AxoService {
             return Ok(None);
         };
         let catalog =
-            bundled::catalog(&engine.axo, folder, ProjectAccess::Trust).map_err(axo_error)?;
+            bundled::catalog(&engine.axo, folder, project_access(folder)).map_err(axo_error)?;
         let persona = catalog.agents.iter().any(|def| {
             matches!(def, AgentDef::Agent(spec)
                 if spec.name == name && matches!(spec.run_as, axo::RunAs::Root | axo::RunAs::Any))
@@ -980,7 +1231,10 @@ impl AxoService {
                         subs.retain(|(existing, _)| existing != &attach_id);
                         subs.push((attach_id.clone(), sink.clone()));
                     }
-                    let state = build_readonly_state(&engine, info, &by_id).await;
+                    let state = match self.models_for_folder(Some(folder)).await {
+                        Ok(models) => build_readonly_state(&engine, &models, info, &by_id).await,
+                        Err(error) => Err(error),
+                    };
                     let mut readonly = self.readonly_subscribers.lock();
                     let registered = readonly.get(id).is_some_and(|subs| {
                         subs.iter().any(|(existing, held)| {
@@ -1390,7 +1644,7 @@ impl AxoService {
             SessionTarget::Closed(axo, path) => {
                 let host_schemes = self.host_schemes(folder);
                 Ok(SessionSchemes::Closed(
-                    axo.schemes(&path, Some(ProjectAccess::Trust), &host_schemes)
+                    axo.schemes(&path, Some(project_access(folder)), &host_schemes)
                         .await
                         .map_err(axo_error)?,
                 ))
@@ -1500,13 +1754,10 @@ impl AxoService {
             if live.folder != folder {
                 return Err(ApiError::NotFound(format!("axo session {id}")));
             }
-            let (call_id, artifact) = live
+            let artifact = live
                 .command_job(&job_id)
                 .ok_or_else(|| ApiError::NotFound(format!("command job {job_id}")))?;
-            if let Some(out) = live
-                .watch_command(attach_id, job_id.clone(), call_id)
-                .await?
-            {
+            if let Some(out) = live.watch_command(attach_id, job_id.clone()).await? {
                 return Ok(Some(out));
             }
             return Self::read_artifact_tail(live.session.schemes(), job_id, artifact).await;
@@ -1522,7 +1773,7 @@ impl AxoService {
             })
             .ok_or_else(|| ApiError::NotFound(format!("command job {job_id}")))?;
         let schemes = axo
-            .schemes(&info.path, Some(ProjectAccess::Trust), &[])
+            .schemes(&info.path, Some(project_access(folder)), &[])
             .await
             .map_err(axo_error)?;
         Self::read_artifact_tail(&schemes, job_id, artifact).await
@@ -1602,14 +1853,33 @@ impl AxoService {
         name: String,
         args: serde_json::Value,
     ) -> Result<(), ApiError> {
-        let command = axo::Command::decode(&name, args).map_err(axo_error)?;
         let live = self.live(folder, id).await?;
+        let command = if live.session.commands().iter().any(|command| {
+            command.name == name && matches!(command.kind, axo::CommandKind::Registered { .. })
+        }) {
+            let text = args
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .and_then(|object| object.get("args"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument(
+                        "Registered command arguments must be an object containing only a string 'args' field".into(),
+                    )
+                })?;
+            axo::Command::Registered {
+                name,
+                args: text.trim().to_owned(),
+            }
+        } else {
+            axo::Command::decode(&name, args).map_err(axo_error)?
+        };
         let explicit_model = match &command {
             axo::Command::Model { model } if !model.starts_with(['@', ':']) => live
                 .session
                 .config()
                 .settings
-                .resolve_model(&live.engine.models, model)
+                .resolve_model(&live.models, model)
                 .ok()
                 .and_then(|choice| choice.model)
                 .map(|_| model.clone()),
@@ -1708,20 +1978,29 @@ impl AxoService {
         entry_id: String,
     ) -> Result<ChatForkInfo, ApiError> {
         let live = self.live(folder, id).await?;
+        let _opening = self.opening.lock().await;
+        let state = live.engine.extensions.mutation.lock().await;
+        self.ensure_open()?;
+        let owner = live
+            .engine
+            .extensions
+            .recorded_owner(&state, &live.extension_owner)?;
         let fork = live
             .session
             .fork(&EntryId::from(entry_id))
             .await
             .map_err(axo_error)?;
-        let _opening = self.opening.lock().await;
         let session = self
             .register(
                 folder.to_owned(),
                 Arc::new(fork.session),
                 None,
                 live.engine.clone(),
+                (live.extension_owner.clone(), live.models.clone()),
+                Some(owner),
             )
             .await?;
+        drop(state);
         // The copied history belongs to the parent's capture; the fork captures only what follows.
         match live
             .engine
@@ -1852,7 +2131,17 @@ impl AxoService {
         let memory = Arc::clone(&self.memory);
         let result = std::thread::spawn(move || {
             runtime.block_on(async move {
+                let mut extensions_engine = None;
                 if let Some(service) = service {
+                    let (models_watch, engine) = {
+                        let mut slot = service.engine.lock().await;
+                        (slot.models_watch.take(), slot.engine.clone())
+                    };
+                    extensions_engine = engine;
+                    if let Some(task) = models_watch {
+                        task.abort();
+                        let _ = task.await;
+                    }
                     service.login_stop().await;
                 }
                 let mut tasks = tokio::task::JoinSet::new();
@@ -1878,6 +2167,9 @@ impl AxoService {
                         if let Err(error) = result {
                             tracing::warn!(%error, "axo shutdown task failed");
                         }
+                    }
+                    if let Some(engine) = extensions_engine {
+                        engine.extensions.shutdown().await;
                     }
                     browser.shutdown().await;
                 })
@@ -1987,6 +2279,7 @@ fn children_usage<'a>(
 
 async fn build_readonly_state(
     engine: &Engine,
+    registry: &axo_ai::Models,
     info: &axo::SessionInfo,
     infos_by_id: &HashMap<&str, &axo::SessionInfo>,
 ) -> Result<ChatState, ApiError> {
@@ -1996,8 +2289,14 @@ async fn build_readonly_state(
         .await
         .map_err(axo_error)?;
     let path = convert::branch(&entries);
-    let (model, thinking) = convert::selection(&entries, &path);
-    let window = engine.context_window(model.as_deref());
+    let (model, thinking, tier) = convert::selection(&entries, &path);
+    let definition = model
+        .as_deref()
+        .and_then(|selector| engine::model(registry, selector));
+    let window = definition.as_ref().map_or(0, |model| model.context_window);
+    let effective = definition
+        .as_ref()
+        .map_or(ServiceTier::Standard, |model| model.effective_tier(tier));
     let mut tree_usage = convert::entries_usage(&entries);
     let permits = tokio::sync::Semaphore::new(8);
     tree_usage +=
@@ -2026,6 +2325,8 @@ async fn build_readonly_state(
             maintenance: None,
             model,
             thinking: convert::thinking_to_wire(thinking),
+            service_tier: convert::service_tier_to_wire(tier),
+            effective_service_tier: convert::service_tier_to_wire(effective),
             tools: Vec::new(),
             queue: Vec::new(),
             questions: Vec::new(),
@@ -2040,6 +2341,8 @@ async fn build_readonly_state(
         },
         toolbox: ChatToolbox::default(),
         commands: Vec::new(),
+        tool_origins: BTreeMap::new(),
+        extension_diagnostics: Vec::new(),
         session_tools: Vec::new(),
         read_only: true,
         is_child: header.spawn.is_some(),
@@ -2128,6 +2431,7 @@ fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<History
                 }
                 Entry::Message { .. }
                 | Entry::ThinkingLevelChange { .. }
+                | Entry::ServiceTierChange { .. }
                 | Entry::ModelChange { .. }
                 | Entry::AgentChange { .. }
                 | Entry::ModeChange { .. }
@@ -2163,8 +2467,8 @@ fn parse_axo_row(info: &axo::SessionInfo, skipped: &mut usize) -> Option<History
     row.id = info.id.clone();
     row.cwd = Some(info.cwd.to_string_lossy().into_owned());
     row.created_at = Some(info.timestamp.clone());
-    row.updated_at =
-        Some(DateTime::<Utc>::from(info.modified).to_rfc3339_opts(SecondsFormat::Millis, true));
+    row.updated_at = DateTime::<Utc>::from_timestamp_millis(info.modified_at)
+        .map(|time| time.to_rfc3339_opts(SecondsFormat::Millis, true));
     Some(row)
 }
 

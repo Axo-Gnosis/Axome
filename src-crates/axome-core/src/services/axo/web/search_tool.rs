@@ -1,5 +1,6 @@
 //! `web_search` host tool implementation.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -15,8 +16,8 @@ use super::WebTools;
 const MAX_QUERY_CHARS: usize = 400;
 const MAX_SNIPPET_CHARS: usize = 600;
 const DEFAULT_LIMIT: usize = 5;
-const GUIDELINES: &[&str] = &[
-    "Use web_search for current releases, versions, docs lookup, and verifying real-world facts; follow up with web_fetch or search_docs to read full pages.",
+const GUIDELINES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("Use web_search for current releases, versions, docs lookup, and verifying real-world facts; follow up with web_fetch or search_docs to read full pages."),
 ];
 
 #[derive(Deserialize)]
@@ -95,7 +96,7 @@ impl Tool for WebSearchTool {
         Replay::Safe
     }
 
-    fn prompt_guidelines(&self) -> &[&str] {
+    fn prompt_guidelines(&self) -> &[Cow<'static, str>] {
         GUIDELINES
     }
 

@@ -1,13 +1,7 @@
-//! Socket path resolution + atomic 0o700 directory creation. Pure
-//! filesystem helpers, no async / no `IssueService`.
+//! Socket path resolution.
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use std::fs::DirBuilder;
-#[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 pub(super) const SOCKET_PATH_LIMIT: usize = 100;
 
@@ -42,30 +36,4 @@ pub(super) fn socket_path_for(project_path: &Path) -> Result<PathBuf, String> {
 fn short_hash(input: &str) -> String {
     let digest = Sha256::digest(input.as_bytes());
     digest[..6].iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Create `dir` (and any missing ancestors) with mode 0o700 set
-/// atomically at creation, so the leaf directory is never world-
-/// traversable even briefly. Falls back to a chmod after creation when
-/// the dir already exists or on non-unix targets.
-pub(super) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        if dir.is_dir() {
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-            return Ok(());
-        }
-        let mut builder = DirBuilder::new();
-        builder.recursive(true).mode(0o700);
-        builder.create(dir)?;
-        // Recursive creation only applies the mode to the leaf dir on
-        // some platforms; tighten the leaf explicitly so callers always
-        // see 0o700 regardless of which ancestor segments were new.
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(dir)
-    }
 }

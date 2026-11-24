@@ -16,6 +16,9 @@ let
       filter = workspaceSourceFilter craneLib;
     };
     strictDeps = true;
+    # axome-browser's playwright-rs pulls native-tls/openssl-sys.
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.openssl ];
     doCheck = false;
     nativeCheckInputs = [ pkgs.git ];
     preCheck = ''
@@ -63,7 +66,7 @@ pkgs.runCommand "axome-server-${version}"
     #!${pkgs.runtimeShell}
     export PLAYWRIGHT_NODE_EXE="''${PLAYWRIGHT_NODE_EXE:-${lib.getExe pkgs.nodejs}}"
     export PLAYWRIGHT_CLI_JS="''${PLAYWRIGHT_CLI_JS:-${pkgs.playwright-driver}/cli.js}"
-    exec "${unwrapped}/bin/axome-server" --web-assets-dir "${webFrontend}" "$@"
+    exec "${unwrapped}/bin/axome-server" --web-assets-dir "${webFrontend}" --bun "${pkgs.bun}/bin/bun" "$@"
     EOF
     chmod +x "$out/bin/axome-server"
   ''

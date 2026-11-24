@@ -11,10 +11,11 @@
   import type { ChatLocalFiles, ChatState } from '$lib/types/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { buildFileTree, type FileTreeNode } from '$lib/utils/fileTree'
+  import { splitRemotePath } from '$lib/utils/paths'
   import { SvelteSet } from 'svelte/reactivity'
   import { ledgerFiles } from './ledger'
 
-  type SessionFile = { path: string; openPath: string; size?: number; status?: string }
+  type SessionFile = { path: string; openPath: string; size?: number; status?: string; unfinished?: boolean }
 
   let {
     state: chat,
@@ -62,20 +63,6 @@
     }
   })
 
-  const files = $derived.by(() => {
-    // local:// files have their own group; the ledger records them by absolute session path.
-    const localPrefix = local?.root ? `${local.root}/` : null
-    const paths = new Map<string, boolean>()
-    for (const { path, access } of ledgerFiles(chat?.entries ?? [])) {
-      if (localPrefix && path.startsWith(localPrefix)) continue
-      paths.set(path, paths.get(path) === true || access === 'modify')
-    }
-    const recorded = [...paths]
-    return [
-      { name: 'Edited', paths: recorded.filter(([, edited]) => edited).map(([path]) => path) },
-      { name: 'Read', paths: recorded.filter(([, edited]) => !edited).map(([path]) => path) }
-    ]
-  })
   const statuses = $derived.by(() => {
     const summary = getGitSummary(folderPath)
     const result = new Map<string, string>()
@@ -85,25 +72,45 @@
     }
     return result
   })
-  const prefix = $derived(`${folderPath.replace(/\/+$/, '')}/`)
-  const empty = $derived(!localFiles.length && files.every((group) => !group.paths.length))
+  const prefix = $derived(`${(splitRemotePath(folderPath)?.path ?? folderPath).replace(/\/+$/, '')}/`)
   const groups = $derived.by(() => {
+    // Local files get their own group, but use the same absolute ledger paths.
+    const localPrefix = local?.root ? `${local.root.replace(/\/+$/, '')}/` : null
+    const recorded = new Map<string, { edited: boolean; unfinished: boolean }>()
+    for (const { path, access, unfinished } of ledgerFiles(chat?.entries ?? [])) {
+      const file = recorded.get(path)
+      if (file) {
+        file.edited ||= access === 'modify'
+        file.unfinished ||= unfinished
+      } else {
+        recorded.set(path, { edited: access === 'modify', unfinished })
+      }
+    }
+    const edited: SessionFile[] = []
+    const read: SessionFile[] = []
+    for (const [openPath, file] of recorded) {
+      if (localPrefix && openPath.startsWith(localPrefix)) continue
+      const relative = openPath.startsWith(prefix) ? openPath.slice(prefix.length) : null
+      const group = file.edited ? edited : read
+      group.push({
+        path: relative ?? openPath,
+        openPath,
+        status: relative === null ? undefined : statuses.get(relative),
+        unfinished: file.unfinished
+      })
+    }
     const payloads: { name: string; files: SessionFile[] }[] = [
       {
         name: 'Local',
-        files: localFiles.map((file) => ({ path: file.path, openPath: `local://${file.path}`, size: file.size }))
+        files: localFiles.map((file) => ({
+          path: file.path,
+          openPath: `local://${file.path}`,
+          size: file.size,
+          unfinished: localPrefix ? recorded.get(localPrefix + file.path)?.unfinished : undefined
+        }))
       },
-      ...files.map((group) => ({
-        name: group.name,
-        files: group.paths.map((openPath) => {
-          const relative = openPath.startsWith(prefix) ? openPath.slice(prefix.length) : null
-          return {
-            path: relative ?? openPath,
-            openPath,
-            status: relative === null ? undefined : statuses.get(relative)
-          }
-        })
-      }))
+      { name: 'Edited', files: edited },
+      { name: 'Read', files: read }
     ]
     return payloads.map((group) => {
       const nodes = buildFileTree(group.files)
@@ -117,6 +124,7 @@
       return { name: group.name, count: group.files.length, nodes }
     })
   })
+  const empty = $derived(groups.every((group) => group.count === 0))
   const collapsedDirs = new SvelteSet<string>()
 
   function directoryKey(group: string, path: string): string {
@@ -168,6 +176,9 @@
                   <span class="font-mono text-xs text-muted tabular-nums">{sizeLabel(node.change.size)}</span>
                 {/if}
                 {#if node.change?.status}<GitStatusBadge status={node.change.status} />{/if}
+                {#if node.change?.unfinished}
+                  <span class="shrink-0 text-2xs text-warning">unfinished call</span>
+                {/if}
               {/snippet}
             </FileTreeItems>
           {:else if group.name !== 'Local' || (!loading && !error)}

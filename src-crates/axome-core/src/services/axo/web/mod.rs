@@ -13,7 +13,7 @@ mod search_tool;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
-use axo::{HostTool, ProjectAccess, Scheme, SessionTools};
+use axo::{HostTool, Scheme, SessionTools};
 use axo_ai::{Credential, CredentialStore, FileCredentialStore, Model, Models};
 use axome_protocol::axo::AxoWebToolsStatusPayload;
 
@@ -137,7 +137,7 @@ impl super::AxoService {
             .map(str::trim)
             .filter(|selector| !selector.is_empty())
             .unwrap_or("@dash");
-        let preferred = super::bundled::catalog(&engine.axo, folder, ProjectAccess::Trust)
+        let preferred = super::bundled::catalog(&engine.axo, folder, super::project_access(folder))
             .ok()
             .and_then(|catalog| {
                 catalog

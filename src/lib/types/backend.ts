@@ -175,12 +175,15 @@ export interface SessionIndexSnapshot {
 }
 
 export type ChatThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ChatServiceTier = 'standard' | 'flex' | 'fast' | 'ultrafast'
 
 export interface ChatModel {
   selector: string
   provider: string
+  origin: string | null
   name: string
   thinking: ChatThinking[]
+  serviceTiers: Partial<Record<ChatServiceTier, number>>
   contextWindow: number
   /** Accepts image input. */
   images: boolean
@@ -191,6 +194,9 @@ export type AxoCredentialSource =
 
 export interface AxoProvider {
   id: string
+  origin: string | null
+  originProject: boolean
+  hides: AxoHiddenProvider | null
   env: string[]
   requiresKey: boolean
   login: boolean
@@ -266,6 +272,7 @@ export interface ChatModelCatalog {
   roles: ChatModelRole[]
   defaultModel: string | null
   defaultThinking: ChatThinking
+  defaultServiceTier: ChatServiceTier
 }
 
 export type ChatContent = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
@@ -281,7 +288,7 @@ export interface ChatUsage {
   cacheRead: number
   cacheWrite: number
   totalTokens: number
-  cost: number
+  cost: number | null
 }
 
 export type ChatStopReason = 'stop' | 'length' | 'toolUse' | 'error' | 'aborted'
@@ -343,11 +350,10 @@ export type ChatNotice =
   | { kind: 'turnBudget'; text: string }
   | { kind: 'yieldNudge'; text: string }
   | { kind: 'host'; text: string }
+  | { kind: 'extension'; id: string; text: string }
 
-/** The agent session that routed a user entry; `name` is its display name when known. */
-export interface ChatSender {
-  name: string | null
-}
+/** Who submitted a user entry when it did not come directly from the user. */
+export type ChatSender = { kind: 'agent'; name: string | null } | { kind: 'extension'; id: string }
 
 export type ChatEntryBody =
   | {
@@ -363,9 +369,12 @@ export type ChatEntryBody =
       kind: 'assistant'
       blocks: ChatBlock[]
       model: string
+      serviceTier: ChatServiceTier
+      thinking: ChatThinking | null
       usage: ChatUsage
       stopReason: ChatStopReason
       error: string | null
+      providerUnavailable: boolean
       durationMs: number | null
     }
   | {
@@ -380,7 +389,8 @@ export type ChatEntryBody =
     }
   | { kind: 'notice'; notice: ChatNotice }
   | { kind: 'modelChange'; model: string }
-  | { kind: 'thinkingChange'; thinking: ChatThinking }
+  | { kind: 'thinkingChange'; thinking: ChatThinking; automatic: boolean; serviceTier: ChatServiceTier | null }
+  | { kind: 'serviceTierChange'; serviceTier: ChatServiceTier }
   | { kind: 'agentChange'; agent: string | null }
   | { kind: 'modeChange'; mode: string | null }
   | { kind: 'compaction'; summary: string; tokensBefore: number }
@@ -404,32 +414,59 @@ export interface ChatQueued {
   submissionId: string
   kind: ChatQueueKind
   parts: ChatPart[]
+  from: ChatSender | null
 }
 
-export interface ChatQuestionOption {
+export interface ChatAskOption {
+  value: string
   label: string
   description: string | null
-  preview: string | null
+  recommended: boolean
 }
 
-export interface ChatQuestion {
+export type ChatAskBlock =
+  | { type: 'markdown'; text: string }
+  | {
+      type: 'choice'
+      id: string
+      question: string
+      optional: boolean
+      options: ChatAskOption[]
+      multi: boolean
+    }
+  | {
+      type: 'text'
+      id: string
+      question: string
+      optional: boolean
+      multiline: boolean
+      placeholder: string | null
+      prefill: string | null
+    }
+  | {
+      type: 'number'
+      id: string
+      question: string
+      optional: boolean
+      integer: boolean
+      min: number | null
+      max: number | null
+      default: number | null
+    }
+
+export type ChatAnswerValue = string | number | string[]
+
+export interface ChatAnswer {
   id: string
-  question: string
-  header: string | null
-  options: ChatQuestionOption[]
-  multi: boolean
-  recommended: number | null
+  value?: ChatAnswerValue
+  other?: string
+  note?: string
 }
 
 export interface ChatQuestions {
   callId: string
-  questions: ChatQuestion[]
-}
-
-export interface ChatAnswer {
-  id: string
-  selected: string[]
-  custom: string | null
+  blocks: ChatAskBlock[]
+  deadlineMs: number | null
 }
 
 export interface ChatRetry {
@@ -530,6 +567,8 @@ export interface ChatLive {
   maintenance: ChatMaintenance | null
   model: string | null
   thinking: ChatThinking
+  serviceTier: ChatServiceTier
+  effectiveServiceTier: ChatServiceTier
   tools: ChatToolRun[]
   queue: ChatQueued[]
   questions: ChatQuestions[]
@@ -558,12 +597,19 @@ export interface ChatReview {
 
 export type ChatCommandPolicy = 'alongside' | 'when_idle' | 'queued'
 
-/** One catalog entry, mirroring `axo::CommandInfo`. */
-export type ChatCommand = { name: string; description: string; policy: ChatCommandPolicy } & (
+export type ChatCommandKind =
   | { kind: 'builtin'; /** Inlined JSON Schema object. */ parameters: Record<string, unknown> }
   | { kind: 'skill'; argumentHint: string | null }
   | { kind: 'mode'; argumentHint: string | null }
-)
+  | { kind: 'registered'; argumentHint: string | null }
+
+/** One catalog entry, mirroring `axo::CommandInfo`. */
+export type ChatCommand = {
+  name: string
+  description: string
+  policy: ChatCommandPolicy
+  origin: string | null
+} & ChatCommandKind
 
 export interface ChatSkillInfo {
   name: string
@@ -670,6 +716,8 @@ export interface ChatState {
   streaming: ChatBlock[] | null
   live: ChatLive
   commands: ChatCommand[]
+  toolOrigins: Record<string, string>
+  extensionDiagnostics: string[]
   sessionTools: ChatSessionTool[]
   toolbox: ChatToolbox
 }
@@ -686,6 +734,7 @@ export type ChatEvent =
   | { type: 'entry'; entry: ChatEntry }
   | { type: 'live'; live: ChatLive }
   | { type: 'sessionTools'; tools: ChatSessionTool[] }
+  | { type: 'extensionCatalog'; commands: ChatCommand[]; toolOrigins: Record<string, string>; diagnostics: string[] }
   | { type: 'delta'; delta: ChatDelta }
   | { type: 'jobOutput'; jobId: string; reset: boolean; output: ChatJobOutput }
   | { type: 'error'; message: string }
@@ -960,12 +1009,20 @@ export interface AxoRetrySettings {
   maxDelayMs: number
 }
 
+export type AxoTierOnModelChange = 'reset' | 'keep'
+export type AxoSubagentTier = 'standard' | 'inherit'
+
+export interface AxoServiceTierSettings {
+  onModelChange: AxoTierOnModelChange
+}
+
 export interface AxoSubagentSettings {
   maxDepth: number
   maxConcurrent: number
   maxTurns: number
   defaultModel: string | null
   models: Record<string, string>
+  serviceTier: AxoSubagentTier
   contextFiles: AxoContextFiles
 }
 
@@ -997,12 +1054,15 @@ export interface AxoBrowserSettings {
 }
 
 export interface AxoSettings {
+  extensions: AxoEnabledExtension[]
+  projectExtensions: Record<string, AxoEnabledExtension[]>
   defaultModel: string | null
   defaultAgent: string | null
   /** Where accepted plans are saved, relative to the folder or absolute. */
   plansDir: string
   modelRoles: Record<string, string>
   defaultThinkingLevel: ChatThinking
+  serviceTier: AxoServiceTierSettings
   homeAgentsDir: boolean
   steeringMode: AxoQueueMode
   followUpMode: AxoQueueMode
@@ -1151,7 +1211,7 @@ export interface LspDocumentSelector {
   filenames: string[]
 }
 
-// Optional per-server settings descriptor sourced from the extension
+// Optional per-server settings descriptor sourced from the integration
 // manifest. `schema` is an inlined JSON Schema object usable by Monaco
 // for autocomplete/validation; `section` hints which LSP workspace
 // configuration section the JSON is expected to slot into; `defaults`
@@ -1188,7 +1248,7 @@ export type ShiftEncoding = 'legacy' | 'kitty'
 export interface HarnessDescriptor {
   id: string
   label: string
-  extension_id: string
+  integration_id: string
   /** SVG markup. */
   icon: string
   wordmark: string | null
@@ -1199,30 +1259,30 @@ export interface HarnessDescriptor {
   title_prefixes: string[]
 }
 
-export interface ExtensionRuntimeCatalog {
+export interface IntegrationRuntimeCatalog {
   languages: LanguageContribution[]
   formatter_policies: LanguageFormatterPolicy[]
   harnesses: HarnessDescriptor[]
 }
 
-export interface ExtensionSettingsCatalog {
+export interface IntegrationSettingsCatalog {
   pages: SettingsPage[]
 }
 
-export interface ExtensionDiagnostic {
-  extension_id: string | null
+export interface IntegrationDiagnostic {
+  integration_id: string | null
   path: string
   message: string
 }
 
-export interface ExtensionCatalog {
-  runtime: ExtensionRuntimeCatalog
-  settings: ExtensionSettingsCatalog
-  diagnostics: ExtensionDiagnostic[]
+export interface IntegrationCatalog {
+  runtime: IntegrationRuntimeCatalog
+  settings: IntegrationSettingsCatalog
+  diagnostics: IntegrationDiagnostic[]
 }
 
-export interface ExtensionGrammar {
-  extension_id: string
+export interface IntegrationGrammar {
+  integration_id: string
   language: string
   embedded_languages: string[]
   grammar: Record<string, unknown>
@@ -1233,8 +1293,8 @@ export type FormatterAvailability = 'available' | 'missing'
 export interface FormatterStatus {
   formatter_id: string
   label: string
-  extension_id: string
-  extension_label: string
+  integration_id: string
+  integration_label: string
   languages: string[]
   status: FormatterAvailability
   resolved_path: string | null
@@ -1253,8 +1313,8 @@ export interface LspServerConfig {
 
 export interface LspServerStatus {
   server_definition_id: string
-  extension_id: string
-  extension_label: string
+  integration_id: string
+  integration_label: string
   label: string
   enabled: boolean
   status: LspServerConnectionStatus
@@ -1795,3 +1855,129 @@ export interface NixDetection {
   detected_files: string[]
   selected: NixEnvRecord | null
 }
+
+export interface AxoEnabledExtension {
+  id: string
+  group: string | null
+}
+
+export interface AxoExtensions {
+  bun: AxoBun
+  host: AxoExtension[]
+  project: AxoProjectExtensions | null
+  collisions: AxoProviderCollision[]
+  diagnostics: AxoExtensionDiagnostic[]
+}
+
+export interface AxoBun {
+  path: string | null
+  searched: string[]
+}
+
+export interface AxoProjectExtensions {
+  folder: string
+  access: AxoProjectAccess
+  rootExists: boolean
+  items: AxoExtension[]
+  collisions: AxoProviderCollision[]
+  diagnostics: AxoExtensionDiagnostic[]
+}
+
+export type AxoExtensionOrigin = 'installed' | 'userFolder' | 'projectFolder' | 'missing'
+
+export type AxoExtensionPhase = 'cold' | 'installing' | 'starting' | 'ready' | 'restarting' | 'disabled' | 'unavailable'
+
+export interface AxoExtensionProblem {
+  kind: AxoExtensionProblemKind
+  message: string
+}
+
+export type AxoExtensionProblemKind =
+  'bun' | 'notFound' | 'invalid' | 'dependenciesMissing' | 'dependencyInstall' | 'load' | 'crash' | 'setup'
+
+export interface AxoExtension {
+  id: string
+  origin: AxoExtensionOrigin
+  enabled: boolean
+  position: number | null
+  group: string | null
+  phase: AxoExtensionPhase | null
+  problem: AxoExtensionProblem | null
+  adds: AxoExtensionAdds
+  install: AxoExtensionInstall | null
+  dataDir: string
+  failure: AxoExtensionFailure | null
+}
+
+export interface AxoExtensionAdds {
+  providers: AxoExtensionProvider[]
+  tools: string[]
+  commands: string[]
+  toolPolicy: string[]
+  spawnHook: boolean
+}
+
+export interface AxoExtensionProvider {
+  id: string
+  models: number
+  login: boolean
+}
+
+export interface AxoExtensionInstall {
+  origin: string
+  revision: string | null
+  gitRef: string | null
+  url: string | null
+  installedAt: number | null
+  previous: AxoExtensionCopy | null
+}
+
+export interface AxoExtensionCopy {
+  revision: string | null
+  installedAt: number | null
+}
+
+export interface AxoExtensionFailure {
+  title: string
+  output: string | null
+}
+
+export interface AxoProviderCollision {
+  provider: string
+  winner: string
+  hidden: AxoHiddenProvider
+}
+
+export type AxoHiddenProvider =
+  { type: 'extension'; id: string } | { type: 'loaded' } | { type: 'registered' } | { type: 'layer' }
+
+export interface AxoExtensionDiagnostic {
+  id: string
+  message: string
+}
+
+export interface AxoRunnerMemory {
+  members: string[]
+  group: string | null
+  pssBytes: number
+  project: boolean
+}
+
+export type AxoExtensionSource = { type: 'folder'; path: string } | { type: 'git'; url: string; gitRef: string | null }
+
+export interface AxoExtensionStage {
+  stageId: string
+  id: string
+  compatible: boolean
+  sdk: string | null
+  adds: AxoExtensionAdds
+  origin: string
+  revision: string | null
+  subject: string | null
+  installedOrigin: string | null
+}
+
+export type AxoInstallOutcome =
+  | { type: 'installed'; extension: AxoExtension }
+  | { type: 'originChanged'; installed: string; offered: string }
+  | { type: 'failed'; title: string; output: string | null }

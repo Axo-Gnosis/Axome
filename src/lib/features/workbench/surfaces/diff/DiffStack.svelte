@@ -71,7 +71,7 @@
       if (folderPath) {
         const { ensureFolderLanguageSupport } = await import('$lib/features/editor/renderers/monaco/core/monacoEnv')
         await ensureFolderLanguageSupport(monaco, folderPath).catch((error) =>
-          console.warn('Extension language support failed', error)
+          console.warn('Integration language support failed', error)
         )
       }
       if (disposed) return

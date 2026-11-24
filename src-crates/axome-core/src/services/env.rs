@@ -1,7 +1,7 @@
 use crate::services::{db::DatabaseService, nix::NixService};
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 
@@ -87,6 +87,43 @@ pub(crate) fn folder_nix(db: &DatabaseService, folder: &Path) -> Option<HashMap<
             None
         }
     }
+}
+
+/// Find an executable Bun and report the candidates attempted in order.
+pub(crate) fn resolve_bun(
+    explicit: Option<&Path>,
+    current_exe: Option<&Path>,
+    base: &HashMap<String, String>,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let bundled = current_exe
+        .and_then(Path::parent)
+        .into_iter()
+        .map(|dir| dir.join("../lib/axome/bun"));
+    let on_path = base
+        .get("PATH")
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| dir.join("bun"));
+    let mut searched = Vec::new();
+    for candidate in explicit
+        .into_iter()
+        .map(Path::to_path_buf)
+        .chain(bundled)
+        .chain(on_path)
+    {
+        searched.push(candidate);
+        let candidate = searched.last().expect("just appended candidate");
+        if candidate.as_os_str().is_empty() {
+            continue;
+        }
+        let Ok(absolute) = std::fs::canonicalize(candidate) else {
+            continue;
+        };
+        if absolute.is_file() && which::which_in(&absolute, None::<&std::ffi::OsStr>, ".").is_ok() {
+            return (Some(absolute), searched);
+        }
+    }
+    (None, searched)
 }
 
 pub struct EnvironmentService {
@@ -277,6 +314,98 @@ fn merge_paths(primary: &str, secondary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bun_resolution_order() {
+        use std::fs;
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let root = std::env::temp_dir().join(format!("axome-env-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let exe = root.join("bin/axome");
+        let bundled = root.join("bin/../lib/axome/bun");
+        let explicit = root.join("explicit");
+        let first = root.join("first/bun");
+        let second = root.join("second/bun");
+        fs::create_dir(root.join("bin")).unwrap();
+
+        let write = |path: &Path, mode| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let env = |paths: &[&Path]| {
+            HashMap::from([(
+                "PATH".into(),
+                std::env::join_paths(paths).unwrap().into_string().unwrap(),
+            )])
+        };
+        for path in [&explicit, &bundled, &first, &second] {
+            write(path, 0o700);
+        }
+        let path = env(&[first.parent().unwrap(), second.parent().unwrap()]);
+        assert_eq!(
+            resolve_bun(Some(&explicit), Some(&exe), &path),
+            (Some(explicit.clone()), vec![explicit.clone()])
+        );
+        let mut relative = PathBuf::new();
+        for _ in std::env::current_dir().unwrap().components().skip(1) {
+            relative.push("..");
+        }
+        relative.push(explicit.strip_prefix("/").unwrap());
+        assert_eq!(
+            resolve_bun(Some(&relative), None, &path),
+            (Some(explicit.clone()), vec![relative])
+        );
+
+        write(&explicit, 0o600);
+        assert_eq!(
+            resolve_bun(Some(&explicit), Some(&exe), &path),
+            (
+                Some(bundled.canonicalize().unwrap()),
+                vec![explicit.clone(), bundled.clone()]
+            )
+        );
+        fs::remove_file(&explicit).unwrap();
+        fs::remove_file(&bundled).unwrap();
+        assert_eq!(
+            resolve_bun(Some(&explicit), Some(&exe), &path),
+            (Some(first.clone()), vec![explicit, bundled, first.clone()])
+        );
+
+        let directory = root.join("directory/bun");
+        let broken = root.join("broken/bun");
+        let no_exec = root.join("no-exec/bun");
+        let link = root.join("link/bun");
+        fs::create_dir_all(&directory).unwrap();
+        fs::create_dir(broken.parent().unwrap()).unwrap();
+        fs::create_dir(link.parent().unwrap()).unwrap();
+        symlink(root.join("missing"), &broken).unwrap();
+        symlink(&first, &link).unwrap();
+        write(&no_exec, 0o600);
+        let path = env(&[
+            directory.parent().unwrap(),
+            broken.parent().unwrap(),
+            no_exec.parent().unwrap(),
+            link.parent().unwrap(),
+        ]);
+        let searched = vec![directory, broken, no_exec, link];
+        assert_eq!(
+            resolve_bun(None, None, &path),
+            (Some(first.clone()), searched.clone())
+        );
+        fs::remove_file(first).unwrap();
+        let mut attempts = vec![PathBuf::new()];
+        attempts.extend(searched);
+        assert_eq!(
+            resolve_bun(Some(Path::new("")), None, &path),
+            (None, attempts)
+        );
+        assert_eq!(resolve_bun(None, None, &HashMap::new()), (None, vec![]));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn probe_output_parses_between_markers() {

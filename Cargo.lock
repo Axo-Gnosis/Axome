@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "Inflector"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -350,12 +356,13 @@ dependencies = [
 
 [[package]]
 name = "axo"
-version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=5c3f418a5548f161aeb0af686b77992c55278811#5c3f418a5548f161aeb0af686b77992c55278811"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
 dependencies = [
  "async-trait",
  "axo-agent",
  "axo-ai",
+ "axo-macros",
  "base64 0.23.1",
  "futures",
  "globset",
@@ -376,6 +383,8 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.1",
  "similar",
+ "specta",
+ "specta-serde",
  "strip-ansi-escapes",
  "thiserror 2.0.21",
  "tokio",
@@ -388,8 +397,8 @@ dependencies = [
 
 [[package]]
 name = "axo-agent"
-version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=5c3f418a5548f161aeb0af686b77992c55278811#5c3f418a5548f161aeb0af686b77992c55278811"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -397,6 +406,7 @@ dependencies = [
  "jsonschema 0.59.0",
  "serde",
  "serde_json",
+ "specta",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
@@ -405,8 +415,8 @@ dependencies = [
 
 [[package]]
 name = "axo-ai"
-version = "0.1.0"
-source = "git+https://git.ryot.foo/toph/axo.git?rev=5c3f418a5548f161aeb0af686b77992c55278811#5c3f418a5548f161aeb0af686b77992c55278811"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -421,11 +431,50 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "specta",
+ "specta-serde",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "axo-extensions"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+dependencies = [
+ "async-trait",
+ "axo",
+ "axo-agent",
+ "axo-ai",
+ "axo-macros",
+ "base64 0.23.1",
+ "futures",
+ "rand 0.10.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "specta",
+ "specta-typescript",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "axo-macros"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/axo.git?rev=9dd6fa160f8306435e914faf37ffba531b84fcd0#9dd6fa160f8306435e914faf37ffba531b84fcd0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -491,6 +540,7 @@ dependencies = [
  "axo",
  "axo-agent",
  "axo-ai",
+ "axo-extensions",
  "axome-browser",
  "axome-memory",
  "axome-protocol",
@@ -517,6 +567,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.21",
  "tokenizers 0.23.2",
  "tokio",
@@ -4513,7 +4564,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -6139,6 +6190,48 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "specta"
+version = "2.0.0-rc.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fa60a95f1bed059a9e9b1f4052dfa8fee47813c429223c8590b338f719ac12e"
+dependencies = [
+ "indexmap 2.14.2",
+ "rustc_version",
+ "serde_json",
+ "specta-macros",
+]
+
+[[package]]
+name = "specta-macros"
+version = "2.0.0-rc.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7eeb2926ce0ef69a996fb8ad805c39936d47b6f02b327eca79cb207645ac8686"
+dependencies = [
+ "Inflector",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "specta-serde"
+version = "0.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69fbb7f8846160cc2924352f5a3b199281742ea335b6b4328d886a44d398e417"
+dependencies = [
+ "specta",
+]
+
+[[package]]
+name = "specta-typescript"
+version = "0.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b96519dc9b060d66e50b55ab10fb550bbf56c7576b9c9cca467d580a53cd473d"
+dependencies = [
+ "specta",
 ]
 
 [[package]]

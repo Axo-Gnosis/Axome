@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     path::PathBuf,
     sync::{
@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use axo::store::{Entry, EntryId, SeqEntry, SubmissionKind};
+use axo::store::{Entry, EntryId, SeqEntry};
 use axo::{LiveSnapshot, MaintenanceKind, PromptRequest, SessionEvent};
 use axo_agent::{AgentEvent, AgentMessage};
 use axo_ai::{AssistantBlock, AssistantEvent, Message};
@@ -16,6 +16,7 @@ use axome_protocol::chat::*;
 use parking_lot::Mutex;
 use tokio::sync::{broadcast, oneshot, watch, Notify};
 
+use super::extensions::SessionExtensions;
 use super::{axo_error, convert, AxoService};
 use crate::{errors::ApiError, events::EventSink};
 
@@ -118,6 +119,8 @@ pub(crate) struct LiveSession {
     pub root_id: Option<String>,
     pub session: Arc<axo::Session>,
     pub engine: Arc<super::engine::Engine>,
+    pub(super) extension_owner: SessionExtensions,
+    pub(super) models: Arc<axo_ai::Models>,
     service: Weak<AxoService>,
     state: Mutex<RelayState>,
     relay: OnceLock<tokio::task::AbortHandle>,
@@ -136,6 +139,8 @@ struct RelayState {
     streaming: Option<Vec<ChatBlock>>,
     live: ChatLive,
     commands: Vec<ChatCommand>,
+    tool_origins: BTreeMap<String, String>,
+    extension_diagnostics: Vec<String>,
     toolbox: ChatToolbox,
     session_tools: Vec<ChatSessionTool>,
     is_child: bool,
@@ -179,16 +184,21 @@ impl RelayState {
     fn new(
         entries: Vec<SeqEntry>,
         snapshot: LiveSnapshot,
-        commands: Vec<ChatCommand>,
+        extension_diagnostics: Vec<String>,
         toolbox: ChatToolbox,
         is_child: bool,
-        engine: &super::engine::Engine,
         session: &axo::Session,
     ) -> Self {
-        let session_tools = convert::session_tools(session);
+        let tools = session.tools();
+        let tool_origins = convert::tool_origins(&tools);
+        let session_tools = convert::session_tools(tools);
+        let commands = session
+            .commands()
+            .into_iter()
+            .map(convert::command)
+            .collect();
         let path = convert::branch(&entries);
-        let (model, thinking) = convert::selection(&entries, &path);
-        let context_window = engine.context_window(model.as_deref());
+        let model = &snapshot.model;
         let context = snapshot.context;
         let has_children = entries
             .iter()
@@ -200,22 +210,27 @@ impl RelayState {
         let stats = convert::stats(
             &entries,
             &path,
-            context_window,
+            model.context_window,
             context,
             has_children.then_some(&snapshot.tree_usage),
         );
-        let queue = convert::queue_at_attach(&snapshot);
+        let queue = convert::queued(&snapshot.queued);
         let jobs = snapshot
             .jobs
             .iter()
             .map(|job| convert::job(job, false))
             .collect();
+        let modes = session.modes();
         let live = ChatLive {
             title: convert::title(&entries),
             running: snapshot.running,
             maintenance: snapshot.maintenance.map(maintenance),
-            model,
-            thinking: convert::thinking_to_wire(thinking),
+            model: Some(format!("{}/{}", model.provider, model.id)),
+            thinking: convert::thinking_to_wire(snapshot.thinking),
+            service_tier: convert::service_tier_to_wire(snapshot.service_tier),
+            effective_service_tier: convert::service_tier_to_wire(
+                model.effective_tier(snapshot.service_tier),
+            ),
             tools: snapshot
                 .pending_tool_calls
                 .iter()
@@ -231,9 +246,10 @@ impl RelayState {
             questions: snapshot
                 .pending_questions
                 .into_iter()
-                .map(|(call_id, questions)| ChatQuestions {
+                .map(|(call_id, blocks)| ChatQuestions {
                     call_id,
-                    questions: questions.iter().map(convert::question).collect(),
+                    blocks: blocks.iter().map(convert::ask_block).collect(),
+                    deadline_ms: None,
                 })
                 .collect(),
             retry: None,
@@ -246,9 +262,7 @@ impl RelayState {
             reviews: snapshot
                 .pending_results
                 .into_iter()
-                .map(|result| {
-                    chat_review(session.modes(), result.call_id, result.mode, result.result)
-                })
+                .map(|result| chat_review(&modes, result.call_id, result.mode, result.result))
                 .collect(),
         };
         let submitted = entries
@@ -263,6 +277,8 @@ impl RelayState {
                 .map(|m| m.content.iter().map(convert::block).collect()),
             live,
             commands,
+            tool_origins,
+            extension_diagnostics,
             toolbox,
             session_tools,
             is_child,
@@ -287,11 +303,110 @@ impl RelayState {
         );
     }
 
+    fn selection_window(session: &axo::Session, model: &axo_ai::Model) -> u64 {
+        session
+            .config()
+            .settings
+            .compaction
+            .max_context
+            .map_or(model.context_window, |cap| cap.min(model.context_window))
+    }
+
+    fn refresh_selection(&mut self, session: &axo::Session) -> bool {
+        let model = session.model();
+        let thinking = convert::thinking_to_wire(session.thinking());
+        let tier = session.service_tier();
+        let effective = convert::service_tier_to_wire(model.effective_tier(tier));
+        let tier = convert::service_tier_to_wire(tier);
+        let model_changed = self.live.model.as_deref().and_then(|s| s.split_once('/'))
+            != Some((model.provider.as_str(), model.id.as_str()));
+        let window = Self::selection_window(session, &model);
+        let window_changed = self.live.stats.context_window != window;
+        let changed = model_changed
+            || self.live.thinking != thinking
+            || self.live.service_tier != tier
+            || self.live.effective_service_tier != effective
+            || window_changed;
+        if model_changed {
+            self.live.model = Some(format!("{}/{}", model.provider, model.id));
+        }
+        self.live.thinking = thinking;
+        self.live.service_tier = tier;
+        self.live.effective_service_tier = effective;
+        if window_changed {
+            self.context = None;
+            self.refresh_stats(window);
+        }
+        changed
+    }
+
+    fn project_selection(&mut self, session: &axo::Session, models: &axo_ai::Models) {
+        // Selection entries are published before axo updates its live getters.
+        let (model, thinking, tier) = convert::selection(&self.entries, &self.path);
+        let current = session.model();
+        let same_model = model
+            .as_deref()
+            .and_then(|selector| selector.split_once('/'))
+            == Some((current.provider.as_str(), current.id.as_str()));
+        let registered = if same_model {
+            None
+        } else {
+            model
+                .as_deref()
+                .and_then(|selector| super::engine::model(models, selector))
+        };
+        let definition = if same_model {
+            Some(&current)
+        } else {
+            registered.as_deref()
+        };
+        let window = definition.map_or(0, |model| Self::selection_window(session, model));
+        let effective = definition.map_or(axo_ai::ServiceTier::Standard, |model| {
+            model.effective_tier(tier)
+        });
+        if self.context.is_some_and(|context| context.window != window) {
+            self.context = None;
+        }
+        self.live.model = model;
+        self.live.thinking = convert::thinking_to_wire(thinking);
+        self.live.service_tier = convert::service_tier_to_wire(tier);
+        self.live.effective_service_tier = convert::service_tier_to_wire(effective);
+        self.refresh_stats(window);
+    }
+
     fn refresh_tools(&mut self, session: &axo::Session) {
-        let tools = convert::session_tools(session);
+        self.refresh_catalog(session, None);
+    }
+
+    fn refresh_catalog(&mut self, session: &axo::Session, diagnostics: Option<Vec<String>>) {
+        let tools = session.tools();
+        let tool_origins = convert::tool_origins(&tools);
+        let tools = convert::session_tools(tools);
         if tools != self.session_tools {
             self.session_tools = tools.clone();
             self.broadcast(ChatEvent::SessionTools { tools });
+        }
+        let commands = session
+            .commands()
+            .into_iter()
+            .map(convert::command)
+            .collect::<Vec<_>>();
+        if commands != self.commands
+            || tool_origins != self.tool_origins
+            || diagnostics
+                .as_ref()
+                .is_some_and(|value| value != &self.extension_diagnostics)
+        {
+            self.commands = commands;
+            self.tool_origins = tool_origins;
+            if let Some(diagnostics) = diagnostics {
+                self.extension_diagnostics = diagnostics;
+            }
+            self.broadcast(ChatEvent::ExtensionCatalog {
+                commands: self.commands.clone(),
+                tool_origins: self.tool_origins.clone(),
+                diagnostics: self.extension_diagnostics.clone(),
+            });
         }
     }
 
@@ -302,6 +417,8 @@ impl RelayState {
             streaming: self.streaming.clone(),
             live: self.live.clone(),
             commands: self.commands.clone(),
+            tool_origins: self.tool_origins.clone(),
+            extension_diagnostics: self.extension_diagnostics.clone(),
             session_tools: self.session_tools.clone(),
             toolbox: self.toolbox.clone(),
             read_only: false,
@@ -373,7 +490,7 @@ impl RelayState {
         }
     }
 
-    fn streaming_event(&mut self, event: AssistantEvent) {
+    fn streaming_event(&mut self, event: &AssistantEvent) {
         match event {
             AssistantEvent::Start { .. } => {
                 self.streaming = Some(Vec::new());
@@ -386,13 +503,13 @@ impl RelayState {
                 }
             }
             AssistantEvent::TextStart { content_index } => self.set_block(
-                content_index,
+                *content_index,
                 ChatBlock::Text {
                     text: String::new(),
                 },
             ),
             AssistantEvent::ThinkingStart { content_index } => self.set_block(
-                content_index,
+                *content_index,
                 ChatBlock::Thinking {
                     text: String::new(),
                     redacted: false,
@@ -403,18 +520,18 @@ impl RelayState {
                 delta,
             } => {
                 let blocks = self.streaming.get_or_insert_with(Vec::new);
-                if content_index == blocks.len() {
+                if *content_index == blocks.len() {
                     blocks.push(ChatBlock::Text {
                         text: String::new(),
                     });
                 }
-                if let Some(ChatBlock::Text { text }) = blocks.get_mut(content_index) {
-                    text.push_str(&delta);
+                if let Some(ChatBlock::Text { text }) = blocks.get_mut(*content_index) {
+                    text.push_str(delta);
                 }
                 self.broadcast(ChatEvent::Delta {
                     delta: ChatDelta::Text {
-                        index: content_index,
-                        text: delta,
+                        index: *content_index,
+                        text: delta.clone(),
                     },
                 });
             }
@@ -423,19 +540,19 @@ impl RelayState {
                 delta,
             } => {
                 let blocks = self.streaming.get_or_insert_with(Vec::new);
-                if content_index == blocks.len() {
+                if *content_index == blocks.len() {
                     blocks.push(ChatBlock::Thinking {
                         text: String::new(),
                         redacted: false,
                     });
                 }
-                if let Some(ChatBlock::Thinking { text, .. }) = blocks.get_mut(content_index) {
-                    text.push_str(&delta);
+                if let Some(ChatBlock::Thinking { text, .. }) = blocks.get_mut(*content_index) {
+                    text.push_str(delta);
                 }
                 self.broadcast(ChatEvent::Delta {
                     delta: ChatDelta::Thinking {
-                        index: content_index,
-                        text: delta,
+                        index: *content_index,
+                        text: delta.clone(),
                     },
                 });
             }
@@ -445,7 +562,7 @@ impl RelayState {
                 name,
             } => {
                 self.set_block(
-                    content_index,
+                    *content_index,
                     ChatBlock::ToolCall {
                         id: id.clone(),
                         name: name.clone(),
@@ -454,27 +571,24 @@ impl RelayState {
                 );
                 self.broadcast(ChatEvent::Delta {
                     delta: ChatDelta::ToolCall {
-                        index: content_index,
-                        id,
-                        name,
+                        index: *content_index,
+                        id: id.clone(),
+                        name: name.clone(),
                         arguments: None,
                     },
                 });
             }
             AssistantEvent::ToolCallEnd {
                 content_index,
-                block: AssistantBlock::ToolCall(call),
+                block: block @ AssistantBlock::ToolCall(call),
             } => {
-                self.set_block(
-                    content_index,
-                    convert::block(&AssistantBlock::ToolCall(call.clone())),
-                );
+                self.set_block(*content_index, convert::block(block));
                 self.broadcast(ChatEvent::Delta {
                     delta: ChatDelta::ToolCall {
-                        index: content_index,
-                        id: call.id,
-                        name: call.name,
-                        arguments: Some(serde_json::Value::Object(call.arguments)),
+                        index: *content_index,
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        arguments: Some(serde_json::Value::Object(call.arguments.clone())),
                     },
                 });
             }
@@ -493,14 +607,19 @@ impl RelayState {
     // Returns refresh/unload flags; registry work must happen after releasing this lock.
     fn apply(
         &mut self,
-        event: SessionEvent,
+        event: &SessionEvent,
         id: &str,
         session: &axo::Session,
-        engine: &super::engine::Engine,
+        models: &axo_ai::Models,
+        queue: Option<Vec<ChatQueued>>,
     ) -> (bool, bool) {
         let mut refresh = false;
         let mut unload = false;
         let mut changed = false;
+        if let Some(queue) = queue {
+            changed = self.live.queue != queue;
+            self.live.queue = queue;
+        }
         match event {
             SessionEvent::Entry(seq) => {
                 let previous = self.live.clone();
@@ -511,7 +630,7 @@ impl RelayState {
                         Entry::Leaf { .. } | Entry::ContextEdit { .. } | Entry::Compaction { .. }
                     );
                 let at = self.entries.len();
-                self.entries.push(seq);
+                self.entries.push(seq.clone());
                 if linear {
                     self.path.push(at);
                 } else {
@@ -519,42 +638,11 @@ impl RelayState {
                 }
                 let entry = &self.entries[at].entry;
                 match entry {
-                    Entry::Submission {
-                        submission_id,
-                        kind,
-                        parts,
-                        request_id,
-                        ..
-                    } => {
+                    Entry::Submission { request_id, .. } => {
                         if let Some(request_id) = request_id {
                             if let Some(waiter) = self.waiters.remove(request_id) {
                                 let _ = waiter.send(());
                             }
-                        }
-                        let kind = match kind {
-                            SubmissionKind::Prompt
-                            | SubmissionKind::Quiet
-                            | SubmissionKind::Mail => None,
-                            SubmissionKind::Steer => Some(ChatQueueKind::Steer),
-                            SubmissionKind::FollowUp => Some(ChatQueueKind::FollowUp),
-                        };
-                        if let Some(kind) = kind {
-                            let item = ChatQueued {
-                                submission_id: submission_id.clone(),
-                                kind,
-                                parts: convert::parts_to_wire(parts),
-                            };
-                            // axo delivers queued steers before follow-ups, FIFO within each kind.
-                            let index = match kind {
-                                ChatQueueKind::Steer => self
-                                    .live
-                                    .queue
-                                    .iter()
-                                    .position(|queued| queued.kind == ChatQueueKind::FollowUp)
-                                    .unwrap_or(self.live.queue.len()),
-                                ChatQueueKind::FollowUp => self.live.queue.len(),
-                            };
-                            self.live.queue.insert(index, item);
                         }
                         if !self.submitted {
                             self.submitted = true;
@@ -562,48 +650,27 @@ impl RelayState {
                             refresh = true;
                         }
                     }
-                    Entry::SubmissionWithdrawn { submission_id, .. } => {
-                        self.live
-                            .queue
-                            .retain(|queued| queued.submission_id != *submission_id);
-                    }
-                    Entry::Message {
-                        message,
-                        submission_id,
-                        ..
-                    } => {
-                        if let Some(id) = submission_id.as_ref() {
-                            self.live.queue.retain(|queued| queued.submission_id != *id);
+                    Entry::Message { message, .. } => match message {
+                        AgentMessage::Llm(Message::Assistant(_)) => {
+                            self.streaming = None;
+                            self.refresh_stats(self.live.stats.context_window);
                         }
-                        match message {
-                            AgentMessage::Llm(Message::Assistant(_)) => {
-                                self.streaming = None;
-                                self.refresh_stats(self.live.stats.context_window);
-                            }
-                            AgentMessage::Llm(Message::ToolResult(result)) => self
-                                .live
-                                .tools
-                                .retain(|run| run.call_id != result.tool_call_id),
-                            AgentMessage::Custom(custom)
-                                if custom.custom_type == "tool_catalog" =>
-                            {
-                                self.refresh_tools(session);
-                            }
-                            AgentMessage::Llm(Message::User(_) | Message::System(_))
-                            | AgentMessage::Custom(_) => {}
+                        AgentMessage::Llm(Message::ToolResult(result)) => self
+                            .live
+                            .tools
+                            .retain(|run| run.call_id != result.tool_call_id),
+                        AgentMessage::Custom(custom) if custom.custom_type == "tool_catalog" => {
+                            self.refresh_tools(session);
                         }
-                    }
-                    Entry::ModelChange { .. } | Entry::ThinkingLevelChange { .. }
-                        if self.path.contains(&at) =>
+                        AgentMessage::Llm(Message::User(_) | Message::System(_))
+                        | AgentMessage::Custom(_) => {}
+                    },
+                    Entry::ModelChange { .. }
+                    | Entry::ThinkingLevelChange { .. }
+                    | Entry::ServiceTierChange { .. }
+                        if linear =>
                     {
-                        let (model, thinking) = convert::selection(&self.entries, &self.path);
-                        let new_window = engine.context_window(model.as_deref());
-                        if self.context.is_some_and(|c| c.window != new_window) {
-                            self.context = None;
-                        }
-                        self.live.model = model;
-                        self.live.thinking = convert::thinking_to_wire(thinking);
-                        self.refresh_stats(new_window);
+                        self.project_selection(session, models);
                     }
                     Entry::RunEnd { .. } => {
                         self.live.tools.clear();
@@ -627,8 +694,10 @@ impl RelayState {
                         self.refresh_tools(session);
                     }
                     Entry::ModelChange { .. }
+                    | Entry::SubmissionWithdrawn { .. }
                     | Entry::ModeChange { .. }
                     | Entry::ThinkingLevelChange { .. }
+                    | Entry::ServiceTierChange { .. }
                     | Entry::Usage { .. }
                     | Entry::Compaction { .. }
                     | Entry::BranchSummary { .. }
@@ -644,20 +713,13 @@ impl RelayState {
                     | Entry::Unknown(_) => {}
                 }
                 if !linear {
-                    let (model, thinking) = convert::selection(&self.entries, &self.path);
-                    self.live.model = model;
-                    self.live.thinking = convert::thinking_to_wire(thinking);
                     self.live.agent = session.agent().map(|agent| agent.name);
-                    let window = engine.context_window(self.live.model.as_deref());
-                    if self.context.is_some_and(|c| c.window != window) {
-                        self.context = None;
-                    }
-                    self.refresh_stats(window);
+                    self.project_selection(session, models);
                     self.broadcast_snapshot(id);
                 } else if let Some(entry) = convert::entry(&self.entries, at) {
                     self.broadcast(ChatEvent::Entry { entry });
                 }
-                changed = self.live != previous;
+                changed |= self.live != previous;
             }
             // `running` includes maintenance and navigation ownership; idle is published
             // only after axo drains queued input and wakes, so it is the admission barrier.
@@ -679,11 +741,11 @@ impl RelayState {
                 name,
                 args,
             }) => {
-                if !self.live.tools.iter().any(|run| run.call_id == call_id) {
+                if !self.live.tools.iter().any(|run| run.call_id == *call_id) {
                     self.live.tools.push(ChatToolRun {
-                        call_id,
-                        name,
-                        arguments: serde_json::Value::Object(args),
+                        call_id: call_id.clone(),
+                        name: name.clone(),
+                        arguments: serde_json::Value::Object(args.clone()),
                         output: Vec::new(),
                         details: None,
                     });
@@ -696,43 +758,62 @@ impl RelayState {
                     .live
                     .tools
                     .iter_mut()
-                    .find(|run| run.call_id == call_id)
+                    .find(|run| run.call_id == *call_id)
                 {
                     run.output = content.clone();
                     run.details = update.details.clone();
                 }
                 self.broadcast(ChatEvent::Delta {
                     delta: ChatDelta::ToolOutput {
-                        call_id,
+                        call_id: call_id.clone(),
                         content,
-                        details: update.details,
+                        details: update.details.clone(),
                     },
                 });
             }
             SessionEvent::Agent(AgentEvent::ToolExecutionEnd { call_id, .. }) => {
                 let before = self.live.tools.len();
-                self.live.tools.retain(|run| run.call_id != call_id);
+                self.live.tools.retain(|run| run.call_id != *call_id);
                 changed = before != self.live.tools.len();
             }
             SessionEvent::Agent(AgentEvent::MessageUpdate { event }) => self.streaming_event(event),
-            SessionEvent::QuestionPending { call_id, questions } => {
-                if !self.live.questions.iter().any(|q| q.call_id == call_id) {
-                    self.live.questions.push(ChatQuestions {
-                        call_id,
-                        questions: questions.iter().map(convert::question).collect(),
-                    });
-                    changed = true;
+            SessionEvent::QuestionPending { call_id, blocks } => {
+                let arrival = chrono::Utc::now().timestamp_millis();
+                let deadline_ms = session
+                    .config()
+                    .settings
+                    .ask
+                    .timeout_ms
+                    .and_then(|timeout| i64::try_from(timeout).ok())
+                    .and_then(|timeout| arrival.checked_add(timeout));
+                let pending = ChatQuestions {
+                    call_id: call_id.clone(),
+                    blocks: blocks.iter().map(convert::ask_block).collect(),
+                    deadline_ms,
+                };
+                if let Some(row) = self
+                    .live
+                    .questions
+                    .iter_mut()
+                    .find(|q| q.call_id == *call_id)
+                {
+                    *row = pending;
+                } else {
+                    self.live.questions.push(pending);
                 }
+                changed = true;
             }
             SessionEvent::QuestionResolved { call_id } => {
                 let before = self.live.questions.len();
-                self.live.questions.retain(|q| q.call_id != call_id);
+                self.live.questions.retain(|q| q.call_id != *call_id);
                 changed = before != self.live.questions.len();
                 unload = true;
             }
             SessionEvent::MaintenanceEnd { error, aborted, .. } => {
-                if let Some(message) = error.filter(|_| !aborted) {
-                    self.broadcast(ChatEvent::Error { message });
+                if let Some(message) = error.as_ref().filter(|_| !*aborted) {
+                    self.broadcast(ChatEvent::Error {
+                        message: message.clone(),
+                    });
                 }
             }
             SessionEvent::Retry {
@@ -743,15 +824,15 @@ impl RelayState {
                 ..
             } => {
                 self.live.retry = Some(ChatRetry {
-                    attempt,
-                    max_retries,
-                    delay_ms,
-                    error,
+                    attempt: *attempt,
+                    max_retries: *max_retries,
+                    delay_ms: *delay_ms,
+                    error: error.clone(),
                 });
                 changed = true;
             }
             SessionEvent::Job(info) => {
-                let job = convert::job(&info, false);
+                let job = convert::job(info, false);
                 let active = job.status.is_active();
                 if let Some(pos) = self.live.jobs.iter().position(|j| j.id == info.id) {
                     self.live.jobs[pos] = job;
@@ -764,7 +845,7 @@ impl RelayState {
                 changed = true;
             }
             SessionEvent::JobGone { id } => {
-                self.live.jobs.retain(|j| j.id != id);
+                self.live.jobs.retain(|j| j.id != *id);
                 changed = true;
                 unload = true;
             }
@@ -774,7 +855,12 @@ impl RelayState {
                 result,
                 awaiting_review: true,
             } => {
-                let review = chat_review(session.modes(), call_id, mode, result);
+                let review = chat_review(
+                    &session.modes(),
+                    call_id.clone(),
+                    mode.clone(),
+                    result.clone(),
+                );
                 match self
                     .live
                     .reviews
@@ -788,33 +874,42 @@ impl RelayState {
             }
             SessionEvent::ModeResultResolved { call_id, .. } => {
                 let before = self.live.reviews.len();
-                self.live.reviews.retain(|r| r.call_id != call_id);
+                self.live.reviews.retain(|r| r.call_id != *call_id);
                 changed = before != self.live.reviews.len();
                 unload = true;
             }
             SessionEvent::Context(ctx) => {
-                self.context = Some(ctx);
-                self.refresh_stats(ctx.window);
-                changed = true;
+                changed |= self.refresh_selection(session);
+                // A context event may still describe the model a newer selection just replaced.
+                if ctx.window == self.live.stats.context_window && self.context != Some(*ctx) {
+                    self.context = Some(*ctx);
+                    self.refresh_stats(ctx.window);
+                    changed = true;
+                }
             }
             SessionEvent::TreeUsage { usage } => {
-                self.tree_usage = usage;
+                self.tree_usage = usage.clone();
                 self.refresh_stats(self.live.stats.context_window);
                 changed = true;
             }
             SessionEvent::AutoPaused { paused } => {
-                self.live.auto_paused = paused;
+                self.live.auto_paused = *paused;
                 changed = true;
             }
             SessionEvent::Mode { mode } => {
-                self.live.mode = mode;
-                changed = true;
+                changed |= self.live.mode != *mode;
+                self.live.mode = mode.clone();
+                changed |= self.refresh_selection(session);
             }
             // Tool allowance follows the effective mode, which changes at a request boundary.
             SessionEvent::EffectiveMode { mode } => {
-                self.live.effective_mode = mode;
+                self.live.effective_mode = mode.clone();
                 self.refresh_tools(session);
                 changed = true;
+            }
+            SessionEvent::QueueChanged => changed = true,
+            SessionEvent::Agent(AgentEvent::TurnStart) => {
+                changed |= self.refresh_selection(session);
             }
             SessionEvent::ModeResult {
                 awaiting_review: false,
@@ -824,7 +919,6 @@ impl RelayState {
             | SessionEvent::Agent(
                 AgentEvent::AgentStart
                 | AgentEvent::AgentEnd { .. }
-                | AgentEvent::TurnStart
                 | AgentEvent::TurnEnd { .. }
                 | AgentEvent::MessageStart { .. }
                 | AgentEvent::MessageEnd { .. },
@@ -844,23 +938,19 @@ impl LiveSession {
         session: Arc<axo::Session>,
         root_id: Option<String>,
         engine: Arc<super::engine::Engine>,
+        (extension_owner, models): (SessionExtensions, Arc<axo_ai::Models>),
+        diagnostics: Vec<String>,
     ) -> Arc<Self> {
         let id = session.id().to_owned();
         let is_child = root_id.is_some();
         let attach = session.attach(None).await;
-        let commands = session
-            .commands()
-            .into_iter()
-            .map(convert::command)
-            .collect();
         let toolbox = convert::toolbox(&session, &folder);
         let mut initial_state = RelayState::new(
             attach.missed,
             attach.live,
-            commands,
+            diagnostics,
             toolbox,
             is_child,
-            &engine,
             &session,
         );
         initial_state.last_summary = Some(initial_state.summary(&id));
@@ -872,6 +962,8 @@ impl LiveSession {
             service: service.clone(),
             state: Mutex::new(initial_state),
             engine,
+            extension_owner,
+            models,
             relay: OnceLock::new(),
             tasks: tokio_util::task::TaskTracker::new(),
             maintenance_starts: watch::channel(0).0,
@@ -889,12 +981,38 @@ impl LiveSession {
                         let Some(live) = weak.upgrade() else {
                             break;
                         };
+                        let event = event.as_ref();
+                        let refresh_queue = match event {
+                            SessionEvent::QueueChanged => true,
+                            SessionEvent::Entry(seq) => match &seq.entry {
+                                // Pinned axo publishes durable entries, not QueueChanged,
+                                // for delivery and successful withdrawals. Invalidate only:
+                                // axo's current queue still owns the order and provenance.
+                                Entry::SubmissionWithdrawn { submission_id, .. }
+                                | Entry::Message { submission_id: Some(submission_id), .. } => live
+                                    .state
+                                    .lock()
+                                    .live
+                                    .queue
+                                    .iter()
+                                    .any(|item| item.submission_id == *submission_id),
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                        let queue = if refresh_queue {
+                            // Skip copying missed entries; attach still builds the live snapshot.
+                            let queued = session.attach(Some(u64::MAX)).await.live.queued;
+                            Some(convert::queued(&queued))
+                        } else {
+                            None
+                        };
                         let started = matches!(event, SessionEvent::MaintenanceStart { .. });
-                        let compacted = matches!(&event, SessionEvent::Entry(seq) if matches!(seq.entry, Entry::Compaction { .. }));
+                        let compacted = matches!(event, SessionEvent::Entry(seq) if matches!(seq.entry, Entry::Compaction { .. }));
                         let (refresh, unload, summary_changed) = {
                             let mut state = live.state.lock();
                             let (refresh, unload) =
-                                state.apply(event, &live.id, &live.session, &live.engine);
+                                state.apply(event, &live.id, &live.session, &live.models, queue);
                             let summary_changed = state.take_summary_change(&live.id);
                             (refresh, unload, summary_changed)
                         };
@@ -922,12 +1040,18 @@ impl LiveSession {
                             let mut rebuilt = RelayState::new(
                                 entries,
                                 attach.live,
-                                std::mem::take(&mut state.commands),
+                                std::mem::take(&mut state.extension_diagnostics),
                                 std::mem::take(&mut state.toolbox),
                                 live.root_id.is_some(),
-                                &live.engine,
                                 &session,
                             );
+                            for pending in &mut rebuilt.live.questions {
+                                if let Some(previous) = state.live.questions.iter().find(|previous| {
+                                    previous.call_id == pending.call_id && previous.blocks == pending.blocks
+                                }) {
+                                    pending.deadline_ms = previous.deadline_ms;
+                                }
+                            }
                             rebuilt.subscribers = std::mem::take(&mut state.subscribers);
                             rebuilt.waiters = std::mem::take(&mut state.waiters);
                             rebuilt.job_watchers = std::mem::take(&mut state.job_watchers);
@@ -987,7 +1111,29 @@ impl LiveSession {
         }
     }
 
+    pub(super) fn refresh_extension_catalog(&self, diagnostics: Vec<String>) {
+        let toolbox = convert::toolbox(&self.session, &self.folder);
+        let mut state = self.state.lock();
+        state.refresh_catalog(&self.session, Some(diagnostics));
+        if toolbox != state.toolbox {
+            state.toolbox = toolbox;
+            state.broadcast_snapshot(&self.id);
+        }
+    }
+
     pub(super) async fn release(&self) {
+        if let Some(service) = self.service.upgrade().filter(|_| self.root_id.is_none()) {
+            match service.owner_for_session(self).await {
+                Ok(owner) => owner.detach(&self.id),
+                Err(error) => {
+                    tracing::error!(%error, session_id = %self.id, "could not detach extensions")
+                }
+            }
+        }
+        self.release_detached().await;
+    }
+
+    pub(super) async fn release_detached(&self) {
         if self.root_id.is_some() {
             self.detach_only().await;
         } else {
@@ -1061,16 +1207,14 @@ impl LiveSession {
         self.state.lock().busy()
     }
 
-    pub(super) fn command_job(&self, job_id: &str) -> Option<(Option<String>, u64)> {
+    pub(super) fn command_job(&self, job_id: &str) -> Option<u64> {
         self.state
             .lock()
             .live
             .jobs
             .iter()
             .find_map(|job| match &job.kind {
-                ChatJobKind::Command { artifact, .. } if job.id == job_id => {
-                    Some((job.call_id.clone(), *artifact))
-                }
+                ChatJobKind::Command { artifact, .. } if job.id == job_id => Some(*artifact),
                 _ => None,
             })
     }
@@ -1085,13 +1229,9 @@ impl LiveSession {
         self: &Arc<Self>,
         attach_id: String,
         job_id: String,
-        call_id: Option<String>,
     ) -> Result<Option<ChatJobOutput>, ApiError> {
         self.unwatch_job(&attach_id);
-        let Some(output) = call_id
-            .as_deref()
-            .and_then(|cid| self.session.command_output(cid))
-        else {
+        let Some(output) = self.session.job_output(&job_id) else {
             return Ok(None);
         };
         let mut rx = output.progress();
@@ -1106,7 +1246,6 @@ impl LiveSession {
             if should_watch {
                 let weak = Arc::downgrade(self);
                 let mut cursor = progress.bytes;
-                let job_id_clone = job_id.clone();
                 let attach_clone = attach_id.clone();
                 let handle = self
                     .tasks
@@ -1155,7 +1294,7 @@ impl LiveSession {
                                     break;
                                 };
                                 if sink(ChatEvent::JobOutput {
-                                    job_id: job_id_clone.clone(),
+                                    job_id: job_id.clone(),
                                     reset,
                                     output: ChatJobOutput {
                                         chunks,
@@ -1255,22 +1394,28 @@ impl LiveSession {
         });
     }
 
-    /// Resolves when the command finishes or when the maintenance run it starts begins; that
-    /// run's later failure reaches attachments as `ChatEvent::Error` via `MaintenanceEnd`.
+    /// Registered handlers resolve only on completion. Built-ins may resolve when maintenance
+    /// starts; its later failure reaches attachments as `ChatEvent::Error` via `MaintenanceEnd`.
     pub(super) async fn run_command(&self, command: axo::Command) -> Result<(), ApiError> {
-        let mut started = self.maintenance_starts.subscribe();
+        let started = (!matches!(command, axo::Command::Registered { .. }))
+            .then(|| self.maintenance_starts.subscribe());
         let session = self.session.clone();
         let mut done = self
             .tasks
             .spawn(async move { session.run_command(command).await });
         // ponytail: another attachment's maintenance starting in the same instant also resolves this early, dropping this command's Busy error.
-        tokio::select! {
-            biased;
-            result = &mut done => result
-                .map_err(|error| ApiError::Internal(format!("axo command task failed: {error}")))?
-                .map_err(axo_error),
-            Ok(()) = started.changed() => Ok(()),
-        }
+        let result = if let Some(mut started) = started {
+            tokio::select! {
+                biased;
+                result = &mut done => result,
+                Ok(()) = started.changed() => return Ok(()),
+            }
+        } else {
+            done.await
+        };
+        result
+            .map_err(|error| ApiError::Internal(format!("axo command task failed: {error}")))?
+            .map_err(axo_error)
     }
 
     pub(super) async fn prompt(

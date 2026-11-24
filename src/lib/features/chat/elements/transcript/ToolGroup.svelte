@@ -17,8 +17,7 @@
     sessionId,
     controller,
     now,
-    onOpenJob,
-    onAnswer
+    onOpenJob
   }: {
     group: ToolGroupStep
     expansion: BlockView
@@ -29,7 +28,6 @@
     controller: ChatController
     now: number
     onOpenJob?: (ref?: string) => void
-    onAnswer?: () => void
   } = $props()
 
   // Group folding must not overwrite the first call's individual view.
@@ -92,7 +90,6 @@
         nested
         {now}
         {onOpenJob}
-        {onAnswer}
       />
     {/each}
   </div>

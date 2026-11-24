@@ -4,6 +4,7 @@
   import * as Alert from '$lib/components/ui/alert'
   import { BlurFade } from '$lib/components/ui/blur-fade'
   import { Button, IconButton } from '$lib/components/ui/button'
+  import { StatusDot } from '$lib/components/ui/status-dot'
   import { TidalStipple, type StippleParams } from '$lib/components/ui/tidal-stipple'
   import * as chats from '$lib/features/chat/registry'
   import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
@@ -13,11 +14,12 @@
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
   import { UserBlock, AgentBlock, MaintenanceLine } from '$lib/features/chat/elements/transcript'
+  import ExtensionDiagnostics from '$lib/features/chat/elements/transcript/ExtensionDiagnostics.svelte'
   import { PromptInput } from '$lib/features/chat/elements/prompt-input'
   import { QueuedMessages } from '$lib/features/chat/elements/queued-messages'
-  import { AskPanel } from '$lib/features/chat/elements/ask'
+  import { askCountdown } from '$lib/features/chat/elements/ask/askDocument'
   import { fileReference } from '$lib/features/chat/elements/prompt-input/attachments'
-  import { ModelPicker, EffortPicker } from '$lib/features/chat/elements/model-picker'
+  import { ModelPicker, EffortPicker, THINKING_LEVELS } from '$lib/features/chat/elements/model-picker'
   import { PersonaPicker } from '$lib/features/chat/elements/persona-picker'
   import { ModePill } from '$lib/features/chat/elements/mode-pill'
   import { backend } from '$lib/api/backend'
@@ -36,6 +38,10 @@
   let { tab }: { tab: ChatTab } = $props()
   const controller = $derived(chats.getOrCreate(tab.id))
   const chat = $derived(controller.state)
+  const liveExtensions = $derived(!!chat && !chat.readOnly)
+  $effect(() => {
+    if (liveExtensions) return controller.holdExtensions(tab.folderPath)
+  })
   const models = $derived(getChatModels(tab.folderPath))
   const catalog = $derived(models.catalog)
   const available = $derived(catalog?.models ?? [])
@@ -46,7 +52,7 @@
   const current = $derived(available.find((item) => item.selector === model))
   const modelUnavailable = $derived(!!model && !!catalog && !current)
   const thinking = $derived(chat?.live.thinking ?? 'off')
-  const levels = $derived(current?.thinking ?? [thinking])
+  const levels = $derived(current?.thinking ?? THINKING_LEVELS)
   const disabled = $derived(controller.connection !== 'live' || !model || !!chat?.live.maintenance)
   const modelDisabled = $derived(disabled || !available.length)
   const canSend = $derived(!disabled && !modelUnavailable && hasContent(controller.draft))
@@ -75,7 +81,29 @@
   let overrides = $state<Record<string, BlockView>>({})
   let conversation = $state<Conversation>()
   let composer = $state<PromptInput>()
-  let askPanel = $state<AskPanel>()
+  let visibleAskIds = $state<string[]>([])
+  const pendingAsks = $derived(chat?.live.questions ?? [])
+  const orderedAsks = $derived.by(() => {
+    if (!pendingAsks.length) return []
+    const pending = new Map(pendingAsks.map((ask) => [ask.callId, ask]))
+    const ordered = []
+    for (const turn of turns) {
+      for (const step of turn.steps) {
+        if (step.kind !== 'tool' || step.name !== 'ask') continue
+        const ask = pending.get(step.callId)
+        if (ask) {
+          ordered.push(ask)
+          pending.delete(step.callId)
+        }
+      }
+    }
+    return [...ordered, ...pending.values()]
+  })
+  const hiddenAsk = $derived(orderedAsks.find((ask) => !visibleAskIds.includes(ask.callId)))
+  const questionCount = $derived(
+    pendingAsks.reduce((count, ask) => count + ask.blocks.filter((block) => block.type !== 'markdown').length, 0)
+  )
+  const onAskVisibility = (ids: string[]) => (visibleAskIds = ids)
   let modelOpen = $state(false)
   let now = $state(Date.now())
   const sidebar = new SessionSidebarState()
@@ -96,7 +124,12 @@
   })
 
   $effect(() => {
-    if (!running && !(chat?.live.jobs ?? []).some((j) => isActiveJob(j.status))) return
+    if (
+      !running &&
+      !(chat?.live.jobs ?? []).some((j) => isActiveJob(j.status)) &&
+      !pendingAsks.some((ask) => ask.deadlineMs !== null)
+    )
+      return
     now = Date.now()
     const timer = setInterval(() => (now = Date.now()), 1000)
     return () => clearInterval(timer)
@@ -149,7 +182,7 @@
     const inEditable = !!target?.closest(
       'input, textarea, select, button, a, [contenteditable="true"], [role="textbox"]'
     )
-    const action = resolveChatKey(event, { inComposer, inEditable, running, asking: !!chat?.live.questions.length })
+    const action = resolveChatKey(event, { inComposer, inEditable, running, asking: pendingAsks.length > 0 })
     if (!action) return
     event.preventDefault()
     event.stopPropagation()
@@ -183,9 +216,11 @@
       case 'focusComposer':
         composer?.focus(logicalKey(event))
         break
-      case 'answer':
-        askPanel?.open()
+      case 'answer': {
+        const ask = hiddenAsk ?? orderedAsks[0]
+        if (ask) conversation?.jumpToAsk(ask.callId)
         break
+      }
     }
   }
 </script>
@@ -204,7 +239,8 @@
     <!-- isolate scopes the background's negative z-index so it paints above this bg but under the transcript. -->
     <div class="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
       <TidalStipple class="-z-10" params={turns.length ? ACTIVE_STIPPLE : undefined} transitionMs={900} />
-      <Conversation bind:this={conversation} {turns}>
+      <ExtensionDiagnostics {controller} folderPath={tab.folderPath} />
+      <Conversation bind:this={conversation} {turns} {onAskVisibility}>
         {#if !turns.length}
           <div class="flex flex-1 flex-col items-center justify-center gap-6 py-10">
             <FolderHero folderPath={tab.folderPath}>
@@ -241,13 +277,12 @@
                 folderPath={tab.folderPath}
                 sessionId={tab.sessionId}
                 {canBranch}
-                now={turn.running ? now : 0}
+                {now}
                 {expansion}
                 {overrides}
                 {onView}
                 onOpenJob={(ref) => sidebar.openJob(ref)}
                 onOpenPlan={() => (sidebar.view = 'plan')}
-                onAnswer={() => askPanel?.open()}
               />
             {/if}
           </div>
@@ -270,24 +305,32 @@
             </Alert.Root>
           {:else}
             <QueuedMessages {controller} {owner} onEdited={() => composer?.focus()} />
-            {#if chat?.live.questions[0]}
-              {@const questions = chat.live.questions[0]}
-              {#key questions.callId}
-                <AskPanel
-                  bind:this={askPanel}
-                  {questions}
-                  queued={chat.live.questions.length - 1}
-                  typing={hasContent(controller.draft)}
-                  onAnswer={(callId, answers) => void controller.answer(callId, answers)}
-                  onDismiss={(callId) => void controller.dismiss(callId)}
-                />
-              {/key}
+            {#if hiddenAsk}
+              {@const callId = hiddenAsk.callId}
+              <div
+                data-slot="ask-jump"
+                class="mb-1.5 flex min-w-0 items-center gap-x-2 rounded-lg border border-edge bg-surface py-1 ps-3 pe-1 text-sm text-muted"
+              >
+                <StatusDot tone="waiting" size="sm" />
+                <span class="font-medium text-fg">axo is waiting on {questionCount} questions</span>
+                {#if hiddenAsk.deadlineMs !== null}
+                  <span class="min-w-0 truncate"
+                    >suggested answers apply in <span class="tabular-nums"
+                      >{askCountdown(hiddenAsk.deadlineMs, now)}</span
+                    ></span
+                  >
+                {/if}
+                <Button variant="accent" size="xs" class="ms-auto" onclick={() => conversation?.jumpToAsk(callId)}
+                  >Jump to questions</Button
+                >
+              </div>
             {/if}
             <PromptInput
               bind:this={composer}
               bind:parts={controller.draft}
               {owner}
               models={available}
+              extensions={controller.extensions}
               {running}
               onCommand={(name, args) => controller.runCommand(name, args)}
               onMode={(name, parts) => controller.setMode(name, parts)}
@@ -296,10 +339,7 @@
               onCancel={running ? () => void stop() : undefined}
               {disabled}
               blocked={modelUnavailable ? `${model} is no longer available. Pick another model to continue.` : null}
-              placeholder={running ? 'Steer axo…' : 'Ask axo…'}
-              hint={chat?.live.questions.length
-                ? { title: 'Steer', text: 'Sending this answers in your own words and closes the question' }
-                : null}
+              placeholder={pendingAsks.length ? 'Or reply here to steer instead…' : running ? 'Steer axo…' : 'Ask axo…'}
               commands={chat?.commands ?? []}
               {onSubmit}
               onFollowUp={() => {
@@ -347,13 +387,18 @@
                 />
                 <EffortPicker
                   variant="ghost"
-                  label="Reasoning effort (Shift+Tab)"
+                  tier={chat?.live.serviceTier}
+                  effectiveTier={chat?.live.effectiveServiceTier}
+                  serviceTiers={current?.serviceTiers}
+                  modelName={current?.name ?? model ?? undefined}
+                  tierDisabled={!current}
                   value={thinking}
                   {levels}
                   side="top"
                   align="end"
                   {disabled}
                   onSelect={(level) => configure('thinking', { level })}
+                  onTierSelect={(tier) => configure('tier', { tier: tier ?? 'standard' })}
                 />
               {/snippet}
             </PromptInput>

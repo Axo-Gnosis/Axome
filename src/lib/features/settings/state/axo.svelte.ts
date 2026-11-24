@@ -32,14 +32,19 @@ export function axoModels(host: string | null): { models: ChatModel[]; loading: 
       }
     }
 
-    const listener = backend.axo.onModelsChanged((event) => {
+    const changed = (event: { server: string | null }) => {
       if (event.server === server) void refresh()
-    })
-    void listener.then(refresh, refresh)
+    }
+    const listeners = [backend.axo.onModelsChanged(changed), backend.axo.onExtensionsChanged(changed)]
+    void Promise.allSettled(listeners).then(refresh)
     return () => {
       disposed = true
       generation++
-      void listener.then((stop) => stop()).catch(() => {})
+      for (const listener of listeners)
+        void listener.then(
+          (stop) => stop(),
+          () => {}
+        )
     }
   })
   return state

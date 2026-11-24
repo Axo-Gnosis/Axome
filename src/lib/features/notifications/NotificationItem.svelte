@@ -1,11 +1,19 @@
+<script lang="ts" module>
+  import { SvelteSet } from 'svelte/reactivity'
+
+  // The toast can time out and remount in the notification center while its action runs.
+  const runningActions = new SvelteSet<string>()
+</script>
+
 <script lang="ts">
   import * as Alert from '$lib/components/ui/alert'
-  import { IconButton } from '$lib/components/ui/button'
+  import { Button, IconButton } from '$lib/components/ui/button'
   import TabBeam from '$lib/components/ui/TabBeam.svelte'
   import { XIcon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
-  import type { Notification, NotificationTone } from '$lib/features/notifications/state.svelte'
+  import { notify, type Notification, type NotificationAction, type NotificationTone } from './state.svelte'
   import { cn } from '$lib/utils/cn'
+  import { getErrorMessage } from '$lib/utils/client-error'
 
   let {
     notification,
@@ -16,6 +24,19 @@
     onDismiss: (id: string) => void
     showTimestamp?: boolean
   } = $props()
+
+  async function runAction(action: NotificationAction) {
+    const id = notification.id
+    if (runningActions.has(id)) return
+    runningActions.add(id)
+    try {
+      await action.run()
+    } catch (error) {
+      notify.error(`${action.label} failed`, getErrorMessage(error))
+    } finally {
+      runningActions.delete(id)
+    }
+  }
 
   function getNotificationAlertVariant(tone: NotificationTone) {
     return tone === 'neutral' ? 'info' : tone === 'error' ? 'danger' : tone
@@ -35,6 +56,18 @@
     <Alert.Title class="pr-1">{notification.title}</Alert.Title>
     {#if notification.description}
       <Alert.Description class="pr-1">{notification.description}</Alert.Description>
+    {/if}
+    {#if notification.actions?.length}
+      <div class="flex flex-wrap gap-1.5">
+        {#each notification.actions as action}
+          <Button
+            variant="text"
+            size="xs"
+            disabled={runningActions.has(notification.id)}
+            onclick={() => runAction(action)}>{action.label}</Button
+          >
+        {/each}
+      </div>
     {/if}
 
     {#if notification.loading}

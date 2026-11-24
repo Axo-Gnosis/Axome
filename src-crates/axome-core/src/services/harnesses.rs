@@ -1,13 +1,13 @@
 use crate::errors::ApiError;
 use crate::services::db::DatabaseService;
 use crate::services::env::{folder_env, EnvironmentService};
-use crate::services::extensions::{
-    missing_requirement, resolve_contribution_command, ExtensionService, LoadedExtensionCatalog,
-    LoadedHarness,
+use crate::services::integrations::{
+    missing_requirement, resolve_contribution_command, IntegrationService, LoadedHarness,
+    LoadedIntegrationCatalog,
 };
 use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
-use axome_protocol::extensions::{HarnessTerminal, VersionStream, SESSION_ID_VARIABLE};
 use axome_protocol::harness::{HarnessConnectionStatus, HarnessStatus};
+use axome_protocol::integrations::{HarnessTerminal, VersionStream, SESSION_ID_VARIABLE};
 use axome_protocol::settings::{EffectiveSettings, HarnessSettings, PresetSettings};
 use std::collections::HashMap;
 use std::path::Path;
@@ -29,14 +29,14 @@ pub fn resolve_harness_command(
     }
     resolve_contribution_command(
         &harness.definition.command,
-        harness.extension_dir.as_deref(),
+        harness.integration_dir.as_deref(),
         merged_path,
         None,
     )
 }
 
 pub(crate) struct HarnessLaunch {
-    catalog: Arc<LoadedExtensionCatalog>,
+    catalog: Arc<LoadedIntegrationCatalog>,
     index: usize,
     pub(crate) config: HarnessSettings,
     pub(crate) preset: PresetSettings,
@@ -58,7 +58,7 @@ pub(crate) fn resolve_harness_launch(
     preset: Option<&str>,
 ) -> Result<HarnessLaunch, ApiError> {
     let settings = resolve_effective_settings_for_folder_path(dirs, folder).settings;
-    let catalog = ExtensionService::current();
+    let catalog = IntegrationService::current();
     let index = catalog
         .harnesses
         .iter()
@@ -127,7 +127,7 @@ pub(crate) fn terminal_args(
 }
 
 pub fn detect_all(
-    catalog: &LoadedExtensionCatalog,
+    catalog: &LoadedIntegrationCatalog,
     settings: &EffectiveSettings,
     env: &HashMap<String, String>,
 ) -> Vec<HarnessStatus> {
@@ -241,7 +241,7 @@ fn detect_harness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::extensions::load_catalog;
+    use crate::services::integrations::load_catalog;
 
     #[cfg(unix)]
     #[test]

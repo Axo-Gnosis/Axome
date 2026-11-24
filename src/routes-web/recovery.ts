@@ -9,6 +9,7 @@ import { loadHarnesses, loadHarnessesForFolder } from '$lib/features/sessions/ha
 import { loadShells, loadShellsForFolder } from '$lib/features/shells/state.svelte'
 import { detectNix, getNixDetection } from '$lib/features/settings/state/nix.svelte'
 import { loadSettings } from '$lib/features/settings/state/settings.svelte'
+import { refreshExtensionsForServer } from '$lib/features/settings/state/extensions.svelte'
 import { refreshTasks } from '$lib/features/tasks/state.svelte'
 import { flushWorkbench, getTabs } from '$lib/features/workbench/state.svelte'
 import { logClientError } from '$lib/utils/client-error'
@@ -78,6 +79,7 @@ export function createWebRecovery() {
     const folders = [...new Set(getTabs().map((tab) => tab.folderPath))]
     const jobs: { label: string; run: () => Promise<unknown> | void }[] = [
       { label: 'settings', run: () => loadSettings() },
+      { label: 'extensions', run: () => refreshExtensionsForServer(null) },
       { label: 'recent folders', run: () => loadRecentFolders() },
       { label: 'workbench layout', run: () => flushWorkbench() }
     ]

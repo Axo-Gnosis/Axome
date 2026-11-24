@@ -197,6 +197,7 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
         listen: Some("127.0.0.1:0".parse()?),
         config_file: None,
         web_assets_dir: None,
+        bun: None,
     })
     .await?;
     let token = axome_server::auth::write_pairing_token(&pairing_config)?;
@@ -633,6 +634,7 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
         listen: Some("127.0.0.1:0".parse()?),
         config_file: None,
         web_assets_dir: None,
+        bun: None,
     })
     .await?;
     let mut remotes = remote_settings.clone();

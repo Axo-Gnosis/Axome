@@ -26,6 +26,7 @@
       deletions: file.deletions
     }))
   )
+  const unfinished = $derived(source.files.filter((file) => file.unfinished).length)
 
   const contentFetcher: DiffContentFetcher = async (entry) => {
     const file = source.files.find((candidate) => candidate.path === entry.path)
@@ -36,6 +37,11 @@
   }
 </script>
 
+{#if unfinished > 0}
+  <p class="px-3 py-2 text-xs text-warning">
+    {unfinished === 1 ? '1 from an unfinished call' : `${unfinished} from unfinished calls`}
+  </p>
+{/if}
 <DiffStack
   {files}
   {initialFile}

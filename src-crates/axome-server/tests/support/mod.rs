@@ -25,6 +25,7 @@ pub fn serve_dirs(config: &Path, data: &Path) -> ServeOptions {
         listen: Some("127.0.0.1:0".parse().unwrap()),
         config_file: None,
         web_assets_dir: None,
+        bun: None,
     }
 }
 

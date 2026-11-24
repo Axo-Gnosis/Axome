@@ -7,7 +7,7 @@ use crate::{
     services::{
         app_state_kv::AppStateKvService,
         db::DatabaseService,
-        extensions::ExtensionService,
+        integrations::IntegrationService,
         settings_resolution::{load_settings_layer, validated_layer},
     },
     HostDirs,
@@ -50,11 +50,14 @@ impl AxomeConfig {
 impl ConfigSource for AxomeConfig {
     fn user(&self) -> Result<UserConfig, axo::Error> {
         let mut layer = self.layer(&self.dirs.config, SettingsLayerKind::Global)?;
-        let last_model = AppStateKvService::get(self.db.read().conn(), "axo.lastExplicitModel")
-            .map_err(|error| axo::Error::Host(error.into()))?
-            .map(|json| serde_json::from_str::<String>(&json))
-            .transpose()
-            .map_err(|error| axo::Error::Host(error.into()))?;
+        if let Some(settings) = layer
+            .settings
+            .as_mut()
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            settings.remove("extensions");
+        }
+        let last_model = last_explicit_model(&self.db)?;
         fill_roles(&mut layer.settings, last_model.as_deref());
         Ok(UserConfig {
             layer,
@@ -76,7 +79,7 @@ pub(super) fn read_settings(
 ) -> Result<Option<serde_json::Value>, axo::Error> {
     // Preserve IO errors; the settings loader reports malformed JSON through diagnostics.
     read_optional(path)?;
-    let catalog = ExtensionService::current();
+    let catalog = IntegrationService::current();
     Ok(validated_layer(
         kind,
         load_settings_layer(kind, path.to_owned()),
@@ -121,13 +124,14 @@ pub(super) fn plans_dir(dirs: &HostDirs, folder: &Path) -> Result<String, axo::E
 /// Resolves effective `axo.browser` settings (global-only per `GLOBAL_ONLY_POINTERS`)
 /// into `axome_browser::BrowserConfig`.
 pub(super) fn browser_config(dirs: &HostDirs, folder: &Path) -> axome_browser::BrowserConfig {
-    let settings = crate::services::settings_resolution::resolve_effective_settings_for_folder_path(
-        dirs,
-        Some(folder),
-    )
-    .settings
-    .axo
-    .browser;
+    let settings =
+        crate::services::settings_resolution::resolve_effective_settings_for_folder_path(
+            dirs,
+            Some(folder),
+        )
+        .settings
+        .axo
+        .browser;
     axome_browser::BrowserConfig {
         enabled: settings.enabled,
         headless: settings.headless,
@@ -138,7 +142,15 @@ pub(super) fn browser_config(dirs: &HostDirs, folder: &Path) -> axome_browser::B
     }
 }
 
-fn fill_roles(settings: &mut Option<serde_json::Value>, last_model: Option<&str>) {
+pub(super) fn last_explicit_model(db: &DatabaseService) -> Result<Option<String>, axo::Error> {
+    AppStateKvService::get(db.read().conn(), "axo.lastExplicitModel")
+        .map_err(|error| axo::Error::Host(error.into()))?
+        .map(|json| serde_json::from_str::<String>(&json))
+        .transpose()
+        .map_err(|error| axo::Error::Host(error.into()))
+}
+
+pub(super) fn fill_roles(settings: &mut Option<serde_json::Value>, last_model: Option<&str>) {
     let fallback = settings
         .as_ref()
         .and_then(|settings| settings.get("modelRoles"))

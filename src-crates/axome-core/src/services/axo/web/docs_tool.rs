@@ -1,5 +1,6 @@
 //! `search_docs` host tool implementation over the shared FTS5 `DocsCache`.
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,8 +14,8 @@ use serde_json::{json, Value};
 use super::docs_cache::{self, DocSectionHit, DocsOutcome};
 use super::WebTools;
 
-const GUIDELINES: &[&str] = &[
-    "Use search_docs for large reference manuals, library docs, llms.txt trees, or local/Nix docs instead of reading whole docs into context; omit query to list cached sources or inspect a source's table of contents.",
+const GUIDELINES: &[Cow<'static, str>] = &[
+    Cow::Borrowed("Use search_docs for large reference manuals, library docs, llms.txt trees, or local/Nix docs instead of reading whole docs into context; omit query to list cached sources or inspect a source's table of contents."),
 ];
 
 #[derive(Deserialize)]
@@ -91,7 +92,7 @@ impl Tool for SearchDocsTool {
         Replay::Safe
     }
 
-    fn prompt_guidelines(&self) -> &[&str] {
+    fn prompt_guidelines(&self) -> &[Cow<'static, str>] {
         GUIDELINES
     }
 

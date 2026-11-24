@@ -73,7 +73,7 @@
     if (!stats || !context) return null
     const pct = `${Math.round(context.fraction * 100)}%`
     const cost = (stats.tree ?? stats.usage).cost
-    const text = cost > 0 ? `${pct} · ${formatCost(cost)}` : pct
+    const text = cost === null || cost > 0 ? `${pct} · ${formatCost(cost)}` : pct
     return { tone: context.atTrigger ? 'waiting' : 'idle', text }
   })
   const agentsStatus = $derived(jobsStatus(jobs, 'child', 'Failed subagent'))

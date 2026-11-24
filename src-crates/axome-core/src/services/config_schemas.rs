@@ -3,7 +3,7 @@
 // Each entry pairs a schema with the glob patterns that identify the
 // file. The frontend fetches this list per host when Monaco first loads that host's folder
 // and hands each entry to Monaco so that opening a matching file gets autocomplete, validation,
-// and hover docs for free. Settings schemas use the current extension catalog
+// and hover docs for free. Settings schemas use the current integration catalog
 // for language, LSP server, and formatter ids.
 //
 // Adding a new config file is a three-step change:
@@ -15,12 +15,14 @@ use axome_protocol::config_schemas::ConfigSchemaEntry;
 use schemars::schema_for;
 use serde_json::json;
 
-use crate::services::{extensions::ExtensionService, settings_resolution::settings_layer_schema};
+use crate::services::{
+    integrations::IntegrationService, settings_resolution::settings_layer_schema,
+};
 use axome_protocol::{server_config::ServerConfig, settings::SettingsLayerKind, task::TasksFile};
 
 pub fn all_config_schemas() -> Vec<ConfigSchemaEntry> {
-    let extensions = ExtensionService::current();
-    let ids = &extensions.settings_ids;
+    let integrations = IntegrationService::current();
+    let ids = &integrations.settings_ids;
 
     vec![
         ConfigSchemaEntry {

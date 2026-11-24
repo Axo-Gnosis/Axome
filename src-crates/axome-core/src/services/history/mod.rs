@@ -1,4 +1,4 @@
-//! Harness session history: builtin store scanners and extension history
+//! Harness session history: builtin store scanners and integration history
 //! commands behind one source type. Stores are read-only; Axome never writes
 //! harness state.
 
@@ -235,9 +235,9 @@ impl HistorySource {
                     .iter()
                     .map(|(key, value)| (key.clone(), value.clone())),
             );
-            let program = crate::services::extensions::resolve_contribution_command(
+            let program = crate::services::integrations::resolve_contribution_command(
                 command,
-                harness.extension_dir.as_deref(),
+                harness.integration_dir.as_deref(),
                 env.get("PATH").map(String::as_str).unwrap_or(""),
                 None,
             )?;

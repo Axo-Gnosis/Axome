@@ -484,8 +484,8 @@ async fn shortcuts(client: &RemoteClient, config: &Path) -> Result<()> {
 async fn catalogs_and_harnesses(client: &RemoteClient, home: &Path) -> Result<()> {
     let catalog = client
         .call_as(
-            &Request::ExtensionsGetCatalog {},
-            Reply::extensions_get_catalog,
+            &Request::IntegrationsGetCatalog {},
+            Reply::integrations_get_catalog,
         )
         .await?;
     assert!(catalog

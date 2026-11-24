@@ -4,7 +4,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 
 - **Goals & settled decisions:** [`design.md`](design.md)
 - **Evidence:** [`research/`](research/README.md) (axo surveys, file:line cited)
-- **Pinned axo:** `5c3f418` (`614089b` plus `SessionOptions::keywords_enabled`; see [T10](#t10-remaining-axo-gaps)). The `614089b` adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog). Earlier handoffs: Phase 2 Live Work (`97513d6`), [host capabilities](research/axo-cd12162/host-capability-handoff.md) (`cd12162`), [Phase 3](research/axo-b961066/host-capability-handoff.md) (`b961066`), and [snapshots and steer/queue control](#t10-remaining-axo-gaps) (`4d6bc34`, `a0ec20d`).
+- **Pinned axo:** `9dd6fa1` (adopted in [T13](#t13-axo-deda8e6-extensions-definitions-service-tiers): typed extension provenance, problems and package inspection on top of `118a716`). Earlier: `5c3f418` ([T11](#t11-axo-614089b-providers-login-and-the-live-catalog), `614089b` plus `SessionOptions::keywords_enabled`), Phase 2 Live Work (`97513d6`), [host capabilities](research/axo-cd12162/host-capability-handoff.md) (`cd12162`), [Phase 3](research/axo-b961066/host-capability-handoff.md) (`b961066`), and [snapshots and steer/queue control](#t10-remaining-axo-gaps) (`4d6bc34`, `a0ec20d`).
 
 ## How we work
 
@@ -28,8 +28,9 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 | [T8](#t8-host-messages-sections-dynamic-tools) | What Axome tells the model, custom message rendering | Q38–Q39 | 5 | Implemented (Phase 2) |
 | [T9](#t9-session-lifecycle-and-status) | Context meter, cost, unloading, live-session registry | Q40–Q42 | 5 | Implemented (Phase 2) |
 | [T10](#t10-remaining-axo-gaps) | axo gaps: accept, work around, or request | Q43 | 6 | Decided |
-| [T11](#t11-axo-614089b-providers-login-and-the-live-catalog) | axo `614089b`: provider/login seam, live model catalog, layered writes | Q44–Q57 | 7 | Slices 1–7 implemented; slice 8 awaits axo |
+| [T11](#t11-axo-614089b-providers-login-and-the-live-catalog) | axo `614089b`: provider/login seam, live model catalog, layered writes | Q44–Q57 | 7 | Implemented; slice 8 landed with T13 |
 | [T12](#t12-long-term-memory) | Native long-term memory (Basic Memory port) | Q58–Q62 (superseded) | 8 | Shipped off by default ([P31](design.md#decisions)) |
+| [T13](#t13-axo-deda8e6-extensions-definitions-service-tiers) | axo `deda8e6` + ask documents (`9c1b4ad`): Bun extensions, live definitions, service tiers, origin-bound credentials, file records, `ask` | Q63–Q79 | 9 | Implemented at `9dd6fa1` ([P39](design.md#decisions)); Workspace Trust is roadmap Phase 4 |
 
 ```mermaid
 flowchart LR
@@ -311,6 +312,7 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 | **Adopted from axo `a0ec20d`:** steer reliability & queue control | `abort` latches when pressed (not after settle); `resume_wakes` delivers held steers/follow-ups; queued steers settle pending `ask` & reviewed `yield` (`ResultResolution::Steered`); `steeringMode` defaults to `"all"`; `LiveSnapshot::queued: Vec<QueuedInput>` replaces `queued_steering`/`queued_follow_up`; `Session::withdraw` removes queued input & writes `Entry::SubmissionWithdrawn` | Pin bumped to `a0ec20d`; collapsible `QueuedMessages` card (`→` promote/interrupt-and-send, Edit prepending w/ `\n`, Cancel), double-Enter guard, and `whitespace: 'pre'` newline preservation landed ([`handoff/axo-steer-queue.md`](handoff/axo-steer-queue.md)) |
 | **axo `614089b`:** provider/login/rewrite seam, models.dev v2 + Codex account catalog with refresh, layered write scopes, `withdraw` → `QueuedInput` | Shipped; Axome pins `5c3f418`, which builds on it | Adoption is [T11](#t11-axo-614089b-providers-login-and-the-live-catalog); registry change signal and logout requested in [`handoff/axo-models-batch.md`](handoff/axo-models-batch.md) |
 | **axo `5c3f418`:** `SessionOptions::keywords_enabled` | Shipped; `false` loads no keywords for the session and its forks | The memory writer sets it, so keyword words quoted in a captured transcript never inject bodies or switch the writer off `@memory` |
+| **axo `deda8e6` → `9dd6fa1`:** Bun extension bridge, `Definitions` and live registrations, registered commands, service tiers, origin-bound credentials, `details.files`, hardened delivery/ordering, ask documents, folder-scoped extensions, extension provenance, S/L/U, typed problems and package inspection | Adopted; Axome pins `9dd6fa1` | [T13](#t13-axo-deda8e6-extensions-definitions-service-tiers). Accepted upstream behaviors: successful withdrawal and delivery emit no `QueueChanged` (Axome refreshes the queue snapshot on those journal entries too), and ordinary JS exceptions from extension handlers reach the host as `<method> failed` |
 
 **Questions**
 - **Q43.** For each row: live with it, work around it in Axome, or send it back to axo before designing the UI that depends on it. Answer per row once the topics that depend on it are decided.
@@ -371,3 +373,138 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 - **Q60. Forget and sharing.** Can deletion of one reviewed version be verified after an ambiguous retain acknowledgement, a late worker, or web recall of a code document? Qualify derivative/model refresh, backup expiry and already-delivered transcript limits before promising deletion outside the host.
 - **Q61. Operating budget.** Does extraction **plus consolidation** of approved notes stay within the research budget on the single shared inference slot, including retries? Establish daily operator quota and energy/price accounting. Qualify cache loss on the actual target provider with deferred tools, compaction and resume.
 - **Q62. Human scope mapping.** Which trusted worktrees, principals and deployments should share a note namespace, and does the user want code→web visibility for that scope? Require an explicit host-owned mapping; do not infer identity from repo text, basename, remote URL or a tag. Decide whether any legacy evidence warrants individual review; no bulk import.
+
+---
+
+## T13. axo `deda8e6`: extensions, definitions, service tiers
+
+**Status:** Implemented at axo `9dd6fa1` ([P39](design.md#decisions)): everything below plus typed extension problems, provenance and package inspection. The deferred lifecycle hook stays open at the end · **Evidence:** [`research/axo-deda8e6/`](research/README.md) (compile probe, session API, behavior/data/config, providers/tiers, extensions; recommendations for tier UX, extension runtime inputs, management UX and the two-systems clash)
+
+**What axo gives** (`5c3f418..deda8e6`, 9 commits: `cf6afa8`, `f47707e`, `f374d6c`, `3d4caa5`, `faabab4`, `60288a4`, `472844a`, `ef35935`, `deda8e6`)
+
+- **Bun extensions (new crate `axo-extensions`).** Trusted TS/JS packages declared by `extension.json` contribute providers (models, login, request rewrite), tools, slash commands, tool-policy before/after hooks, spawn hooks, URL schemes, prompt sections, definitions (agents, teams, modes, keywords, skills) and journal observers. The host builds `Extensions::new(axo, ExtensionOptions)` with seven inputs (absolute `bun` path, ordered `roots`, `data_root`, `runtime_dir`, `env`, optional managed `store`, `auto_install`), passes the enabled list to `configure`, composes `SessionOptions::layer` before opening and `attach`es live sessions; axo reapplies layers on reconfigure. Manager surface: `status` (phases `Cold`/`Installing`/`Starting`/`Ready`/`Restarting`/`Disabled`/`Unavailable` with reasons), `collisions`, `diagnostics`, `subscribe`, `retry`, `reload`, `shutdown`, `memory` (PSS per runner). Installed packages: `install(folder, origin, replace_origin)`, `rollback`, `uninstall`, `install_dependencies`; acquisition is the host's. Extensions can call most of the `Session` API (prompt, steer, set model/mode/tier, answer, spawn, kill, navigate, custom state, posts), models (`complete`, `stream`) and guarded file/command helpers. Root create/open/fork/close go through an optional host `Lifecycle` hook (`&Caller`); without one they fail `no_lifecycle`. Code is unsandboxed; policy and spawn hooks fail closed; three runner failures in 300 s disable a placement. Unix-only (Unix sockets, 0700 dirs). ([`extensions.md`](research/axo-deda8e6/extensions.md))
+- **Definitions and registrations.** `SessionOptions::{agents, modes, keywords}` become `definitions: Definitions` (adds `teams`, `skills`); `Axo::catalog` takes `&Definitions`. `Session::set_definitions` and `set_layer` change them live (precedence file > layer > host, first name wins; selected persona/mode keep their spec); no catalog-changed event. Host lists (tools, policies, spawn hooks, schemes, sections, commands) get live setters; forks keep the host/layer split, children get a joined snapshot. Definition getters return owned vectors. ([`session-api-and-definitions.md`](research/axo-deda8e6/session-api-and-definitions.md) §1–2)
+- **Registered commands.** `RegisteredCommand` (handler gets `&Session` + argument text) via `SessionOptions::commands`, a layer, or `set_commands`; catalog order built-ins → modes → registered → skills; `CommandKind::Registered`; always `Alongside`. Static `Command::decode` stays built-in only; `Session::parse_command`/`run_command` resolve registered ones. `/tier` is a new built-in. (§3)
+- **Service tiers.** `standard`/`flex`/`fast`/`ultrafast`; selectors accept a thinking and a tier suffix in either order (`model:high:fast`, `@role:flex`, `:fast`); `/tier`, `Session::set_service_tier`, `service_tier()`/`effective_service_tier()`; support and multipliers from models.dev, the Codex account list and `serviceTiers` in `models.jsonc`; user-only settings `serviceTier.onModelChange` (`reset`/`keep`) and `subagents.serviceTier` (`standard`/`inherit`); journal `service_tier_change` and `ThinkingLevelChange.{automatic, serviceTier}`; `AssistantMessage.service_tier` records the served tier and cost applies its multiplier; the hardcoded Codex tier pricing is gone; compaction stays standard. ([`providers-credentials-and-tiers.md`](research/axo-deda8e6/providers-credentials-and-tiers.md))
+- **Providers and credentials.** Credential slots are per origin: `loaded/{id}` (built-in and `models.jsonc`), `registered/{owner}/{id}`, `layer/{owner}/{id}`; old bare-id entries stay in `auth.json` but are never read. `Models::credential_slot` exposes the current slot. `Models::register(owner, provider)`, owned `ProviderLayer::replace`, unavailable-provider reservations (`ProviderUnavailable`, nonretryable). `reload` is transactional; a failed `refresh` can still publish Codex/discovery changes. S, L and U landed later, in `118a716` (below).
+- **File records.** Read/write/edit emit `details.files: [{ledger, change?}]` instead of top-level `details.ledger`/`details.change`; one call can carry several records; mutations that completed before an error or hard stop are kept on the error result; `FileChange.key` is base64url of native path bytes; `file_change` → `file_changes`. axo reads only the new envelope (ledger restore, compaction file lists, change extraction). ([`behavior-data-and-config.md`](research/axo-deda8e6/behavior-data-and-config.md) §3)
+- **Session runtime.** Event receivers carry `Arc<SessionEvent>`; new `SessionEvent::QueueChanged`; delivery picks next work under one ownership lock (fewer transient idles); selection, mode and request-boundary transitions are serialized; `SessionInfo.modified` → `modified_at` (Unix ms); `SessionStore::read_page` and bounded wire pages; `Axo::observe_child` (no revival); `Axo::complete`/`stream` for one-off requests; `Session::render_skill`, `job_output`, `command_jobs`; `background(call_id)` promotes every command of the call; partial captures are marked failed and lose their full-output link; `Error::Completion { message, details }` and `Error::SkillNotFound`; `Tool::prompt_guidelines` returns `&[Cow<'static, str>]`; `WriteRoot` serializes as `{type, value}`.
+- **Ask documents (`9c1b4ad`, after `deda8e6`).** `ask` takes one document: `blocks` in reading order, each `markdown` (`text`, passed through unparsed) or a question:
+  - `choice`: `options` of `value`/`label`/`description`/`recommended`, `multi`;
+  - `text`: `multiline`, `placeholder`, `prefill`;
+  - `number`: `integer`, `min`, `max`, `default`.
+
+  Every question has `id`, `question` and `optional`. Every choice accepts a free-text `other`. A `note` is allowed on choice and number answers, not text.
+  - **Host contract:** `SessionEvent::QuestionPending { call_id, blocks }` and `LiveSnapshot::pending_questions` carry `Vec<AskBlock>`. `Session::answer(call_id, Vec<Answer { id, value, other, note }>)` validates against the document; an invalid submission returns `Error::InvalidInput` and stays pending.
+  - **Result:** `details.answers`, keyed by id, each `{ value, other?, note? }` or `null` when skipped, plus `timedOut`. A timeout submits only `recommended`/`prefill`/`default`, `null` elsewhere. Dismissed, steered and cancelled keep their old behavior.
+  - **Removed:** `Question`, option `preview`, question `header`, and the old `results`/`selectedOptions`/`customInput` details. `85059f4` changes only docs and expose-skip strings.
+- **Requested fixes (`118a716`).** Verified against [`handoff/axo-deda8e6-batch.md`](handoff/axo-deda8e6-batch.md); all five items landed.
+  - **F, folder scopes:** `Extensions::scope(ScopeOptions { key, roots, data_root, auto_install })` returns an `ExtensionScope` with its own `configure`, `status`, `collisions`, `diagnostics`, `subscribe`, `retry`, `reload`, `install_dependencies`, `memory` and `shutdown`.
+    - Its runners are separate from the host-wide ones, and it has no store: installed packages are host-wide only.
+    - `ExtensionScope::compose` sets the layer to host-wide extensions followed by the scope's, and sets the new `SessionOptions::models` to the scope's `Models` view. That view comes from `Models::scoped()`: same catalog, timer and credential store, with the scope's providers visible only to it. `attach` attaches through the scope.
+    - A scoped extension can only act on sessions its scope owns, children included. Forks and children keep their root's scope.
+    - `key` must be stable and unique among live scopes, with no `/` or whitespace; credentials are isolated by it.
+    - The `Lifecycle` hook now returns `LifecycleSession { session, scope }` (unused while P36 stands). `Axo::spawn_parent(id)` gives a child's parent without reviving it.
+  - **P, provenance:** `SubmissionProvenance` is now a tagged enum: `Agent { sessionId, route, name? }` or `Extension { id }`. Extension prompts, steers, follow-ups and posts record it, and `QueuedInput` carries it.
+  - **S, change signal:** `Models::subscribe()` returns a `watch::Receiver<u64>` that bumps only when `all()` or `providers()` actually changed. Each scoped view has its own.
+  - **L, logout:** `Models::logout(provider)` removes the credential from the current slot. For `openai-codex` it also drops the account model list and deletes `codex-models.json`. A failed file delete still logs out and returns the I/O error.
+  - **U, unknown prices:** `Model.cost` and `Usage.cost` are `Option`. A model without feed prices is `None`, not $0, and a usage sum containing any unknown part is `None`. A `models.jsonc` cost patch on an unpriced model must give both `input` and `output`.
+- **Not in this range.** Codemode, MCP and `ast_edit` remain deferred.
+
+**What it touches in Axome**
+
+- **Compile:** 20 production + 6 test errors at `deda8e6` ([`compile-probe.md`](research/axo-deda8e6/compile-probe.md) §1): guideline signatures (3; the staged, uncommitted `axome-browser` crate has a 4th at `tool.rs:200`), `Arc` events and models, `definitions` in chat, memory writer and tests, `catalog` arity, owned mode vectors, `modified_at`, `CommandKind::Registered`, `Entry::ServiceTierChange`, new error variants, tier fields in test literals. Further exhaustive matches the compiler had not reached: `QueueChanged` and `ServiceTierChange` in `live.rs` and the history reader. Not re-probed after `deda8e6`; from source:
+  - `9c1b4ad` removes `axo::Question` (`convert.rs:867`) and changes the `Answer` fields (`convert.rs:886`) and the `QuestionPending` payload (`live.rs:718`).
+  - `118a716` makes `Usage.cost` an `Option` (`convert.rs:141`) and `SubmissionProvenance` an enum (`convert.rs:746-750`).
+- **Old journals and `118a716`:** routed `send`/`mail` submissions stored with the old provenance shape (no `kind` tag) no longer decode, so those submission entries read as unknown and lose their sender label (P32).
+- **Silent frontend breaks:** `payload.ts`, `ToolDiff.svelte`, `toolHeader.ts`, `readOutput.ts`, `turnChanges.ts` and the Files panel (`sidebar/ledger.ts`) read the old singular fields, so new results lose inline diffs, turn-change cards, ledger paths and footer stripping. `turnChanges.ts` also takes only successful `edit`/`write`, one change each.
+- **Existing users on upgrade:** OAuth logins and stored API keys stop authenticating (old slots ignored); Axome's own `provider_set_key`/`provider_remove` (`providers.rs:63-85`) still write and remove bare ids, so even keys saved after the bump would land in dead slots. `web:*` search keys are host-owned and unaffected. Child journals whose header has a nonempty old-shape write ceiling fail to parse and drop from listings (the second write-ceiling format change after P27). Old tool records keep rendering through today's parsers but axo no longer restores their ledger freshness (resumed sessions re-read before editing) or extracts their changes.
+- **No current consumer:** the extension manager and lifecycle hook, layers and live setters, registered commands, tiers (catalog projection, `splitSelector`, picker, Settings, transcript), new settings keys (Axome's `AxoSettings` denies unknown fields), paging, child observation, one-off completions, completion error details.
+- **Name clash:** Axome already has an "extensions" system (`extension.json` with languages, grammars, LSP servers, formatters, terminal harnesses; `dirs.data/extensions`), a different schema and lifecycle from axo's.
+- **Packaging:** Bun ships only in the dev shell and frontend build; neither the desktop nor the server package provides a runtime Bun path.
+
+**Answers** (IDs continue from Q62)
+
+- **Q63. Credentials on upgrade.** Toph: no migration ([P32](design.md#decisions)). Everyone logs in again and re-enters keys. Axome's own bug gets fixed:
+  - Add key writes to `Models::credential_slot(provider)` instead of the bare id.
+  - Log out / Remove call `Models::logout(provider)`, which also clears the Codex account list.
+- **Q64. Legacy session data.** Accepted, no migration ([P32](design.md#decisions)). Old child journals with old-shape write ceilings drop from history. Resumed old chats re-read files before editing.
+- **Q65. File records in the UI.** In practice: when the agent touches a file, Axome shows it in three places. There's the diff under the edit/write call, the `N files changed +A −D [Review]` card at the end of the turn, and the Files tab in the sidebar. All three read two fields axo just replaced with one list (`details.files`). After the bump, new chats would show no diffs, no review card and no Files entries until Axome reads the list. Two real behavior changes come with it:
+  1. One call can report several files. Only extension tools do this today.
+  2. An edit interrupted *after* writing to disk now reports the change on the failed call. Today Axome hides diffs on failed calls, so you would see a red failed edit while the file had actually changed.
+
+  **Answer (Axome's call):** read only `details.files` and render every record. Show changes from failed calls too, marked as from a failed call, because what's on disk is what matters. Count them in the turn card. Old chats lose their inline diffs (P32).
+- **Q66. Service tiers.** UI work, handed off in [`handoff/ui-deda8e6.md`](handoff/ui-deda8e6.md) §1. One recommendation is recorded in [`service-tier-ux.md`](research/axo-deda8e6/service-tier-ux.md); the UI pass is not bound by it.
+- **Q67. Live definitions.** Axome's call, nothing to decide. Bundled personas, modes and keywords move into `Definitions` one to one, and Axome never changes them live. The only live changes come from extensions, and every extension change goes through a manager call Axome makes (`configure`, `reload`, `retry`, `install`). After each one, Axome re-reads the command and toolbox catalogs of attached sessions. No axo catalog event needed.
+- **Q68. Registered commands.** Axome's call. Axome registers no commands of its own. The composer lists registered commands (extensions') with their origin label. `ChatCommandKind` gains `Registered`. Command execution moves from the built-in-only static `Command::decode` to `Session::parse_command` + `run_command`, so extension commands actually run.
+- **Q69. Extensions scope.** Toph: full support ([P33](design.md#decisions)).
+- **Q70. Extension runtime inputs.** Recommendation ([`extension-runtime-inputs.md`](research/axo-deda8e6/extension-runtime-inputs.md)):
+  - **Bun:** shipped inside every Axome package, found by one rule: `<directory of the Axome executable>/../lib/axome/bun`.
+    - Nix desktop and server packages put a link to `${pkgs.bun}/bin/bun` there.
+    - `.deb`/`.rpm` install Bun's binary there, patched to the system loader like `axome` itself.
+    - Dev runs fall back to `bun` on PATH (the dev shell has it).
+
+    Axome adds Bun's directory to the extensions' PATH so dependency scripts that call `bun` work. Missing Bun shows "Bun unavailable" and does not stop the app. Only the bundled Bun is used ([P35](design.md#decisions)).
+  - **Directories:**
+    - user authored root: `~/.config/axome/extensions`;
+    - project root: `<folder>/.axome/extensions`, trusted folders only;
+    - store: `dirs.data/axo/extensions/packages`;
+    - data: `dirs.data/axo/extensions/data`;
+    - runtime: `$XDG_RUNTIME_DIR/axome/ext`, with a private `/tmp` fallback (sockets are limited to 107 bytes);
+    - env: Axome's base environment minus its own markers.
+  - **Dependencies:** `auto_install` on, as axo's Phase 4 intends. Project roots only enter after D4 trust, so a folder can't run install scripts without trust.
+  - **Lifetime:** one manager per host, owned by the engine next to `Axo` (P21), reconfigured from the settings watcher, attached on every root create/open/fork. It runs the same way on `axome-server`. No `Lifecycle` hook for now ([P36](design.md#decisions)).
+  - **Project extensions (F, landed):** one `ExtensionScope` per trusted folder, created when the folder is opened and trusted, shut down when it closes or loses trust.
+    - Roots: `<folder>/.axome/extensions`. Data: `dirs.data/axo/extensions/scopes/<key>`. The scope's `configure` gets the same user-only enabled list.
+    - `key` is a stable hash of the canonical folder path, so credentials survive restarts.
+    - Root sessions in that folder are composed and attached through the scope. Their model catalog, picker and change signal come from `scope.models()`, so a project extension's provider shows only in that folder.
+    - Untrusted folders use the host-wide manager only.
+- **Q71. Extension management UX.** UI work, defined by Toph's mockup (`/home/toph/Projects/ui.html`) and handed off with its facts, gaps and corrections in [`handoff/ui-deda8e6.md`](handoff/ui-deda8e6.md). Install sources (Toph): a folder on the host and a Git repository; no npm for now.
+- **Q72. Two extension systems.** Toph: Axome's language, LSP, formatter and harness packages become **Integrations** ([P34](design.md#decisions)). The rename covers:
+  - files: `integration.json`, `src-crates/axome-core/integrations/`, `dirs.data/integrations/`;
+  - code: `Integration*` types, `integrations_*` RPCs, `features/integrations`;
+  - UI: Reload Integrations.
+
+  Ids and settings keys stay the same. "Extensions" means axo packages only. Clash inventory: [`extension-systems-clash.md`](research/axo-deda8e6/extension-systems-clash.md).
+- **Q73. Lifecycle hook.** Deferred ([P36](design.md#decisions)), open issue below. The design from the Q70 research stays on file in [`extension-runtime-inputs.md`](research/axo-deda8e6/extension-runtime-inputs.md) § Lifecycle.
+- **Q74. Extension activity in the UI.** Axome's call:
+  - Tools and commands show their `extension <id>` origin.
+  - Providers show their source on the Providers page.
+  - Extension posts render as custom messages.
+  - Prompts, steers and posts from an extension carry `SubmissionProvenance::Extension { id }` (P, landed), and the transcript shows "sent by `<id>`" (mockup board 10).
+- **Q75. Queue events.** Axome's call. On `QueueChanged`, Axome re-reads the live queue (`Session::live().queued`) and replaces its queue rows, so axo's queue becomes the single source of truth. The entry-based rebuild in `live.rs` goes.
+- **Q76. Optional new host capabilities.** Axome's call:
+  - The jobs view opens output by job (`job_output`), not by call. One call can now own several commands, so this is a correctness fix.
+  - Everything else has no consumer and stays unused. `observe_child` isn't needed because Axome only opens a child when the user does, and reviving it then is intended. Paging isn't needed because the history reader already streams. `Axo::complete`, `render_skill` and `Error::Completion` details belong to the one-off API Axome doesn't call; the new error variants map to the generic error.
+- **Q77. Models handoff.** S, L and U landed in `118a716`, so T11 slice 8 joins this adoption:
+  - `ModelsChanged` comes from `Models::subscribe()`, per scope for folders with one, replacing Axome's post-action refreshes.
+  - Log out / Remove go through `Models::logout`.
+  - Cost displays show "unknown" for `None` instead of $0, and totals containing an unknown part are unknown.
+- **Q78. Ask documents.** In scope (`9c1b4ad`). UI defined by Toph's mockup `/home/toph/Projects/ask.html`, handed off in [`handoff/ui-deda8e6.md`](handoff/ui-deda8e6.md) §7. Axome replaces its whole ask path:
+  - `convert::question`/`answer`;
+  - `ChatQuestion*`/`ChatAnswer` in the protocol;
+  - `AskPanel`, `AskSummary` and `askResult.ts`.
+
+  Old chats' ask cards lose their answers (P32).
+- **Q79. Local images in chat Markdown.** Toph: show them on local desktop folders, including files outside the folder; leave remote as is ([P37](design.md#decisions)). This is Axome's own bug, but ask documents render Markdown with the same renderer, so it's part of this plan.
+  - **The bug:** `![x](/repo/rust/Axome/src-tauri/icons/icon.png)` in a chat reply shows the webview's broken-image icon.
+  - **Why:** `resolveMarkdownLocalPath` (`src/lib/utils/mediaAssets.ts:35`) reads a leading `/` as the project root, GitHub-style, so the path becomes `<folder>/repo/rust/Axome/src-tauri/icons/icon.png`.
+  - **`file://` URLs:** passed through untouched on desktop, and the webview can't load them.
+  - **No fallback on desktop:** "Local image unavailable" never shows, because the asset URL is always non-null.
+  - **Fix (Axome's call):**
+    - In chat (`MarkdownRenderer` with no `filePath`) on a local desktop folder, an absolute path or `file://` URL is a host path, mapped through the asset protocol, which already allows any path.
+    - **Remote stays as is:** the server's project-only file reads (`validate_path`, `src-crates/axome-core/src/services/files.rs:845-858`) are not widened. Absolute or outside-folder images on the web client or in remote folders show "Local image unavailable". Toph is fixing remote issues separately. Desktop with an `axome://` folder also reads images from the local disk (`src/lib/platform/desktop.ts:140`) [INFERENCE from code]; that belongs with the remote work.
+    - Markdown file previews keep `/` as the repo root.
+    - `<img>` gets an error fallback to "Local image unavailable".
+
+**axo requests:** all fulfilled in `118a716` ([`handoff/axo-deda8e6-batch.md`](handoff/axo-deda8e6-batch.md)).
+
+**Delivery (Toph):** one adoption covering everything, project extensions included, pinned at `9dd6fa1` (P39). Workspace Trust is not built here: every folder-scoped call goes through one `project_access(folder)` seam that returns `Trust` today, and roadmap Phase 4 replaces its body.
+
+**Open**
+
+1. **Extensions opening or closing chats (Q73).** Deferred; no realistic extension needs it yet. Without a hook, axo answers `no_lifecycle` and nothing happens. Adding a hook means deciding:
+   - where a chat appears when it targets a folder with no tab, or another window;
+   - who sees and owns a chat nobody is looking at;
+   - how a close asks for consent when the chat has running work or an unsent draft.
+2. ~~Logging in to a project extension's provider.~~ Settled (Toph): in the **This Project** section of Settings → Extensions, next to the extension that adds the provider ([P38](design.md#decisions)).

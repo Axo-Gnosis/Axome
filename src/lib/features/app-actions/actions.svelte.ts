@@ -52,12 +52,12 @@ export async function reloadView(): Promise<void> {
   window.location.reload()
 }
 
-/** Rebuild the extension catalog on the active folder's host, then reload this view to apply it. */
-export async function reloadExtensions(): Promise<void> {
+/** Rebuild the integration catalog on the active folder's host, then reload this view to apply it. */
+export async function reloadIntegrations(): Promise<void> {
   try {
-    await backend.extensions.reload(getActiveFolderPath())
+    await backend.integrations.reload(getActiveFolderPath())
   } catch (error) {
-    notify.error('Reload extensions failed', getErrorMessage(error))
+    notify.error('Reload integrations failed', getErrorMessage(error))
     return
   }
   await reloadView()

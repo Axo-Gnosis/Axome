@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 
 use axo::{SessionTools, Target};
 use parking_lot::Mutex;
-use playwright_rs::protocol::{
-    AriaSnapshotMode, AriaSnapshotOptions, Locator, Page, WaitUntil,
-};
+use playwright_rs::protocol::{AriaSnapshotMode, AriaSnapshotOptions, Locator, Page, WaitUntil};
 use serde::{Deserialize, Serialize};
 
 const MAX_TELEMETRY_ENTRIES: usize = 200;
@@ -64,9 +62,7 @@ pub struct TelemetryDelta {
 
 impl TelemetryDelta {
     pub fn is_empty(&self) -> bool {
-        self.console_errors.is_empty()
-            && self.failed_requests.is_empty()
-            && self.dialogs.is_empty()
+        self.console_errors.is_empty() && self.failed_requests.is_empty() && self.dialogs.is_empty()
     }
 }
 
@@ -112,7 +108,12 @@ impl TabTelemetry {
             .collect();
         self.network_cursor = self.network.len();
 
-        let dialogs = self.dialogs.iter().skip(self.dialog_cursor).cloned().collect();
+        let dialogs = self
+            .dialogs
+            .iter()
+            .skip(self.dialog_cursor)
+            .cloned()
+            .collect();
         self.dialog_cursor = self.dialogs.len();
 
         TelemetryDelta {
@@ -334,16 +335,14 @@ pub async fn cap_or_spill_text(
     }
     let preview = &text[..cut];
 
-    let saved = save_spill_target(session_tools, fallback_dir, prefix, "txt", text.as_bytes()).await;
+    let saved =
+        save_spill_target(session_tools, fallback_dir, prefix, "txt", text.as_bytes()).await;
     let out = match &saved {
         Some(target) => format!(
             "{preview}\n\n[Truncated: {} total bytes. Full output saved to {target}]",
             text.len()
         ),
-        None => format!(
-            "{preview}\n\n[Truncated: {} total bytes]",
-            text.len()
-        ),
+        None => format!("{preview}\n\n[Truncated: {} total bytes]", text.len()),
     };
     (out, saved)
 }

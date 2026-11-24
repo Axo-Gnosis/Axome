@@ -1,6 +1,7 @@
 import { backend } from '$lib/api/backend'
 import type { StreamHandle } from '$lib/api/transport'
 import { notify } from '$lib/features/notifications/state.svelte'
+import { createExtensionsState, type ExtensionsState } from '$lib/features/settings/state/extensions.svelte'
 import type { ChatTab, TabId } from '$lib/features/workbench/model'
 import {
   addChatTab,
@@ -22,7 +23,9 @@ import type {
   ChatState
 } from '$lib/types/backend'
 import { getErrorMessage } from '$lib/utils/client-error'
+import { splitRemotePath } from '$lib/utils/paths'
 import { getOrCreate } from './registry'
+import { askKey, createAskDraft, parseAskBlocks, type AskDraft } from './elements/ask/askDocument'
 import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
 import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent, prependQueuedParts } from './parts/parts'
 
@@ -68,6 +71,10 @@ export class ChatController {
   draft = $state<ChatPart[]>([])
   editing = $state<{ entryId: string; anchor: string | null; parts: ChatPart[] } | null>(null)
   jobOutputs = $state<Record<string, ChatJobOutput>>({})
+  askDrafts = $state<Record<string, AskDraft>>({})
+  #extensions = $state.raw<ExtensionsState | null>(null)
+  #dismissedDiagnostics = $state.raw<string[]>([])
+  #askSessionId: string | null = null
   /** Parts sent as the first message once the first attach succeeds; `newChat` sets it. */
   seed: ChatPart[] | null = null
   #handle: StreamHandle<void> | null = null
@@ -110,6 +117,35 @@ export class ChatController {
     return this.state?.readOnly ?? false
   }
 
+  get extensions(): ExtensionsState | null {
+    return this.#extensions
+  }
+
+  holdExtensions(folderPath: string): () => void {
+    const state = createExtensionsState(splitRemotePath(folderPath) ? folderPath : null, folderPath)
+    this.#extensions = state
+    return () => {
+      if (this.#extensions === state) this.#extensions = null
+      state.release()
+    }
+  }
+
+  get extensionDiagnostics(): string[] {
+    return [...new Set(this.state?.extensionDiagnostics)].filter((line) => !this.#dismissedDiagnostics.includes(line))
+  }
+
+  dismissExtensionDiagnostic(diagnostic: string): void {
+    this.#dismissedDiagnostics = [...this.#dismissedDiagnostics, diagnostic]
+  }
+
+  #reconcileExtensionDiagnostics(): void {
+    if (this.#dismissedDiagnostics.length) {
+      this.#dismissedDiagnostics = this.#dismissedDiagnostics.filter((line) =>
+        this.state?.extensionDiagnostics.includes(line)
+      )
+    }
+  }
+
   async attach(): Promise<void> {
     this.release()
     const folderPath = this.folderPath
@@ -129,7 +165,7 @@ export class ChatController {
         const { catalog, error } = getChatModels(folderPath)
         const model = catalog?.defaultModel ?? catalog?.models[0]?.selector
         if (!catalog || !model) throw new Error(error ?? `No axo models are available. ${MODELS_HINT}`)
-        sessionId = await backend.chat.create(folderPath, model, catalog.defaultThinking)
+        sessionId = await backend.chat.create(folderPath, model, catalog.defaultThinking, catalog.defaultServiceTier)
         // Kept even when superseded: the next attach reuses it, and the backend reclaims an unattached one.
         if (this.#target.kind === 'tab') setChatTabSessionId(this.#target.tabId, sessionId)
         if (generation !== this.#generation) return
@@ -166,7 +202,10 @@ export class ChatController {
   apply(event: ChatEvent): void {
     switch (event.type) {
       case 'snapshot':
+        if (this.state?.sessionId !== event.state.sessionId) this.#dismissedDiagnostics = []
         this.state = event.state
+        this.#reconcileAsks()
+        this.#reconcileExtensionDiagnostics()
         this.connection = 'live'
         this.error = null
         if (this.#target.kind === 'tab') setChatTabTitle(this.#target.tabId, event.state.live.title ?? 'New Chat')
@@ -178,11 +217,22 @@ export class ChatController {
         }
         break
       case 'live':
-        if (this.state) this.state.live = event.live
+        if (this.state) {
+          this.state.live = event.live
+          this.#reconcileAsks()
+        }
         if (this.#target.kind === 'tab') setChatTabTitle(this.#target.tabId, event.live.title ?? 'New Chat')
         break
       case 'sessionTools':
         if (this.state) this.state.sessionTools = event.tools
+        break
+      case 'extensionCatalog':
+        if (this.state) {
+          this.state.commands = event.commands
+          this.state.toolOrigins = event.toolOrigins
+          this.state.extensionDiagnostics = event.diagnostics
+          this.#reconcileExtensionDiagnostics()
+        }
         break
       case 'delta': {
         if (!this.state) break
@@ -238,6 +288,7 @@ export class ChatController {
           if (this.#target.kind === 'tab') {
             setChatTabSessionId(this.#target.tabId, null)
             this.state = null
+            this.#reconcileAsks()
             this.editing = null
             this.error = null
             notify.info('Started a new chat', 'The previous axo session no longer exists.')
@@ -266,6 +317,27 @@ export class ChatController {
               ? 'running'
               : 'idle'
       )
+    }
+  }
+
+  #reconcileAsks(): void {
+    const sessionId = this.state?.sessionId ?? null
+    if (this.#askSessionId !== sessionId) {
+      this.#askSessionId = sessionId
+      this.askDrafts = {}
+    }
+    const pending = new Set<string>()
+    for (const ask of this.state?.live.questions ?? []) {
+      const key = askKey(ask.callId)
+      const blocks = parseAskBlocks(ask)
+      if (!blocks) continue
+      pending.add(key)
+      const draft = this.askDrafts[key]
+      if (!draft || JSON.stringify(draft.blocks) !== JSON.stringify(blocks))
+        this.askDrafts[key] = createAskDraft(blocks)
+    }
+    for (const key of Object.keys(this.askDrafts)) {
+      if (!pending.has(key)) delete this.askDrafts[key]
     }
   }
 
@@ -413,8 +485,8 @@ export class ChatController {
     if (folderPath && sessionId) await backend.chat.abort(folderPath, sessionId)
   }
 
-  async answer(callId: string, answers: ChatAnswer[]): Promise<void> {
-    await this.#withSession((folder, id) => backend.chat.answer(folder, id, callId, answers))
+  async answer(callId: string, answers: ChatAnswer[]): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.answer(folder, id, callId, answers))
   }
 
   async dismiss(callId: string): Promise<void> {

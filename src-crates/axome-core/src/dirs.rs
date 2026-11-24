@@ -1,4 +1,8 @@
 use std::ffi::OsStr;
+#[cfg(unix)]
+use std::fs::DirBuilder;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const APP_DIR: &str = "axome";
@@ -73,6 +77,32 @@ fn directory(xdg: Option<&OsStr>, home: Option<&OsStr>, fallback: &str) -> Resul
 
 pub fn folder_settings_path(folder: &Path) -> PathBuf {
     folder.join(FOLDER_CONFIG_DIR).join(SETTINGS_FILE)
+}
+
+/// Create `dir` (and any missing ancestors) with mode 0o700 set
+/// atomically at creation, so the leaf directory is never world-
+/// traversable even briefly. Falls back to a chmod after creation when
+/// the dir already exists or on non-unix targets.
+pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        if dir.is_dir() {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            return Ok(());
+        }
+        let mut builder = DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(dir)?;
+        // Recursive creation only applies the mode to the leaf dir on
+        // some platforms; tighten the leaf explicitly so callers always
+        // see 0o700 regardless of which ancestor segments were new.
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir)
+    }
 }
 
 #[cfg(test)]

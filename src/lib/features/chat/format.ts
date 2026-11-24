@@ -10,8 +10,8 @@ export function formatTokens(n: number): string {
   return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
 }
 
-export function formatCost(usd: number): string {
-  return `$${usd.toFixed(2)}`
+export function formatCost(usd: number | null): string {
+  return usd === null ? 'unknown' : `$${usd.toFixed(2)}`
 }
 
 export function formatDuration(ms: number): string {

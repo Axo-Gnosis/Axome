@@ -33,6 +33,13 @@ let
     .${pkgs.stdenv.hostPlatform.system}
       or (throw "Unsupported architecture for tarball: ${pkgs.stdenv.hostPlatform.system}");
 
+  interpreter =
+    {
+      "x86_64-linux" = "/lib64/ld-linux-x86-64.so.2";
+      "aarch64-linux" = "/lib/ld-linux-aarch64.so.1";
+    }
+    .${pkgs.stdenv.hostPlatform.system};
+
   tarBaseName = "axome-server-${cleanVersion}-linux-${tarArch}";
 
   # Reusable relocatable bundle containing binary, libraries, launcher and unit
@@ -55,6 +62,8 @@ let
             chmod +w "$out/bin/.axome-server-bin"
             ${pkgs.stdenv.cc.targetPrefix}strip "$out/bin/.axome-server-bin"
             patchelf --set-rpath '$ORIGIN/../lib' "$out/bin/.axome-server-bin"
+            install -Dm755 "${pkgs.bun}/bin/bun" "$out/lib/axome/bun"
+            patchelf --set-interpreter ${interpreter} --remove-rpath "$out/lib/axome/bun"
 
             # Assets compose with the binary here, without a Rust build dependency.
             cp -r "${webFrontend}/." "$out/share/axome/web/"
@@ -76,7 +85,7 @@ let
       BIN_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
       BASE_DIR="\$(cd "\$BIN_DIR/.." && pwd)"
       LIB_DIR="\$BASE_DIR/lib"
-      exec "\$LIB_DIR/$ldSoName" --inhibit-cache --library-path "\$LIB_DIR" --argv0 axome-server "\$BIN_DIR/.axome-server-bin" --web-assets-dir "\$BASE_DIR/share/axome/web" "\$@"
+      exec "\$LIB_DIR/$ldSoName" --inhibit-cache --library-path "\$LIB_DIR" --argv0 axome-server "\$BIN_DIR/.axome-server-bin" --web-assets-dir "\$BASE_DIR/share/axome/web" --bun "\$BASE_DIR/lib/axome/bun" "\$@"
       EOF
             chmod +x "$out/bin/axome-server"
 

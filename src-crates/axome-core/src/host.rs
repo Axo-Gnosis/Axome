@@ -1,6 +1,6 @@
 use crate::errors::ApiError;
 use crate::events::{deliver, EventSink, HostEvent};
-use crate::services::extensions::ExtensionService;
+use crate::services::integrations::IntegrationService;
 use crate::services::{
     axo::AxoService,
     db::DatabaseService,
@@ -24,13 +24,14 @@ use axome_protocol::rpc::WorkbenchRun;
 use axome_protocol::server_config::Supervision;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct HostOptions {
     pub dirs: HostDirs,
     pub db_file: &'static str,
     pub supervision: Supervision,
+    pub bun: Option<PathBuf>,
 }
 
 impl HostOptions {
@@ -39,6 +40,7 @@ impl HostOptions {
             dirs,
             db_file,
             supervision: Supervision::default(),
+            bun: None,
         }
     }
 }
@@ -76,7 +78,7 @@ impl Host {
     /// requires the caller's Tokio runtime context.
     pub fn new(options: HostOptions, events: EventSink<HostEvent>) -> Result<Self, anyhow::Error> {
         let dirs = options.dirs;
-        ExtensionService::set_installed_dir(dirs.data.join("extensions"));
+        IntegrationService::set_installed_dir(dirs.data.join("integrations"));
         let db = Arc::new(DatabaseService::new(dirs.data.join(options.db_file))?);
         let issues = Arc::new(IssueService::new());
         let git = Arc::new(GitService::new());
@@ -85,6 +87,7 @@ impl Host {
             Arc::clone(&db),
             dirs.clone(),
             options.supervision,
+            options.bun,
             Arc::clone(&events),
         );
         let session_index = SessionIndexService::new(
@@ -105,9 +108,13 @@ impl Host {
         let memory = Arc::clone(&axo.memory);
         let on_global_settings: Arc<dyn Fn() + Send + Sync> = {
             let memory = Arc::downgrade(&memory);
+            let axo = Arc::downgrade(&axo);
             Arc::new(move || {
                 if let Some(memory) = memory.upgrade() {
                     memory.refresh(false);
+                }
+                if let Some(axo) = axo.upgrade() {
+                    axo.global_settings_changed();
                 }
             })
         };
@@ -158,6 +165,7 @@ impl Host {
         self.files.evict(folder);
         self.tasks.stop(folder);
         self.git.evict(folder);
+        self.axo.release_extension_scope(folder);
     }
 
     /// Called only under exclusive admission after all affected ownership claims

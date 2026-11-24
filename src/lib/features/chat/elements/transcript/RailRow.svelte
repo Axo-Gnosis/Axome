@@ -58,7 +58,7 @@
     if (
       window.getSelection()?.toString() ||
       !(target instanceof Element) ||
-      target.closest('a, button, input, textarea, select, label, form, [contenteditable], [role="button"]') ||
+      target.closest('a, button, summary, input, textarea, select, label, form, [contenteditable], [role="button"]') ||
       // A nested call owns its own clicks; its group only toggles from its row or the gaps between calls.
       target.closest('[data-slot="rail-row"]') !== event.currentTarget
     ) {

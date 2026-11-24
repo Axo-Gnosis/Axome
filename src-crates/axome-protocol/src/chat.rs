@@ -1,5 +1,7 @@
 //! Chat wire model: axo session entries, live state and events as clients render them.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
@@ -14,15 +16,39 @@ pub enum ChatThinking {
     Max,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatServiceTier {
+    #[default]
+    Standard,
+    Flex,
+    Fast,
+    Ultrafast,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatModel {
     /// "provider/id" selector.
     pub selector: String,
     pub provider: String,
+    pub origin: Option<String>,
     pub name: String,
     /// Supported levels, lowest first; `[Off]` without reasoning.
     pub thinking: Vec<ChatThinking>,
+    pub service_tiers: BTreeMap<ChatServiceTier, f64>,
     pub context_window: u64,
     /// Accepts image input; text-only models get placeholders for images.
     pub images: bool,
@@ -45,6 +71,7 @@ pub struct ChatModelCatalog {
     /// Resolved `defaultModel`, or `@default` when unset, when it is in `models`.
     pub default_model: Option<String>,
     pub default_thinking: ChatThinking,
+    pub default_service_tier: ChatServiceTier,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,8 +157,8 @@ pub struct ChatUsage {
     pub cache_read: u64,
     pub cache_write: u64,
     pub total_tokens: u64,
-    /// USD.
-    pub cost: f64,
+    /// USD; null when any part of the usage has unknown pricing.
+    pub cost: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -241,6 +268,10 @@ pub enum ChatNotice {
     Host {
         text: String,
     },
+    Extension {
+        id: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -252,7 +283,7 @@ pub enum ChatNotice {
 pub enum ChatEntryBody {
     /// `anchor`: where an edit of this message branches from (`None` = session start).
     /// `siblings`: ids of every user message with the same anchor (itself included), oldest first.
-    /// `from`: set when a parent agent routed this input with `send`.
+    /// `from`: set when an agent or extension submitted this input.
     /// `keywords`: names of the keywords that fired for this submission, first occurrence first.
     User {
         parts: Vec<ChatPart>,
@@ -265,9 +296,12 @@ pub enum ChatEntryBody {
         blocks: Vec<ChatBlock>,
         /// "provider/model" selector.
         model: String,
+        service_tier: ChatServiceTier,
+        thinking: Option<ChatThinking>,
         usage: ChatUsage,
         stop_reason: ChatStopReason,
         error: Option<String>,
+        provider_unavailable: bool,
         duration_ms: Option<u64>,
     },
     ToolResult {
@@ -294,6 +328,11 @@ pub enum ChatEntryBody {
     },
     ThinkingChange {
         thinking: ChatThinking,
+        automatic: bool,
+        service_tier: Option<ChatServiceTier>,
+    },
+    ServiceTierChange {
+        service_tier: ChatServiceTier,
     },
     Compaction {
         summary: String,
@@ -312,11 +351,16 @@ pub enum ChatEntryBody {
     },
 }
 
-/// The agent session that routed a user entry; `name` is its display name when known.
+/// Who submitted a user entry when it did not come directly from the user.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatSender {
-    pub name: Option<String>,
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ChatSender {
+    Agent { name: Option<String> },
+    Extension { id: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -351,40 +395,89 @@ pub struct ChatQueued {
     pub submission_id: String,
     pub kind: ChatQueueKind,
     pub parts: Vec<ChatPart>,
+    pub from: Option<ChatSender>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ChatAskBlock {
+    Markdown {
+        text: String,
+    },
+    Choice {
+        id: String,
+        question: String,
+        #[serde(default)]
+        optional: bool,
+        options: Vec<ChatAskOption>,
+        #[serde(default)]
+        multi: bool,
+    },
+    Text {
+        id: String,
+        question: String,
+        #[serde(default)]
+        optional: bool,
+        #[serde(default)]
+        multiline: bool,
+        #[serde(default)]
+        placeholder: Option<String>,
+        #[serde(default)]
+        prefill: Option<String>,
+    },
+    Number {
+        id: String,
+        question: String,
+        #[serde(default)]
+        optional: bool,
+        #[serde(default)]
+        integer: bool,
+        #[serde(default)]
+        min: Option<serde_json::Number>,
+        #[serde(default)]
+        max: Option<serde_json::Number>,
+        #[serde(default)]
+        default: Option<serde_json::Number>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatQuestionOption {
+pub struct ChatAskOption {
+    pub value: String,
     pub label: String,
+    #[serde(default)]
     pub description: Option<String>,
-    pub preview: Option<String>,
+    #[serde(default)]
+    pub recommended: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatQuestion {
-    pub id: String,
-    pub question: String,
-    pub header: Option<String>,
-    pub options: Vec<ChatQuestionOption>,
-    pub multi: bool,
-    pub recommended: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatQuestions {
-    pub call_id: String,
-    pub questions: Vec<ChatQuestion>,
+#[serde(untagged)]
+pub enum ChatAnswerValue {
+    Text(String),
+    Number(serde_json::Number),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatAnswer {
     pub id: String,
-    pub selected: Vec<String>,
-    pub custom: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<ChatAnswerValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatQuestions {
+    pub call_id: String,
+    pub blocks: Vec<ChatAskBlock>,
+    pub deadline_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -549,6 +642,8 @@ pub struct ChatLive {
     pub maintenance: Option<ChatMaintenance>,
     pub model: Option<String>,
     pub thinking: ChatThinking,
+    pub service_tier: ChatServiceTier,
+    pub effective_service_tier: ChatServiceTier,
     pub tools: Vec<ChatToolRun>,
     pub queue: Vec<ChatQueued>,
     pub questions: Vec<ChatQuestions>,
@@ -576,7 +671,7 @@ pub struct ChatReview {
     pub plan: bool,
 }
 
-/// When a built-in may run, mirroring `axo::CommandPolicy`.
+/// When a catalog command may run, mirroring `axo::CommandPolicy`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatCommandPolicy {
@@ -601,6 +696,8 @@ pub enum ChatCommandKind {
     Skill { argument_hint: Option<String> },
     /// Enters a mode; the rest of the message is its prompt.
     Mode { argument_hint: Option<String> },
+    /// Registered handler with one free-text argument.
+    Registered { argument_hint: Option<String> },
 }
 
 /// One entry of the session's command catalog, mirroring `axo::CommandInfo` JSON.
@@ -610,6 +707,7 @@ pub struct ChatCommand {
     pub name: String,
     pub description: String,
     pub policy: ChatCommandPolicy,
+    pub origin: Option<String>,
     #[serde(flatten)]
     pub kind: ChatCommandKind,
 }
@@ -756,6 +854,8 @@ pub struct ChatState {
     pub streaming: Option<Vec<ChatBlock>>,
     pub live: ChatLive,
     pub commands: Vec<ChatCommand>,
+    pub tool_origins: BTreeMap<String, String>,
+    pub extension_diagnostics: Vec<String>,
     pub session_tools: Vec<ChatSessionTool>,
     pub toolbox: ChatToolbox,
     pub read_only: bool,
@@ -810,6 +910,11 @@ pub enum ChatEvent {
     },
     SessionTools {
         tools: Vec<ChatSessionTool>,
+    },
+    ExtensionCatalog {
+        commands: Vec<ChatCommand>,
+        tool_origins: BTreeMap<String, String>,
+        diagnostics: Vec<String>,
     },
     Delta {
         delta: ChatDelta,

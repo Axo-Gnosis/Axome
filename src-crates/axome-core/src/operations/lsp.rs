@@ -2,8 +2,8 @@ use crate::errors::ApiError;
 use crate::events::EventSink;
 use crate::host::Host;
 use crate::services::env::EnvironmentService;
-use crate::services::extensions::ExtensionService;
 use crate::services::folders::resolve_folder;
+use crate::services::integrations::IntegrationService;
 use crate::services::lsp::{resolve_launch, resolve_server_status};
 use crate::services::settings::SettingsService;
 use crate::services::settings_resolution::{
@@ -30,9 +30,9 @@ impl Host {
         let effective =
             resolve_effective_settings_for_folder_path(&self.dirs, project_path.as_deref());
 
-        let extensions = ExtensionService::current();
+        let integrations = IntegrationService::current();
         let mut entries = Vec::new();
-        for server in &extensions.lsp_servers {
+        for server in &integrations.lsp_servers {
             let config = lsp_config_record(&effective.settings, &server.server_definition_id);
             let status = resolve_server_status(server, &config, &env);
             entries.push(LspServerSettingsEntry {
@@ -81,8 +81,8 @@ impl Host {
         root_path: String,
         events: EventSink<LspEvent>,
     ) -> Result<(), ApiError> {
-        let extensions = ExtensionService::current();
-        let server = extensions
+        let integrations = IntegrationService::current();
+        let server = integrations
             .find_lsp_server(&server_definition_id)
             .ok_or_else(|| {
                 ApiError::NotFound(format!(

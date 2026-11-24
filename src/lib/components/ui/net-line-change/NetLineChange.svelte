@@ -13,6 +13,7 @@
   @component
   NetLineChange — added minus removed lines as one signed count (`+3`, `-2`).
   A change that nets to zero renders `fallback` instead (or nothing).
+  `split` shows the two counts independently instead.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte'
@@ -23,11 +24,13 @@
     added,
     removed,
     fallback,
+    split = false,
     class: className,
     ...rest
   }: Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
     added: number
     removed: number
+    split?: boolean
     fallback?: Snippet
     class?: string
   } = $props()
@@ -35,7 +38,12 @@
   const net = $derived(added - removed)
 </script>
 
-{#if net !== 0}
+{#if split}
+  <span data-slot="net-line-change" class={cn(netLineChangeVariants(), 'inline-flex gap-1', className)} {...rest}>
+    <span class="text-success">+{added}</span>
+    <span class="text-danger">−{removed}</span>
+  </span>
+{:else if net !== 0}
   <span
     data-slot="net-line-change"
     class={cn(netLineChangeVariants({ direction: net > 0 ? 'up' : 'down' }), className)}
