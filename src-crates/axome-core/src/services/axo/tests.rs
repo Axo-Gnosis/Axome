@@ -105,6 +105,7 @@ impl Fixture {
             .await
             .unwrap(),
         );
+        super::engine::register_providers(&models).unwrap();
         let api = Arc::new(ScriptedApi::new(turns));
         let axo = Axo::builder(
             models.clone(),
@@ -175,7 +176,7 @@ impl Fixture {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn claude_subscription_requires_login_without_catalog_or_api_key() {
+async fn anthropic_auth_requires_login_without_catalog_or_api_key() {
     use axome_protocol::axo::{AxoCredentialSource, AxoProviderStatus};
 
     let fixture = Fixture::new(vec![]).await;
@@ -183,7 +184,7 @@ async fn claude_subscription_requires_login_without_catalog_or_api_key() {
     let provider = before
         .providers
         .iter()
-        .find(|provider| provider.id == "anthropic-subscription")
+        .find(|provider| provider.id == "anthropic-auth")
         .expect("subscription login must remain visible without catalog rows");
     assert_eq!(provider.models, 0);
     assert!(provider.requires_key);
@@ -198,13 +199,11 @@ async fn claude_subscription_requires_login_without_catalog_or_api_key() {
 
     let error = fixture
         .service
-        .provider_set_key("anthropic-subscription", "synthetic-api-key".into(), None)
+        .provider_set_key("anthropic-auth", "synthetic-api-key".into(), None)
         .await
         .expect_err("the service must reject API keys for subscription login");
     assert!(
-        error
-            .to_string()
-            .contains("Log in to anthropic-subscription"),
+        error.to_string().contains("Log in to anthropic-auth"),
         "{error}"
     );
 
@@ -212,7 +211,7 @@ async fn claude_subscription_requires_login_without_catalog_or_api_key() {
     let provider = after
         .providers
         .iter()
-        .find(|provider| provider.id == "anthropic-subscription")
+        .find(|provider| provider.id == "anthropic-auth")
         .unwrap();
     assert!(matches!(provider.source, AxoCredentialSource::None));
     assert!(matches!(

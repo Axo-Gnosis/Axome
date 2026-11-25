@@ -24,6 +24,8 @@ axo.workspace = true
 axo-agent.workspace = true
 axo-ai.workspace = true
 axo-extensions.workspace = true
+axo-codex.workspace = true
+axo-anthropic-auth.workspace = true
 async-trait.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 futures-util.workspace = true

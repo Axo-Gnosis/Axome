@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use axo_ai::auth::codex::BASE_URL as CODEX_BASE_URL;
 use axo_ai::ModelAuth;
+use axo_codex::BASE_URL as CODEX_BASE_URL;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 use url::Url;

@@ -51,6 +51,16 @@ impl CredentialStore for ProviderCredentials {
     }
 }
 
+/// The credential owner of the Axo-Extras subscription providers.
+const EXTRAS_OWNER: &str = "axo-extras";
+
+/// Registers the subscription providers Axome ships: ChatGPT Codex and the Anthropic
+/// subscription (`anthropic-auth`).
+pub(super) fn register_providers(models: &Models) -> Result<(), axo_ai::Error> {
+    models.register(EXTRAS_OWNER, axo_codex::provider(reqwest::Client::new()))?;
+    models.register(EXTRAS_OWNER, axo_anthropic_auth::provider()?)
+}
+
 pub(super) fn model(models: &Models, selector: &str) -> Option<Arc<axo_ai::Model>> {
     let (provider, id) = selector.split_once('/')?;
     models.lookup(provider, id)
@@ -109,6 +119,7 @@ impl Engine {
                 )
             }
         };
+        register_providers(&models).map_err(|error| axo_error(error.into()))?;
         let models = Arc::new(models);
         let axo = Arc::new(
             Axo::builder(
