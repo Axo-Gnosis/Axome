@@ -6,6 +6,8 @@
   import PartChip from '$lib/features/chat/parts/PartChip.svelte'
   import { partsText } from '$lib/features/chat/parts/parts'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
+  import { formatCount } from '$lib/features/chat/format'
+  import { isActiveJob } from '$lib/features/chat/jobs'
   import type { ChatQueued } from '$lib/types/backend'
   import Icon from '$lib/icons/Icon.svelte'
   import { cn } from '$lib/utils/cn'
@@ -31,6 +33,9 @@
   const queue = $derived(live?.queue ?? [])
   const running = $derived(live?.running ?? false)
   const autoPaused = $derived(live?.autoPaused ?? false)
+  const jobs = $derived(live?.jobs ?? [])
+  const runningJobs = $derived(jobs.filter((job) => isActiveJob(job.status)).length)
+  const waitingResults = $derived(jobs.reduce((sum, job) => sum + job.pendingResults, 0))
   const disabled = $derived(controller.connection !== 'live')
 
   let open = $state(true)
@@ -67,12 +72,15 @@
   }
 </script>
 
-{#if autoPaused}
+<!-- ponytail: held teammate mail and quiet host messages are not counted; axo does not expose them per session. -->
+{#if autoPaused && (queue.length > 0 || runningJobs > 0 || waitingResults > 0)}
   <Alert.Root variant="warning" class="mb-2 flex items-center justify-between gap-3">
     <Alert.Description>
       {queue.length
-        ? 'Paused after an error or stop. Held messages and background wakes wait for Resume.'
-        : 'Background wakes paused after an error or stop.'}
+        ? 'Paused after a stop or an error. Queued messages wait until you resume or send a message.'
+        : waitingResults > 0
+          ? `${formatCount(waitingResults, 'background result')} finished while paused. Resume to hand ${waitingResults === 1 ? 'it' : 'them'} to axo, or send a message.`
+          : `${formatCount(runningJobs, 'background job')} still running. axo is paused after a stop or an error, so it won't pick up the result on its own. Resume to let it, or send a message.`}
     </Alert.Description>
     <Button variant="outline" size="xs" onclick={() => void controller.resumeWakes()}>Resume</Button>
   </Alert.Root>

@@ -343,6 +343,10 @@ export const backend = {
     setMode(folderPath: string, sessionId: string, mode: string | null, parts: ChatPart[]): Promise<void> {
       return invoke<void>('chat_set_mode', { folderPath, sessionId, mode, parts })
     },
+    /** Names the session; null or a blank name clears it, and the first prompt titles the chat again. */
+    setTitle(folderPath: string, sessionId: string, title: string | null): Promise<void> {
+      return invoke<void>('chat_set_title', { folderPath, sessionId, title })
+    },
     /** Keyword occurrences per text, in UTF-16 offsets. */
     keywordMatches(folderPath: string, sessionId: string, texts: string[]): Promise<ChatKeywordMatch[][]> {
       return invoke<ChatKeywordMatch[][]>('chat_keyword_matches', { folderPath, sessionId, texts })

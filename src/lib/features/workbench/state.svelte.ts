@@ -165,7 +165,13 @@ function commit(next: { tabs?: Tab[]; activeTabId?: TabId | null } = {}, persist
   const nextFolders = new Set(tabs.map((tab) => tab.folderPath))
   const activeTabId = next.activeTabId === undefined ? workbench.activeTabId : next.activeTabId
   if (activeTabId !== workbench.activeTabId) activationSeq += 1
-  workbench = { tabs: [...tabs], activeTabId }
+  // Activating a chat tab marks its finished run as seen.
+  workbench = {
+    tabs: tabs.map((tab) =>
+      tab.id === activeTabId && tab.kind === 'chat' && tab.unread ? { ...tab, unread: false } : tab
+    ),
+    activeTabId
+  }
   const active = activeTabId ? tabs.find((t) => t.id === activeTabId) : undefined
   if (active) lastActiveByFolder.set(active.folderPath, active.id)
   for (const folderPath of nextFolders) {
@@ -538,6 +544,7 @@ export function addChatTab(folderPath: string, init: { sessionId: string | null;
     title: init.title,
     sessionId: init.sessionId,
     status: 'dormant',
+    unread: false,
     locked: false
   })
 }
@@ -552,7 +559,11 @@ export function setChatTabTitle(tabId: TabId, title: string): void {
 }
 
 export function setChatTabStatus(tabId: TabId, status: ChatStatus): void {
-  updateTab(tabId, (t) => (t.kind === 'chat' && t.status !== status ? { ...t, status } : t))
+  updateTab(tabId, (t) => {
+    if (t.kind !== 'chat' || t.status === status) return t
+    const finished = t.status === 'running' && (status === 'idle' || status === 'failed')
+    return { ...t, status, unread: t.unread || (finished && workbench.activeTabId !== tabId) }
+  })
 }
 
 // SESSION TABS //

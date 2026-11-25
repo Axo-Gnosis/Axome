@@ -143,6 +143,17 @@ impl Host {
             .block_on(self.axo.set_mode(&folder, &session_id, mode, parts))?
     }
 
+    pub fn chat_set_title(
+        &self,
+        folder_path: String,
+        session_id: String,
+        title: Option<String>,
+    ) -> Result<(), ApiError> {
+        let folder = resolve_folder(&folder_path)?;
+        self.axo
+            .block_on(self.axo.set_title(&folder, &session_id, title))?
+    }
+
     pub fn chat_keyword_matches(
         &self,
         folder_path: String,

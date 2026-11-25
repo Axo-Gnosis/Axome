@@ -4,7 +4,6 @@
   import * as Alert from '$lib/components/ui/alert'
   import { BlurFade } from '$lib/components/ui/blur-fade'
   import { Button, IconButton } from '$lib/components/ui/button'
-  import { StatusDot } from '$lib/components/ui/status-dot'
   import { TidalStipple, type StippleParams } from '$lib/components/ui/tidal-stipple'
   import * as chats from '$lib/features/chat/registry'
   import { getChatModels, MODELS_HINT } from '$lib/features/chat/models.svelte'
@@ -12,7 +11,8 @@
   import { ChatKeys, setChatKeys, type KeyScope } from '$lib/features/chat/keymap/router.svelte'
   import { TranscriptNav } from '$lib/features/chat/keymap/nav.svelte'
   import { ASK_ENTRY } from '$lib/features/chat/elements/ask/askDocument'
-  import { transcriptTurns } from '$lib/features/chat/turns'
+  import { modelName } from '$lib/features/chat/format'
+  import { pendingSetup, transcriptTurns } from '$lib/features/chat/turns'
   import { isActiveJob, transcriptJobs } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
@@ -34,8 +34,8 @@
   import { askCountdown } from '$lib/features/chat/elements/ask/askDocument'
   import { fileReference } from '$lib/features/chat/elements/prompt-input/attachments'
   import { ModelPicker, EffortPicker, THINKING_LEVELS } from '$lib/features/chat/elements/model-picker'
-  import { PersonaPicker } from '$lib/features/chat/elements/persona-picker'
-  import { ModePill } from '$lib/features/chat/elements/mode-pill'
+  import { ComposerNote } from '$lib/features/chat/elements/composer-note'
+  import { PersonaCards } from '$lib/features/chat/elements/persona-cards'
   import { backend } from '$lib/api/backend'
   import { hasContent } from '$lib/features/chat/parts/parts'
   import { isImagePart } from '$lib/features/chat/parts/image'
@@ -78,6 +78,7 @@
     return { anchored, after }
   })
   const running = $derived(chat?.live.running ?? false)
+  const pending = $derived(chat && !chat.isChild ? pendingSetup(turns, chat.live) : [])
   const model = $derived(chat?.live.model ?? null)
   const current = $derived(available.find((item) => item.selector === model))
   const modelUnavailable = $derived(!!model && !!catalog && !current)
@@ -320,6 +321,14 @@
                 Ask anything, or type <span class="font-mono">/</span> for commands.
               </p>
             </FolderHero>
+            {#if personas.length}
+              <PersonaCards
+                agents={personas}
+                value={chat?.live.agent ?? null}
+                disabled={controller.connection !== 'live' || controller.readOnly}
+                onSelect={(agent) => report(controller.setAgent(agent))}
+              />
+            {/if}
             {#if catalogMessage}
               <BlurFade delay={0.15} class="w-full max-w-xl">
                 <Alert.Root variant={models.error ? 'danger' : 'info'}>
@@ -406,11 +415,7 @@
             <QueuedMessages {controller} {owner} onEdited={() => composer?.focus()} />
             {#if hiddenAsk}
               {@const callId = hiddenAsk.callId}
-              <div
-                data-slot="ask-jump"
-                class="mb-1.5 flex min-w-0 items-center gap-x-2 rounded-lg border border-edge bg-surface py-1 ps-3 pe-1 text-sm text-muted"
-              >
-                <StatusDot tone="waiting" size="sm" />
+              <ComposerNote tone="waiting">
                 <span class="font-medium text-fg">axo is waiting on {questionCount} questions</span>
                 {#if hiddenAsk.deadlineMs !== null}
                   <span class="min-w-0 truncate"
@@ -419,10 +424,37 @@
                     ></span
                   >
                 {/if}
-                <Button variant="accent" size="xs" class="ms-auto" onclick={() => enterAsk(callId)}
-                  >Jump to questions</Button
+                {#snippet action()}
+                  <Button variant="accent" size="xs" onclick={() => enterAsk(callId)}>Jump to questions</Button>
+                {/snippet}
+              </ComposerNote>
+            {/if}
+            {#if pending.length}
+              {#snippet revert()}
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={controller.connection !== 'live'}
+                  onclick={() => report(controller.revertSetup(pending))}>Cancel</Button
                 >
-              </div>
+              {/snippet}
+              <!-- No Cancel mid-turn: the diff may list what the running request already uses. -->
+              <ComposerNote action={running ? undefined : revert}>
+                <span>{running ? 'Next step' : 'Next message'}:</span>
+                <span class="min-w-0 truncate text-fg"
+                  >{pending
+                    .map(({ key, to }) =>
+                      key === 'persona'
+                        ? (to ?? 'Default')
+                        : key === 'mode'
+                          ? (to ?? 'no mode')
+                          : key === 'model'
+                            ? modelName(to ?? '')
+                            : `${to} effort`
+                    )
+                    .join(' · ')}</span
+                >
+              </ComposerNote>
             {/if}
             <PromptInput
               bind:this={composer}
@@ -457,21 +489,8 @@
                 >
                   <Icon icon={PaperclipIcon} size={14} />
                 </IconButton>
-                <ModePill
-                  mode={chat?.live.mode ?? null}
-                  effectiveMode={chat?.live.effectiveMode ?? null}
-                  onExit={() => report(controller.setMode(null))}
-                />
               {/snippet}
               {#snippet end()}
-                {#if personas.length}
-                  <PersonaPicker
-                    agents={personas}
-                    value={chat?.live.agent ?? null}
-                    disabled={controller.connection !== 'live' || controller.readOnly}
-                    onSelect={(agent) => report(controller.setAgent(agent))}
-                  />
-                {/if}
                 <ModelPicker
                   variant="ghost"
                   label={chatShortcut('pickModel') ? `Model (${chatShortcut('pickModel')})` : 'Model'}
@@ -517,6 +536,14 @@
         {/snippet}
       </Conversation>
     </div>
-    <SessionSidebar {controller} {sidebar} {owner} {now} {turns} onJump={(stepId) => void revealStep(stepId)} />
+    <SessionSidebar
+      {controller}
+      {sidebar}
+      {owner}
+      {now}
+      {turns}
+      {personas}
+      onJump={(stepId) => void revealStep(stepId)}
+    />
   </div>
 </div>

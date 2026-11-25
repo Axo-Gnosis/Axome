@@ -829,6 +829,8 @@ macro_rules! axome_rpc_ops {
             #[route(folder_path)]
             ChatSetMode => chat_set_mode(folder_path: String, session_id: String, mode: Option<String>, parts: Vec<$crate::chat::ChatPart>) -> ();
             #[route(folder_path)]
+            ChatSetTitle => chat_set_title(folder_path: String, session_id: String, title: Option<String>) -> ();
+            #[route(folder_path)]
             ChatKeywordMatches => chat_keyword_matches(folder_path: String, session_id: String, texts: Vec<String>) -> Vec<Vec<$crate::chat::ChatKeywordMatch>>;
             #[route(folder_path)]
             ChatAcceptResult => chat_accept_result(folder_path: String, session_id: String, call_id: String) -> ();

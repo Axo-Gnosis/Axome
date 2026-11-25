@@ -458,7 +458,6 @@ impl RelayState {
     pub(super) fn summary(&self, session_id: &str) -> ChatLiveSummary {
         let running = self.live.running || self.live.maintenance.is_some();
         let waiting = !self.live.questions.is_empty() || !self.live.reviews.is_empty();
-        let auto_paused = self.live.auto_paused;
         let mut active_commands = 0;
         let mut active_children = 0;
         for job in self.live.jobs.iter().filter(|job| job.status.is_active()) {
@@ -471,7 +470,6 @@ impl RelayState {
             session_id: session_id.to_owned(),
             running,
             waiting,
-            auto_paused,
             active_commands,
             active_children,
         }

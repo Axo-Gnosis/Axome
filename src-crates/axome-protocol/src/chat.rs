@@ -569,6 +569,8 @@ pub struct ChatJob {
     pub status: ChatJobStatus,
     pub call_id: Option<String>,
     pub started_at: i64,
+    /// Finished results waiting to be delivered to the agent.
+    pub pending_results: u32,
     pub kind: ChatJobKind,
 }
 
@@ -621,7 +623,6 @@ pub struct ChatLiveSummary {
     pub session_id: String,
     pub running: bool,
     pub waiting: bool,
-    pub auto_paused: bool,
     pub active_commands: u32,
     pub active_children: u32,
 }

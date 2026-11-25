@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 pub(super) fn parts_from_wire(parts: Vec<ChatPart>) -> Result<axo::PromptInput, ApiError> {
     let mut content = 0usize;
-    parts
+    let mut parts = parts
         .into_iter()
         .map(|part| {
             Ok(match part {
@@ -33,8 +33,15 @@ pub(super) fn parts_from_wire(parts: Vec<ChatPart>) -> Result<axo::PromptInput, 
                 }
             })
         })
-        .collect::<Result<Vec<_>, ApiError>>()
-        .map(axo::PromptInput::from)
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    // Trailing whitespace carries nothing; neither the model nor the transcript should see it.
+    if let Some(axo::PromptPart::Text { text }) = parts.last_mut() {
+        text.truncate(text.trim_end().len());
+        if text.is_empty() {
+            parts.pop();
+        }
+    }
+    Ok(parts.into())
 }
 
 pub(super) fn parts_to_wire(parts: &[axo::PromptPart]) -> Vec<ChatPart> {
@@ -877,11 +884,8 @@ pub(super) fn title_of<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> Opti
     let mut name = None;
     let mut prompt = None;
     for entry in entries {
-        if let Entry::SessionInfo {
-            name: Some(value), ..
-        } = entry
-        {
-            name = Some(value.as_str());
+        if let Entry::SessionInfo { name: value, .. } = entry {
+            name = value.as_deref();
         } else if let Entry::Submission {
             kind: SubmissionKind::Prompt,
             parts,
@@ -1121,6 +1125,11 @@ pub(super) fn job(info: &axo::JobInfo, closed_session: bool) -> ChatJob {
         status,
         call_id: info.call_id.clone(),
         started_at: info.started_at,
+        pending_results: info
+            .messages
+            .iter()
+            .filter(|message| message.delivery == axo::MessageDelivery::Pending)
+            .count() as u32,
         kind,
     }
 }
@@ -1438,6 +1447,23 @@ mod tests {
             Err(ApiError::InvalidArgument(_))
         ));
         assert!(parts_from_wire(vec![part(MAX_CONTENT_BYTES)]).is_ok());
+    }
+
+    #[test]
+    fn trailing_whitespace_is_not_sent() {
+        let text = |text: &str| ChatPart::Text { text: text.into() };
+        let file = ChatPart::File {
+            path: "a.rs".into(),
+        };
+        let sent = |parts| parts_to_wire(&parts_from_wire(parts).unwrap().parts);
+        assert_eq!(
+            sent(vec![text("  hi there \n\n ")]),
+            vec![text("  hi there")]
+        );
+        assert_eq!(
+            sent(vec![text("see "), file.clone(), text(" \n")]),
+            vec![text("see "), file]
+        );
     }
 
     #[test]

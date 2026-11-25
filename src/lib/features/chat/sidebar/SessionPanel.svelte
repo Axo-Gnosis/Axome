@@ -2,15 +2,31 @@
   import { backend } from '$lib/api/backend'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { Button, IconButton } from '$lib/components/ui/button'
+  import { Input } from '$lib/components/ui/input'
   import SidebarDivision from '$lib/features/app-shell/sidebar/SidebarDivision.svelte'
   import { SidebarNote, SidebarRow } from '$lib/components/ui/sidebar-row'
+  import { cn } from '$lib/utils/cn'
+  import { StatusDot, type ToneStatus } from '$lib/components/ui/status-dot'
   import { InfoTooltip } from '$lib/components/ui/tooltip'
   import SidebarPanel from '$lib/features/app-shell/sidebar/SidebarPanel.svelte'
-  import { cacheHitPercent, contextUsage, formatCost, formatTokens } from '$lib/features/chat/format'
+  import type { ChatController } from '$lib/features/chat/controller.svelte'
+  import { Select } from '$lib/components/ui/select'
+  import { DEFAULT_PERSONA_DESCRIPTION } from '$lib/features/chat/elements/persona-cards/PersonaCards.svelte'
+  import {
+    cacheHitPercent,
+    contextUsage,
+    formatCost,
+    formatTime,
+    formatTokens,
+    modelName
+  } from '$lib/features/chat/format'
+  import { isActiveJob } from '$lib/features/chat/jobs'
+  import { pendingSetup, turnEndNotice, type Turn } from '$lib/features/chat/turns'
+  import { notify } from '$lib/features/notifications/state.svelte'
   import { openOwnedPath } from '$lib/features/workbench/links/openLink'
   import FileIcon from '$lib/icons/FileIcon.svelte'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
-  import type { ChatContextDetails, ChatContextFile, ChatState } from '$lib/types/backend'
+  import type { ChatAgentInfo, ChatContextDetails, ChatContextFile, ChatState } from '$lib/types/backend'
   import { copyToClipboard } from '$lib/utils/clipboard'
   import type { Snippet } from 'svelte'
   import {
@@ -26,11 +42,48 @@
 
   let {
     state: chat,
-    owner
+    controller,
+    owner,
+    turns,
+    personas
   }: {
     state: ChatState | null
+    controller: ChatController
     owner: { folderPath: string; sessionId: string | null }
+    turns: Turn[]
+    /** Personas the root session can switch to. */
+    personas: ChatAgentInfo[]
   } = $props()
+
+  // The title being edited; null while it shows as text.
+  let editing = $state<string | null>(null)
+  const locked = $derived(controller.connection !== 'live' || (chat?.readOnly ?? true))
+  const pending = $derived(chat && !chat.isChild ? pendingSetup(turns, chat.live) : [])
+  const status = $derived.by((): ToneStatus | null => {
+    if (!chat) return null
+    const live = chat.live
+    if (live.questions.length || live.reviews.length) return { tone: 'waiting', text: 'Needs you' }
+    if (live.running || live.maintenance || live.jobs.some((job) => isActiveJob(job.status)))
+      return { tone: 'working', text: 'Working' }
+    const last = turns.at(-1)
+    if (last && turnEndNotice(last)?.kind === 'failed') return { tone: 'danger', text: 'Error' }
+    return { tone: 'idle', text: 'Idle' }
+  })
+  const started = $derived(formatTime(turns[0]?.startedAt ?? null))
+
+  // Operations resolve to an error message; show it like any other axo failure.
+  function report(operation: Promise<string | null>) {
+    void operation.then((error) => {
+      if (error) notify.error('axo', error)
+    })
+  }
+
+  function commitTitle() {
+    if (editing === null) return
+    const title = editing.trim() || null
+    editing = null
+    report(controller.setTitle(title))
+  }
 
   let expandedFile = $state<string | null>(null)
   let expandedGroup = $state<string | null>(null)
@@ -121,7 +174,7 @@
   }
 </script>
 
-<SidebarPanel title="Context">
+<SidebarPanel title="Session">
   {#snippet headerActions()}
     {#if sessionId}
       <Button
@@ -145,65 +198,167 @@
     {@const hitPercent = cacheHitPercent(usage)}
     {@const totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite}
     <div class="h-full overflow-y-auto">
-      <div class="space-y-2 p-3">
-        {#if measuredTokens !== null}
-          {#if fraction !== null}
-            <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span
-                class={atTrigger
-                  ? 'font-mono text-3xl text-warning tabular-nums'
-                  : 'font-mono text-3xl text-bright tabular-nums'}
-              >
-                {Math.round(fraction * 100)}%
-              </span>
-              <span class="text-xs text-muted">of context used</span>
-            </div>
-          {/if}
-          <p class="font-mono text-sm text-fg tabular-nums">
-            {formatTokens(measuredTokens)}{#if windowTokens !== null}
-              <span class="text-muted"> / {formatTokens(windowTokens)}</span>
-            {/if}
-            <span class="text-xs text-muted">tokens{windowTokens === null ? ' used' : ''}</span>
-          </p>
-          {#if windowTokens !== null && fraction !== null}
-            <div
-              role="meter"
-              aria-label="Context usage"
-              aria-valuemin={0}
-              aria-valuemax={windowTokens}
-              aria-valuenow={Math.min(windowTokens, measuredTokens)}
-              aria-valuetext={`${formatTokens(measuredTokens)} of ${formatTokens(windowTokens)} tokens used`}
-              class="py-1"
+      <div data-slot="session-setup">
+        <SidebarRow behavior="display" class="first:border-t-0">
+          <span class="w-16 shrink-0 text-muted">Title</span>
+          {#if editing !== null}
+            <!-- svelte-ignore a11y_autofocus — the input replaces the title the user just clicked -->
+            <Input
+              bind:value={editing}
+              aria-label="Chat title"
+              placeholder="Clear to use the first message"
+              class="-ms-1.5 h-5.5 min-w-0 flex-1 px-1.5 py-0 text-sm"
+              autofocus
+              onkeydown={(event) => {
+                if (event.key === 'Enter') commitTitle()
+                else if (event.key === 'Escape') editing = null
+              }}
+              onblur={() => (editing = null)}
+            />
+          {:else}
+            <Button
+              variant="text"
+              disabled={locked}
+              class={cn(
+                'h-auto min-w-0 flex-1 justify-start p-0 text-sm font-normal',
+                chat.live.title ? 'text-fg' : 'text-muted'
+              )}
+              title="Rename"
+              onclick={() => (editing = chat?.live.title ?? '')}
             >
-              <div aria-hidden="true" class="relative h-1.5 bg-raised">
-                <span
-                  class={atTrigger ? 'absolute inset-y-0 left-0 bg-warning' : 'absolute inset-y-0 left-0 bg-accent'}
-                  style:width="{fraction * 100}%"
-                ></span>
-                {#if triggerTokens !== null}
-                  <span
-                    class="absolute -top-0.5 h-2.5 w-px bg-muted"
-                    style:left="{Math.min(100, (triggerTokens / windowTokens) * 100)}%"
-                  ></span>
-                {/if}
-              </div>
-            </div>
+              <span class="truncate">{chat.live.title ?? 'New Chat'}</span>
+            </Button>
           {/if}
-        {:else}
-          <p class="text-xs text-muted">No usage reported yet</p>
+        </SidebarRow>
+        {#if status}
+          <SidebarRow behavior="display">
+            <span class="w-16 shrink-0 text-muted">Status</span>
+            <StatusDot tone={status.tone} size="sm" pulse={status.tone === 'working'} />
+            <span class="text-fg">{status.text}</span>
+          </SidebarRow>
         {/if}
-        {#if triggerTokens !== null}
-          <p class="text-xs text-muted">Auto-compacts at {formatTokens(triggerTokens)} tokens.</p>
+        <SidebarRow behavior="display">
+          <span class="w-16 shrink-0 text-muted">Started</span>
+          <span class={cn('font-mono text-xs tabular-nums', started ? 'text-fg' : 'text-subtle')}
+            >{started ?? 'not yet'}</span
+          >
+        </SidebarRow>
+        {#if personas.length}
+          <SidebarRow behavior="display">
+            <span class="w-16 shrink-0 text-muted">Persona</span>
+            <!-- '' stands for Default, the null choice. -->
+            <Select
+              variant="inline"
+              aria-label="Persona"
+              value={chat.live.agent ?? ''}
+              items={[
+                { value: '', label: 'Default', description: DEFAULT_PERSONA_DESCRIPTION },
+                ...personas.map((persona) => ({
+                  value: persona.name,
+                  label: persona.name,
+                  description: persona.description
+                }))
+              ]}
+              disabled={locked}
+              onValueChange={(agent) => report(controller.setAgent(agent || null))}
+            />
+            {#if pending.some((change) => change.key === 'persona')}{@render nextLabel()}{/if}
+          </SidebarRow>
         {/if}
+        {#if chat.toolbox.modes.length && !chat.isChild}
+          <SidebarRow behavior="display">
+            <span class="w-16 shrink-0 text-muted">Mode</span>
+            <!-- '' stands for no mode. -->
+            <Select
+              variant="inline"
+              aria-label="Mode"
+              value={chat.live.mode ?? ''}
+              items={[
+                { value: '', label: 'none' },
+                ...chat.toolbox.modes.map((mode) => ({
+                  value: mode.name,
+                  label: mode.name,
+                  description: mode.description
+                }))
+              ]}
+              disabled={locked}
+              onValueChange={(mode) => report(controller.setMode(mode || null))}
+            />
+            {#if pending.some((change) => change.key === 'mode')}{@render nextLabel()}{/if}
+          </SidebarRow>
+        {/if}
+        <SidebarRow behavior="display">
+          <span class="w-16 shrink-0 text-muted">Model</span>
+          <span class="min-w-0 truncate text-fg" title={chat.live.model ?? undefined}
+            >{chat.live.model ? modelName(chat.live.model) : 'none'} · {chat.live.thinking}</span
+          >
+          {#if pending.some((change) => change.key === 'model' || change.key === 'thinking')}
+            {@render nextLabel()}
+          {:else}
+            <span class="ms-auto shrink-0 font-mono text-xs text-subtle">set in composer</span>
+          {/if}
+        </SidebarRow>
       </div>
 
-      <SidebarDivision title="In this context">
+      <SidebarDivision title="Context">
         {#snippet headerActions()}
           <InfoTooltip ariaLabel="About context estimates">
             Sizes are approximate, using 4 characters per token. Bars show each category's share of the current context.
             Conversation is the remainder after instructions and tools, including request framing and estimate drift.
           </InfoTooltip>
         {/snippet}
+        <div class="space-y-2 p-3">
+          {#if measuredTokens !== null}
+            {#if fraction !== null}
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span
+                  class={atTrigger
+                    ? 'font-mono text-3xl text-warning tabular-nums'
+                    : 'font-mono text-3xl text-bright tabular-nums'}
+                >
+                  {Math.round(fraction * 100)}%
+                </span>
+                <span class="text-xs text-muted">of context used</span>
+              </div>
+            {/if}
+            <p class="font-mono text-sm text-fg tabular-nums">
+              {formatTokens(measuredTokens)}{#if windowTokens !== null}
+                <span class="text-muted"> / {formatTokens(windowTokens)}</span>
+              {/if}
+              <span class="text-xs text-muted">tokens{windowTokens === null ? ' used' : ''}</span>
+            </p>
+            {#if windowTokens !== null && fraction !== null}
+              <div
+                role="meter"
+                aria-label="Context usage"
+                aria-valuemin={0}
+                aria-valuemax={windowTokens}
+                aria-valuenow={Math.min(windowTokens, measuredTokens)}
+                aria-valuetext={`${formatTokens(measuredTokens)} of ${formatTokens(windowTokens)} tokens used`}
+                class="py-1"
+              >
+                <div aria-hidden="true" class="relative h-1.5 bg-raised">
+                  <span
+                    class={atTrigger ? 'absolute inset-y-0 left-0 bg-warning' : 'absolute inset-y-0 left-0 bg-accent'}
+                    style:width="{fraction * 100}%"
+                  ></span>
+                  {#if triggerTokens !== null}
+                    <span
+                      class="absolute -top-0.5 h-2.5 w-px bg-muted"
+                      style:left="{Math.min(100, (triggerTokens / windowTokens) * 100)}%"
+                    ></span>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          {:else}
+            <p class="text-xs text-muted">No usage reported yet</p>
+          {/if}
+          {#if triggerTokens !== null}
+            <p class="text-xs text-muted">Auto-compacts at {formatTokens(triggerTokens)} tokens.</p>
+          {/if}
+        </div>
+
         {#if detailsError}
           <p class="px-2.5 py-1.5 text-xs text-muted">{detailsError}</p>
         {:else if !details}
@@ -287,7 +442,7 @@
         {/each}
       </SidebarDivision>
 
-      <SidebarDivision title="Session usage">
+      <SidebarDivision title="Usage">
         {#snippet headerActions()}
           <InfoTooltip ariaLabel="About session usage">
             Cumulative usage across all requests, not the current context window.
@@ -318,6 +473,11 @@
     </div>
   {/if}
 </SidebarPanel>
+
+{#snippet nextLabel()}
+  <span class="ms-auto shrink-0 font-mono text-xs text-subtle">{chat?.live.running ? 'next step' : 'next message'}</span
+  >
+{/snippet}
 
 {#snippet contextFile(file: ChatContextFile)}
   {@render detailRow(

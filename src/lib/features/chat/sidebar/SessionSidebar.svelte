@@ -54,13 +54,14 @@
   } from '@hugeicons/core-free-icons'
   import { backend } from '$lib/api/backend'
   import type { Turn } from '$lib/features/chat/turns'
+  import type { ChatAgentInfo } from '$lib/types/backend'
   import { sessionCaptures } from '$lib/features/memory/captures.svelte'
   import AgentsPanel from './AgentsPanel.svelte'
-  import ContextPanel from './ContextPanel.svelte'
   import FilesPanel from './FilesPanel.svelte'
   import JobsPanel from './JobsPanel.svelte'
   import MemoryPanel from './MemoryPanel.svelte'
   import PlanPanel from './PlanPanel.svelte'
+  import SessionPanel from './SessionPanel.svelte'
   import ToolboxPanel from './ToolboxPanel.svelte'
   import type { SessionSidebarState } from './state.svelte'
 
@@ -70,6 +71,7 @@
     owner,
     now,
     turns,
+    personas,
     onJump
   }: {
     controller: ChatController
@@ -77,6 +79,8 @@
     owner: { folderPath: string; sessionId: string | null }
     now: number
     turns: Turn[]
+    /** Personas the root session can switch to. */
+    personas: ChatAgentInfo[]
     /** Reveal a transcript step. */
     onJump: (stepId: string) => void
   } = $props()
@@ -145,10 +149,10 @@
 >
   <RailButton
     tooltipSide="left"
-    label="Context"
-    active={sidebar.view === 'context'}
+    label="Session"
+    active={sidebar.view === 'session'}
     status={contextStatus}
-    onclick={() => sidebar.toggle('context')}
+    onclick={() => sidebar.toggle('session')}
   >
     <ProgressRing value={context?.fraction ?? 0} tone={context?.atTrigger ? 'warning' : 'muted'} size={16} />
   </RailButton>
@@ -221,8 +225,8 @@
       <AgentsPanel {controller} {sidebar} folderPath={owner.folderPath} {now} />
     {:else if sidebar.view === 'toolbox'}
       <ToolboxPanel tools={chat?.sessionTools ?? []} toolbox={chat?.toolbox ?? null} {owner} />
-    {:else if sidebar.view === 'context'}
-      <ContextPanel state={chat ?? null} {owner} />
+    {:else if sidebar.view === 'session'}
+      <SessionPanel state={chat ?? null} {controller} {owner} {turns} {personas} />
     {:else if sidebar.view === 'files'}
       <FilesPanel state={chat ?? null} {owner} />
     {:else if sidebar.view === 'plan'}

@@ -158,6 +158,7 @@ pub(crate) fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + S
         chat_local_files,
         chat_set_agent,
         chat_set_mode,
+        chat_set_title,
         chat_keyword_matches,
         chat_accept_result,
         chat_revise_result,

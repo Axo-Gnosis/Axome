@@ -9,7 +9,8 @@
         working: 'bg-accent',
         waiting: 'bg-warning',
         success: 'bg-success',
-        danger: 'bg-danger'
+        danger: 'bg-danger',
+        unread: 'bg-bright'
       },
       size: {
         sm: 'size-1.5',
@@ -45,7 +46,8 @@
     working: 'text-accent',
     waiting: 'text-warning',
     success: 'text-success',
-    danger: 'text-danger'
+    danger: 'text-danger',
+    unread: 'text-bright'
   }
 </script>
 
@@ -56,19 +58,23 @@
     tone = 'idle',
     size = 'md',
     corner = false,
+    pulse = false,
     label,
     class: className
   }: {
     tone?: StatusTone
     size?: StatusDotSize
     corner?: boolean
+    pulse?: boolean
     label?: string
     class?: string
   } = $props()
+
+  const classes = $derived(cn(statusDotVariants({ tone, size, corner }), pulse && 'animate-pulse', className))
 </script>
 
 {#if label}
-  <span role="img" aria-label={label} class={cn(statusDotVariants({ tone, size, corner }), className)}></span>
+  <span role="img" aria-label={label} class={classes}></span>
 {:else}
-  <span aria-hidden="true" class={cn(statusDotVariants({ tone, size, corner }), className)}></span>
+  <span aria-hidden="true" class={classes}></span>
 {/if}

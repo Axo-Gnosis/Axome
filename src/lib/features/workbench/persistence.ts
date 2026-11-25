@@ -171,6 +171,7 @@ export function persistedToTab(persisted: PersistedTab, id: string): Tab {
         title: persisted.title,
         sessionId: persisted.sessionId,
         status: 'dormant',
+        unread: false,
         locked: persisted.locked
       }
     case 'shell':

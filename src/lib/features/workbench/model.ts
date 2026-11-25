@@ -38,6 +38,8 @@ export interface ChatTab extends TabBase {
   /** axo session id; null until the first message creates it. */
   sessionId: string | null
   status: ChatStatus
+  /** Finished or failed while another tab was active; cleared when this tab is activated. Not persisted. */
+  unread: boolean
 }
 
 export interface ShellTab extends TabBase {

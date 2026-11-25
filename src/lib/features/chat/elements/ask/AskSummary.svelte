@@ -30,7 +30,7 @@
   })
   const terminal = $derived(
     result.outcome === 'dismissed'
-      ? 'Dismissed. axo stopped without answers.'
+      ? 'Dismissed by you.'
       : result.outcome === 'cancelled'
         ? 'Stopped before it was answered.'
         : result.outcome === 'steered'
@@ -55,7 +55,7 @@
     {#if result.outcome === 'failed' && result.message}
       <p class="text-sm wrap-anywhere whitespace-pre-wrap text-danger-bright">{result.message}</p>
     {/if}
-  {:else if result.outcome === 'answered' || result.outcome === 'timedOut'}
+  {:else if result.outcome === 'answered' || result.outcome === 'timedOut' || result.outcome === 'dismissed'}
     {#each askSections(result.blocks) as section, index (index)}
       {#if section.type === 'markdown'}
         <Message.Response text={section.text} streaming={false} {folderPath} {sessionId} />
@@ -79,6 +79,10 @@
     {#if result.outcome === 'timedOut'}
       <p class="flex items-center gap-2 text-sm text-muted">
         <StatusDot tone="waiting" size="sm" />{timeoutText}
+      </p>
+    {:else if result.outcome === 'dismissed'}
+      <p class="text-sm text-muted">
+        Dismissed by you{#if answeredAt}{' · '}<span class="font-mono">{answeredAt}</span>{/if}
       </p>
     {:else}
       <p class="text-sm text-muted">

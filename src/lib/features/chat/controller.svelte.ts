@@ -25,6 +25,7 @@ import type {
 import { getErrorMessage } from '$lib/utils/client-error'
 import { hostRoot } from '$lib/utils/paths'
 import { getOrCreate } from './registry'
+import type { SetupChange } from './turns'
 import { askKey, createAskDraft, validAskBlocks, type AskDraft } from './elements/ask/askDocument'
 import { getChatModels, loadChatModels, MODELS_HINT } from './models.svelte'
 import { CONTENT_LIMIT, CONTENT_LIMIT_MESSAGE, contentBytes, hasContent, prependQueuedParts } from './parts/parts'
@@ -311,15 +312,22 @@ export class ChatController {
         break
     }
     if (this.#target.kind === 'tab') {
+      // A new user message is the later of the two kinds, so a failed turn clears as the next one starts.
+      const lastRun = this.state?.entries.findLast(
+        (entry) => entry.body.kind === 'runEnd' || entry.body.kind === 'user'
+      )
+      const turnFailed = lastRun?.body.kind === 'runEnd' && lastRun.body.outcome === 'failed'
       setChatTabStatus(
         this.#target.tabId,
         this.connection === 'closed'
           ? 'failed'
-          : this.state?.live.questions.length
+          : this.state?.live.questions.length || this.state?.live.reviews.length
             ? 'waiting'
             : this.busy
               ? 'running'
-              : 'idle'
+              : turnFailed
+                ? 'failed'
+                : 'idle'
       )
     }
   }
@@ -395,6 +403,26 @@ export class ChatController {
   /** Enters a mode (null exits) and submits `parts` when non-empty. Resolves to the error message, or null. */
   setMode(mode: string | null, parts: ChatPart[] = []): Promise<string | null> {
     return this.#attempt((folder, id) => backend.chat.setMode(folder, id, mode, parts))
+  }
+
+  /** Puts back what the last reply ran with, in `pendingSetup` order. Resolves to the first error message, or null. */
+  async revertSetup(changes: SetupChange[]): Promise<string | null> {
+    for (const { key, from } of changes) {
+      const error = await (key === 'persona'
+        ? this.setAgent(from)
+        : key === 'mode'
+          ? this.setMode(from)
+          : key === 'model'
+            ? this.runCommand('model', { model: from })
+            : this.runCommand('thinking', { level: from }))
+      if (error) return error
+    }
+    return null
+  }
+
+  /** Names the chat; null clears the name. Resolves to the error message, or null. */
+  setTitle(title: string | null): Promise<string | null> {
+    return this.#attempt((folder, id) => backend.chat.setTitle(folder, id, title))
   }
 
   /** Accepts a reviewed mode result. Resolves to the error message, or null. */

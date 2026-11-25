@@ -21,18 +21,29 @@ export interface AskResult {
   message: string | null
 }
 
+/** Every question reads "Dismissed"; the run went on without answers. */
+function dismissed(blocks: ChatAskBlock[] | null): AskResult {
+  const rows: AskResult['rows'] = {}
+  for (const block of blocks ?? [])
+    if (block.type !== 'markdown')
+      rows[askKey(block.id)] = { answered: false, text: 'Dismissed', note: null, suggested: false }
+  return { outcome: 'dismissed', blocks, rows, message: null }
+}
+
 export function parseAskResult(call: ToolStep): AskResult {
   const blocks = parseAskBlocks(call.arguments)
   const rows: AskResult['rows'] = {}
   if (call.status === 'error') {
     const message = partsText(call.output.filter((part) => part.type === 'text'))
-    if (message === 'Ask tool was cancelled by the user') return { outcome: 'dismissed', blocks, rows, message: null }
+    // Journals written before axo let a dismissal continue the run.
+    if (message === 'Ask tool was cancelled by the user') return dismissed(blocks)
     if (message === 'Ask input was cancelled') return { outcome: 'cancelled', blocks, rows, message: null }
     return { outcome: 'failed', blocks, rows, message: message || null }
   }
   const details = record(call.details)
   if (call.status === 'done' && details.outcome === 'steered')
     return { outcome: 'steered', blocks, rows, message: null }
+  if (call.status === 'done' && details.outcome === 'dismissed') return dismissed(blocks)
   const unavailable: AskResult = { outcome: 'unavailable', blocks, rows: {}, message: 'Question details unavailable.' }
   if (!blocks || call.status !== 'done' || (details.timedOut !== undefined && typeof details.timedOut !== 'boolean'))
     return unavailable

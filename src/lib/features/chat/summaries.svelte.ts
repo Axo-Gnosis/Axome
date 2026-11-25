@@ -71,13 +71,19 @@ export function isChatBusy(summary: ChatLiveSummary): boolean {
 }
 
 export function chatSummaryTone(summary: ChatLiveSummary): StatusTone {
-  if (summary.waiting || summary.autoPaused) return 'waiting'
+  if (summary.waiting) return 'waiting'
   return isChatBusy(summary) ? 'working' : 'idle'
 }
 
 export function chatTabTone(tab: ChatTab): StatusTone {
   if (tab.status === 'failed') return 'danger'
   const summary = getChatLiveSummary(tab.folderPath, tab.sessionId)
-  if (summary) return chatSummaryTone(summary)
-  return tab.status === 'waiting' ? 'waiting' : tab.status === 'running' ? 'working' : 'idle'
+  const tone = summary
+    ? chatSummaryTone(summary)
+    : tab.status === 'waiting'
+      ? 'waiting'
+      : tab.status === 'running'
+        ? 'working'
+        : 'idle'
+  return tone === 'idle' && tab.unread ? 'unread' : tone
 }

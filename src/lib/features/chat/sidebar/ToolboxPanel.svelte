@@ -12,9 +12,9 @@
   import type { ChatSessionTool, ChatToolbox } from '$lib/types/backend'
   import {
     Alert02Icon,
+    BookOpen01Icon,
     FlashIcon,
     Layers01Icon,
-    SparklesIcon,
     SquareArrowOutUpRightIcon,
     UserGroupIcon
   } from '@hugeicons/core-free-icons'
@@ -37,7 +37,7 @@
   let expandedItem = $state<string | null>(null)
   const diagnostics = $derived(toolbox?.diagnostics ?? [])
   const catalogTabs = $derived<{ id: CatalogTab; label: string; count: number; icon: IconData }[]>([
-    { id: 'skills', label: 'Skills', count: toolbox?.skills.length ?? 0, icon: SparklesIcon },
+    { id: 'skills', label: 'Skills', count: toolbox?.skills.length ?? 0, icon: BookOpen01Icon },
     { id: 'agents', label: 'Agents', count: toolbox?.agents.length ?? 0, icon: UserGroupIcon },
     { id: 'modes', label: 'Modes', count: toolbox?.modes.length ?? 0, icon: Layers01Icon },
     { id: 'keywords', label: 'Keywords', count: toolbox?.keywords.length ?? 0, icon: FlashIcon },

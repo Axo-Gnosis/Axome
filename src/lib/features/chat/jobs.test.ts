@@ -42,6 +42,8 @@ function turn(steps: Step[]): Turn {
     user: null,
     steps,
     assistants: [],
+    personas: [],
+    modes: [],
     end: null,
     running: false,
     startedAt: at,

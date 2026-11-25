@@ -16,7 +16,7 @@
     formatTokens,
     modelName
   } from '$lib/features/chat/format'
-  import { compactionTokensAfter, turnDurationMs, turnEndNotice, type Turn } from '$lib/features/chat/turns'
+  import { compactionTokensAfter, turnDurationMs, turnEndNotice, turnSetup, type Turn } from '$lib/features/chat/turns'
   import type { CaptureRun } from '$lib/features/memory/captures.svelte'
   import { isActiveJob, type TranscriptJob } from '$lib/features/chat/jobs'
   import type { BlockView } from '$lib/features/chat/view'
@@ -95,6 +95,7 @@
   } = $props()
   const detailView = $derived(expansion === 'full' ? 'full' : 'collapsed')
   const lastAssistant = $derived(turn.assistants.at(-1))
+  const setup = $derived(turnSetup(turns, turnIndex))
   const tierLabel = $derived.by(() => {
     const first = turn.assistants[0]?.body.serviceTier
     if (!first) return null
@@ -284,32 +285,6 @@
     <NoticeBlock notice={step.notice} timestamp={step.timestamp} {folderPath} {sessionId} />
   {:else if step.kind === 'band'}
     {@render band(step, turn.running && maintenance !== null && step === flow.at(-1))}
-  {:else if step.kind === 'thinkingChange' || step.kind === 'serviceTierChange'}
-    <div class="flex items-start gap-2 text-sm text-muted" data-command={step.kind}>
-      <Icon icon={InfoIcon} size={14} class="shrink-0" />
-      <div>
-        {#if step.kind === 'thinkingChange'}
-          <div>Effort {step.automatic ? 'adjusted' : 'set'} to {step.thinking}</div>
-        {/if}
-        {#if step.serviceTier}
-          <div class="flex flex-wrap items-baseline gap-x-2">
-            <span>Tier set to {TIER_LABELS[step.serviceTier]}</span>
-            <span class="text-xs text-subtle">from the next request</span>
-          </div>
-        {/if}
-      </div>
-    </div>
-  {:else if step.kind === 'agentChange' || step.kind === 'modeChange'}
-    <div class="flex items-center gap-2 text-sm text-muted" data-command={step.kind}>
-      <Icon icon={InfoIcon} size={14} />
-      <span
-        >{step.kind === 'agentChange'
-          ? `Persona → ${step.agent ?? 'Default'}`
-          : step.mode
-            ? `Mode → ${step.mode}`
-            : 'Exited mode'}</span
-      >
-    </div>
   {/if}
 {/snippet}
 
@@ -485,9 +460,12 @@
       {/if}
       {#if lastAssistant}
         <span class="ml-1 truncate font-mono text-xs text-muted" title={lastAssistant.body.model}>
-          {modelName(lastAssistant.body.model)} · {lastAssistant.body.thinking ?? 'unknown'}{tierLabel
-            ? ` · ${tierLabel}`
-            : ''}
+          {#if setup.persona}<span class={setup.persona.changed ? 'text-fg' : ''}>{setup.persona.text}</span
+            >{' · '}{/if}
+          {#if setup.mode}<span class={setup.mode.changed ? 'text-fg' : ''}>{setup.mode.text}</span>{' · '}{/if}
+          <span class={setup.modelChanged ? 'text-fg' : ''}>{modelName(lastAssistant.body.model)}</span>{' · '}
+          <span class={setup.thinkingChanged ? 'text-fg' : ''}>{lastAssistant.body.thinking ?? 'unknown'}</span
+          >{tierLabel ? ` · ${tierLabel}` : ''}
         </span>
       {/if}
     </div>

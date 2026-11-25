@@ -31,6 +31,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 | [T11](#t11-axo-614089b-providers-login-and-the-live-catalog) | axo `614089b`: provider/login seam, live model catalog, layered writes | Q44–Q57 | 7 | Implemented; slice 8 landed with T13 |
 | [T12](#t12-long-term-memory) | Native long-term memory (Basic Memory port) | Q58–Q62 (superseded) | 8 | Shipped off by default ([P31](design.md#decisions)) |
 | [T13](#t13-axo-deda8e6-extensions-definitions-service-tiers) | axo `deda8e6` + ask documents (`9c1b4ad`): Bun extensions, live definitions, service tiers, origin-bound credentials, file records, `ask` | Q63–Q79 | 9 | Implemented at `9dd6fa1` ([P39](design.md#decisions)); Workspace Trust is roadmap Phase 4 |
+| [T14](#t14-chat-ux-pass) | Setup footer, non-stopping dismiss, skill chip, Session panel, tab dot | n/a | 10 | Implemented at axo `c1b060a`; deferred items listed |
 
 ```mermaid
 flowchart LR
@@ -508,3 +509,20 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
    - who sees and owns a chat nobody is looking at;
    - how a close asks for consent when the chat has running work or an unsent draft.
 2. ~~Logging in to a project extension's provider.~~ Settled (Toph): in the **This Project** section of Settings → Extensions, next to the extension that adds the provider ([P38](design.md#decisions)).
+
+## T14. Chat UX pass
+
+**Status:** Implemented · **Evidence:** [`.axome/research/chat-ux-boards-review.md`](../../.axome/research/chat-ux-boards-review.md), boards in `.bak/board2.html`, issues in `.bak/ISSUES.md`
+
+**Shipped:** setup changes show in the answer footer instead of transcript lines; a pending-change bar above the composer; inline keyword marks; dismissing a question continues the run; the paused-wakes banner only when something is held; skill icon and chip; persona cards, the Session panel and `/persona`; the tab status dot at the end of the tab with a done-unread state; manual chat rename.
+
+**Deferred or pinned (decide before building):**
+
+- **Steps view for long turns** (ISSUES item 1). Chosen direction: steps derived from the agent's narration lines, each with its tool calls folded under it and a live status, and a finished turn folded into one "Worked for …" header. No backend change needed. Prototype: canvas page "Turn steps", version A.
+- **Editable composer chips** (ISSUES item 5). File chips: click turns the chip back into `@path` with the picker open. Paste chips: undecided; expanding a very large paste inline is too much, and a Ctrl+G editor for the whole input (as omp has) is the idea to explore. Raising the paste-to-chip threshold to about 20 lines or 2,000 characters was agreed and belongs with this work (`PromptInputRoot.svelte:694`).
+- **Agent-generated chat titles.** axo should own generation; the host may supply a guideline prompt; extensions must be able to shape or replace the result. Open: which model writes it and when. Until then a title is the first message or a manual rename. The muted "first words while generating" tab state from board 8 + 9 depends on this.
+- **A generated icon per chat tab.** The icon set is a host concern, so the host has to hand its icon vocabulary to whatever picks one. Mechanism undecided.
+- **Event-based pending bar.** The bar is a diff of the session's current persona, model and effort against the last committed reply, with no notion of who made a change or whether the in-flight request already uses it. While a request is in flight it can therefore name a persona, model or effort that request already uses, including changes the user did not make (a keyword's model switch on send, effort moved automatically by a model switch), and the same misattribution recurs between requests later in a turn until the next reply commits. Cancel is withheld while a turn runs so it cannot revert a running turn's setup; the text can still be wrong in that window. Proper fix: derive the bar from what is actually pending, either because axo exposes effective persona, model and effort as it does `effective_mode`, or by building it from change entries journaled after the latest request began, skipping automatic ones. Known gaps for the journal route: only `thinkingChange` carries `automatic` today (`modelChange` and `agentChange` do not), and axo's journaling order relative to request start is unverified. Needs its own plan.
+- **Keyword match offsets from the backend.** Sent-message keyword marks are fetched per message through `keywordMatches` and cached in `UserBlock.svelte` for the app's lifetime. The proper shape is for the user entry to carry its match offsets, removing the cache and the call. Open points: `keyword_matches` currently requires a live session (`services/axo/mod.rs:1499`), and the frontend strips a leading skill name from the first text part, which shifts offsets. Needs its own plan.
+- **Held teammate mail and quiet host messages** are not counted by the paused-wakes banner; axo does not expose them per session.
+- **Other ISSUES workstreams, untouched:** surprise scroll jumps in the transcript; disabling individual models and whole providers; token and context efficiency for small-window models; a local feedback tool for the model to report harness problems; the Tauri `Canceled` unhandled rejection.

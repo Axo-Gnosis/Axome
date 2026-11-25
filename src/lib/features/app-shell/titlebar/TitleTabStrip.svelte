@@ -58,8 +58,9 @@
   import { dropFromOtherWindow, isTabTransferring } from '$lib/features/workbench/transferService.svelte'
   import { restartTerminalProcess, stopTerminalProcess } from '$lib/features/terminal/lifecycle'
   import * as chats from '$lib/features/chat/registry'
-  import { StatusDot } from '$lib/components/ui/status-dot'
+  import { StatusDot, type StatusTone } from '$lib/components/ui/status-dot'
   import { chatTabTone } from '$lib/features/chat/summaries.svelte'
+  import { cn } from '$lib/utils/cn'
   import HarnessIcon from '$lib/features/sessions/harnesses/HarnessIcon.svelte'
   import { closeTabWithChecks } from '$lib/features/workbench/tabActions.svelte'
   import {
@@ -81,6 +82,13 @@
   import { getDesktopSettings } from '$lib/features/settings/state/settings.svelte'
   import { getPathColor } from '$lib/utils/pathColor'
   import NewTabButton from './NewTabButton.svelte'
+
+  const CHAT_TONE_LABEL: Partial<Record<StatusTone, string>> = {
+    working: 'Working',
+    waiting: 'Needs you',
+    danger: 'Error',
+    unread: 'Finished'
+  }
 
   let tabs = $derived(getTabs())
   let blocks = $derived.by(() => {
@@ -295,6 +303,10 @@
   {@const transferring = isTabTransferring(tab.id)}
   {@const tabColor = getPathColor(tab.folderPath)}
   {@const inert = isTabInert(tab)}
+  {@const chatTone = tab.kind === 'chat' ? chatTabTone(tab) : 'idle'}
+  {#snippet chatDot()}
+    <StatusDot tone={chatTone} size="sm" pulse={chatTone === 'working'} label={CHAT_TONE_LABEL[chatTone]} />
+  {/snippet}
   <ContextMenu.Root>
     <ContextMenu.Trigger
       class="contents"
@@ -320,6 +332,7 @@
         ondragover={(e) => handleDragOver(e, i)}
         ondragend={clearDropTarget}
         onClose={tab.locked || transferring || inert ? undefined : (e) => handleTabClose(e, tab.id)}
+        trailing={chatTone === 'idle' ? undefined : chatDot}
       >
         {#snippet leading()}
           {#if tab.kind === 'diff'}
@@ -336,11 +349,7 @@
           {:else if tab.kind === 'new-tab'}
             <Icon icon={PlusIcon} size={14} class="shrink-0 text-accent" />
           {:else if tab.kind === 'chat'}
-            {@const chatTone = chatTabTone(tab)}
             <Icon icon={MessagesSquareIcon} size={14} class="shrink-0 text-accent" />
-            {#if chatTone !== 'idle'}
-              <StatusDot tone={chatTone} size="sm" />
-            {/if}
           {:else if tab.kind === 'shell'}
             <Icon icon={TerminalIcon} size={14} class="shrink-0 text-muted" />
           {:else if tab.kind === 'task'}
@@ -352,7 +361,16 @@
             <Icon icon={LockKeyholeIcon} size={11} class="shrink-0 text-muted" />
           {/if}
         {/snippet}
-        <span class="max-w-[120px] truncate {presentation.preview ? 'italic' : ''}">
+        <!-- Long titles fade out; the absolute stops leave titles shorter than the fade start untouched. -->
+        <span
+          class={cn(
+            'overflow-hidden whitespace-nowrap',
+            tab.kind === 'chat'
+              ? 'max-w-[180px] [mask-image:linear-gradient(to_right,black_156px,transparent_180px)]'
+              : 'max-w-[120px] [mask-image:linear-gradient(to_right,black_100px,transparent_120px)]',
+            presentation.preview && 'italic'
+          )}
+        >
           {presentation.title}
         </span>
       </TabButton>

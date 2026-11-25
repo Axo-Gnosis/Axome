@@ -1,4 +1,5 @@
 mod bundled;
+mod commands;
 mod config;
 mod convert;
 mod engine;
@@ -516,6 +517,7 @@ impl AxoService {
                 sections: Vec::new(),
                 tools,
                 schemes: self.host_schemes(folder),
+                commands: commands::host_commands(),
                 ..Default::default()
             },
             recovery: RecoveryPolicy::Resume,
@@ -1456,6 +1458,21 @@ impl AxoService {
             .session
             .set_agent(agent.as_deref())
             .await
+            .map_err(axo_error)
+    }
+    /// Names the session; `None` or a blank name clears it, and the first prompt titles the chat again.
+    pub(crate) async fn set_title(
+        &self,
+        folder: &Path,
+        id: &str,
+        title: Option<String>,
+    ) -> Result<(), ApiError> {
+        self.live(folder, id)
+            .await?
+            .session
+            .set_name(title)
+            .await
+            .map(|_| ())
             .map_err(axo_error)
     }
     /// Selects a mode, then steers any remaining parts so attachments and file chips survive.

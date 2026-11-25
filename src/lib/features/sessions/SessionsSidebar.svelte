@@ -120,16 +120,14 @@
     {@const chatSummary =
       session.kind === 'chat' ? getChatLiveSummary(session.folderPath, session.sessionId) : undefined}
     {@const badge = chatSummary
-      ? chatSummary.autoPaused
-        ? 'Paused'
-        : [
-            chatSummary.activeCommands > 0 ? `${chatSummary.activeCommands} bg` : '',
-            chatSummary.activeChildren > 0
-              ? `${chatSummary.activeChildren} ${chatSummary.activeChildren === 1 ? 'agent' : 'agents'}`
-              : ''
-          ]
-            .filter(Boolean)
-            .join(' · ')
+      ? [
+          chatSummary.activeCommands > 0 ? `${chatSummary.activeCommands} bg` : '',
+          chatSummary.activeChildren > 0
+            ? `${chatSummary.activeChildren} ${chatSummary.activeChildren === 1 ? 'agent' : 'agents'}`
+            : ''
+        ]
+          .filter(Boolean)
+          .join(' · ')
       : ''}
     {@const tone = session.kind === 'chat' ? chatTabTone(session) : SESSION_TONE[session.status]}
     <div class="group/row relative">

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ChatEntry, ChatEntryBody, ChatLive } from '$lib/types/backend'
-import { compactionTokensAfter, transcriptTurns, turnDurationMs, turnEndNotice } from './turns'
+import { compactionTokensAfter, pendingSetup, transcriptTurns, turnDurationMs, turnEndNotice, turnSetup } from './turns'
 
 const live: ChatLive = {
   title: null,
@@ -151,6 +151,8 @@ test('leading content has no fabricated user and leading selections are dropped'
       entry('model', { kind: 'modelChange', model: 'test/model' }),
       entry('thinking', { kind: 'thinkingChange', thinking: 'high', automatic: false, serviceTier: null }),
       entry('tier', { kind: 'serviceTierChange', serviceTier: 'fast' }),
+      entry('agent', { kind: 'agentChange', agent: 'reviewer' }),
+      entry('mode', { kind: 'modeChange', mode: 'plan' }),
       message,
       user,
       work
@@ -167,9 +169,14 @@ test('leading content has no fabricated user and leading selections are dropped'
   )
   assert.equal(turns[0].startedAt, message.timestamp)
   assert.equal(turns[1].id, user.id)
+  const setupOnly = [
+    entry('agent', { kind: 'agentChange', agent: 'reviewer' }),
+    entry('mode', { kind: 'modeChange', mode: 'plan' })
+  ]
+  assert.deepEqual(transcriptTurns(setupOnly, null, live), [])
 })
 
-test('later picker changes stay in the transcript as command rows', () => {
+test('setup changes are not transcript steps', () => {
   const thinking = (id: string, level: 'low' | 'medium' | 'high') =>
     entry(id, { kind: 'thinkingChange', thinking: level, automatic: false, serviceTier: null })
   const turns = transcriptTurns(
@@ -178,9 +185,9 @@ test('later picker changes stay in the transcript as command rows', () => {
       user,
       message,
       thinking('t1', 'medium'),
-      thinking('t2', 'high'),
+      entry('a1', { kind: 'agentChange', agent: 'reviewer' }),
       { ...user, id: 'u2' },
-      thinking('t3', 'low'),
+      entry('m1', { kind: 'modeChange', mode: 'plan' }),
       thinking('t4', 'high'),
       { ...user, id: 'u3' }
     ],
@@ -189,7 +196,7 @@ test('later picker changes stay in the transcript as command rows', () => {
   )
   assert.deepEqual(
     turns.map((turn) => turn.steps.map((step) => step.kind)),
-    [['text', 'thinkingChange', 'thinkingChange'], ['thinkingChange', 'thinkingChange'], []]
+    [['text'], [], []]
   )
 })
 
@@ -213,18 +220,61 @@ test('assistant effort and tier stay as recorded, independent of mid-turn or liv
       [null, 'standard']
     ]
   )
-  assert.deepEqual(
-    turn.steps.find((step) => step.id === 'high'),
-    {
-      id: 'high',
-      entryId: 'high',
-      timestamp: message.timestamp,
-      kind: 'thinkingChange',
-      thinking: 'high',
-      automatic: true,
-      serviceTier: 'flex'
-    }
+})
+
+test('each turn records the personas its requests ran under and the footer marks changes', () => {
+  const turns = transcriptTurns(
+    [
+      entry('a1', { kind: 'agentChange', agent: 'reviewer' }),
+      user,
+      message,
+      end,
+      entry('a2', { kind: 'agentChange', agent: null }),
+      { ...user, id: 'u2' },
+      message
+    ],
+    null,
+    live
   )
+  assert.deepEqual(turns[0].personas, ['reviewer'])
+  assert.deepEqual(turns[1].personas, [null])
+  assert.deepEqual(turnSetup(turns, 0).persona, { text: 'reviewer', changed: false })
+  assert.deepEqual(turnSetup(turns, 1).persona, { text: 'Default', changed: true })
+  assert.equal(turnSetup(turns, 1).mode, null)
+  assert.equal(turnSetup(turns, 1).modelChanged, false)
+})
+
+test('a persona switch partway through a turn shows both in the footer', () => {
+  const turns = transcriptTurns(
+    [
+      entry('a1', { kind: 'agentChange', agent: 'reviewer' }),
+      user,
+      work,
+      result,
+      entry('a2', { kind: 'agentChange', agent: null }),
+      message
+    ],
+    null,
+    live
+  )
+  assert.equal(turns[0].personas.length, 2)
+  assert.equal(turnSetup(turns, 0).persona?.text, 'reviewer → Default')
+})
+
+test('pendingSetup lists selections no request has used yet, with what they replace', () => {
+  assert.deepEqual(pendingSetup(transcriptTurns([user], null, live), live), [])
+  const recorded = entry('answer', { ...message.body, thinking: 'off' } as ChatEntryBody)
+  const turns = transcriptTurns([entry('a1', { kind: 'agentChange', agent: 'reviewer' }), user, recorded], null, live)
+  const used = { ...live, agent: 'reviewer', model: 'test/model' }
+  assert.deepEqual(pendingSetup(turns, used), [])
+  assert.deepEqual(pendingSetup(turns, { ...used, agent: null }), [{ key: 'persona', from: 'reviewer', to: null }])
+  assert.deepEqual(pendingSetup(turns, { ...used, mode: 'plan', model: 'test/other', thinking: 'high' }), [
+    { key: 'mode', from: null, to: 'plan' },
+    { key: 'model', from: 'test/model', to: 'test/other' },
+    { key: 'thinking', from: 'off', to: 'high' }
+  ])
+  const unrecorded = transcriptTurns([user, message], null, live)
+  assert.deepEqual(pendingSetup(unrecorded, { ...live, model: 'test/model', thinking: 'high' }), [])
 })
 
 test('replayed turns retain text without an invented run end', () => {
@@ -258,7 +308,7 @@ test('duration uses entry timestamps when finished and the clock while running',
   assert.equal(userOnly.endedAt, null)
 })
 
-test('later config and maintenance entries join the turn without extending its duration', () => {
+test('later config entries add no steps and maintenance joins the turn without extending its duration', () => {
   const endedAt = '2026-01-01T00:00:12Z'
   const [turn] = transcriptTurns(
     [
@@ -267,6 +317,8 @@ test('later config and maintenance entries join the turn without extending its d
       { ...end, timestamp: endedAt },
       { id: 'model', timestamp: '2026-01-01T01:00:00Z', body: { kind: 'modelChange', model: 'x/y' } },
       { id: 'tier', timestamp: '2026-01-01T01:00:01Z', body: { kind: 'serviceTierChange', serviceTier: 'fast' } },
+      { id: 'agent', timestamp: '2026-01-01T01:00:02Z', body: { kind: 'agentChange', agent: 'reviewer' } },
+      { id: 'mode', timestamp: '2026-01-01T01:00:03Z', body: { kind: 'modeChange', mode: 'plan' } },
       { id: 'compact', timestamp: '2026-01-01T01:00:05Z', body: { kind: 'compaction', summary: 's', tokensBefore: 1 } }
     ],
     null,
@@ -274,8 +326,10 @@ test('later config and maintenance entries join the turn without extending its d
   )
   assert.equal(turn.endedAt, endedAt)
   assert.equal(turnDurationMs(turn, Date.parse(endedAt) + 5000), 12_000)
-  assert.ok(turn.steps.some((step) => step.kind === 'modelChange'))
-  assert.ok(turn.steps.some((step) => step.kind === 'serviceTierChange'))
+  assert.deepEqual(
+    turn.steps.map((step) => step.kind),
+    ['text', 'compaction']
+  )
 })
 
 test('compactionTokensAfter reads post-compaction assistant input tokens or falls back to live context for the latest checkpoint', () => {

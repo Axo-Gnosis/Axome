@@ -210,6 +210,12 @@ test('reads only typed recorded answers and recognizes terminal outcomes', () =>
   )
   assert.equal(parseAskResult({ ...call, arguments: { questions: [choice] }, details: { results: [] } }).blocks, null)
   assert.equal(parseAskResult({ ...call, details: { outcome: 'steered' } }).outcome, 'steered')
+  const dismissed = parseAskResult({ ...call, details: { outcome: 'dismissed' } })
+  assert.equal(dismissed.outcome, 'dismissed')
+  assert.deepEqual(
+    Object.values(dismissed.rows).map((row) => row.text),
+    ['Dismissed', 'Dismissed', 'Dismissed']
+  )
   for (const [text, expected] of [
     ['Ask tool was cancelled by the user', 'dismissed'],
     ['Ask input was cancelled', 'cancelled'],

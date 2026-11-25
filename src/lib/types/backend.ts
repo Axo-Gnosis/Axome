@@ -519,6 +519,8 @@ export interface ChatJob {
   status: ChatJobStatus
   callId: string | null
   startedAt: number
+  /** Finished results waiting to be delivered to the agent. */
+  pendingResults: number
   kind: ChatJobKind
 }
 
@@ -552,7 +554,6 @@ export interface ChatLiveSummary {
   sessionId: string
   running: boolean
   waiting: boolean
-  autoPaused: boolean
   activeCommands: number
   activeChildren: number
 }

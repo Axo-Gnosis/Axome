@@ -276,7 +276,9 @@ function turnOf(steps: Step[]): Turn {
     end: null,
     running: false,
     startedAt: null,
-    endedAt: null
+    endedAt: null,
+    personas: [],
+    modes: []
   }
 }
 

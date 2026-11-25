@@ -24,21 +24,7 @@ export type Step =
       (
         | { kind: 'text'; text: string }
         | { kind: 'thinking'; text: string; redacted: boolean }
-        | Extract<
-            ChatEntryBody,
-            {
-              kind:
-                | 'notice'
-                | 'compaction'
-                | 'branchSummary'
-                | 'modelChange'
-                | 'thinkingChange'
-                | 'serviceTierChange'
-                | 'contextMoved'
-                | 'agentChange'
-                | 'modeChange'
-            }
-          >
+        | Extract<ChatEntryBody, { kind: 'notice' | 'compaction' | 'branchSummary' | 'contextMoved' }>
       ))
 export type Turn = {
   id: string
@@ -49,6 +35,10 @@ export type Turn = {
   running: boolean
   startedAt: string | null
   endedAt: string | null
+  /** The persona in effect at each of the turn's requests, consecutive repeats removed; null is Default. */
+  personas: (string | null)[]
+  /** The mode in effect at each of the turn's requests, consecutive repeats removed; null is no mode. */
+  modes: (string | null)[]
 }
 
 export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | null, live: ChatLive): Turn[] {
@@ -59,6 +49,9 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
   }
   const runs = new Map(live.tools.map((run) => [run.callId, run]))
   let current: Turn | undefined
+  // ponytail: a persona change journaled while a request is streaming is attributed to that request; exact once axo exposes an effective agent.
+  let agent: string | null = null
+  let mode: string | null = null
   function start(user: UserEntry | null, timestamp: string | null = user?.timestamp ?? null): Turn {
     const turn: Turn = {
       id: user?.id ?? `turn:${turns.length}`,
@@ -68,7 +61,9 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
       end: null,
       running: false,
       startedAt: timestamp,
-      endedAt: null
+      endedAt: null,
+      personas: [],
+      modes: []
     }
     turns.push(turn)
     return turn
@@ -124,12 +119,16 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
       current = start(entry as UserEntry)
       continue
     }
-    // Selections before any content are the session's starting config, not command results.
-    if (
-      !current &&
-      (body.kind === 'modelChange' || body.kind === 'thinkingChange' || body.kind === 'serviceTierChange')
-    )
+    // Setup changes are not transcript content: they show in the next reply's footer.
+    if (body.kind === 'agentChange') {
+      agent = body.agent
       continue
+    }
+    if (body.kind === 'modeChange') {
+      mode = body.mode
+      continue
+    }
+    if (body.kind === 'modelChange' || body.kind === 'thinkingChange' || body.kind === 'serviceTierChange') continue
     if (current && current.end !== null && (body.kind === 'assistant' || body.kind === 'notice')) {
       current = undefined
     }
@@ -150,6 +149,8 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
     if (body.kind === 'assistant' || body.kind === 'notice' || body.kind === 'runEnd') current.endedAt = entry.timestamp
     if (body.kind === 'assistant') {
       current.assistants.push(entry as AssistantEntry)
+      if (current.personas.at(-1) !== agent || !current.personas.length) current.personas.push(agent)
+      if (current.modes.at(-1) !== mode || !current.modes.length) current.modes.push(mode)
       blocks(current, body.blocks, entry.id, entry.timestamp)
     } else if (body.kind === 'runEnd') current.end = body
     else current.steps.push({ ...body, id: entry.id, entryId: entry.id, timestamp: entry.timestamp })
@@ -162,6 +163,66 @@ export function transcriptTurns(entries: ChatEntry[], streaming: ChatBlock[] | n
   // Activity `running` also covers standalone maintenance; an ended turn never resumes.
   if (current) current.running = live.running && current.end === null
   return turns
+}
+
+export type SetupPart = { text: string; changed: boolean }
+export type TurnSetup = {
+  persona: SetupPart | null
+  mode: SetupPart | null
+  modelChanged: boolean
+  thinkingChanged: boolean
+}
+
+/** True when `values` switched partway or starts somewhere other than where `before` ended. */
+function setupChanged(values: (string | null)[], before: (string | null)[] | undefined): boolean {
+  return !!before && (values.length > 1 || before.at(-1) !== values[0])
+}
+
+/** What a finished turn's footer says about persona and mode, and what differs from the reply before it. */
+export function turnSetup(turns: Turn[], index: number): TurnSetup {
+  const turn = turns[index]
+  const last = turn?.assistants.at(-1)
+  if (!last) return { persona: null, mode: null, modelChanged: false, thinkingChanged: false }
+  let prev: Turn | undefined
+  for (let at = index - 1; at >= 0 && !prev; at--) if (turns[at].assistants.length) prev = turns[at]
+  const prevLast = prev?.assistants.at(-1)
+  const personaChanged = setupChanged(turn.personas, prev?.personas)
+  return {
+    persona:
+      turn.personas.some((persona) => persona !== null) || personaChanged
+        ? { text: turn.personas.map((persona) => persona ?? 'Default').join(' → '), changed: personaChanged }
+        : null,
+    mode: turn.modes.some((mode) => mode !== null)
+      ? {
+          text: turn.modes.map((mode) => mode ?? 'no mode').join(' → '),
+          changed: setupChanged(turn.modes, prev?.modes)
+        }
+      : null,
+    modelChanged: !!prevLast && prevLast.body.model !== last.body.model,
+    thinkingChanged: !!prevLast && prevLast.body.thinking !== last.body.thinking
+  }
+}
+
+export type SetupChange = { key: 'persona' | 'mode' | 'model' | 'thinking'; from: string | null; to: string | null }
+
+/**
+ * Selections no request has used yet, each with the value it replaces, in the order a revert
+ * applies them: a persona can bring its own model, and a model switch can move effort. Empty before the first reply;
+ * an unrecorded effort is never reported.
+ */
+export function pendingSetup(turns: Turn[], live: ChatLive): SetupChange[] {
+  const last = turns.findLast((turn) => turn.assistants.length > 0)
+  const reply = last?.assistants.at(-1)?.body
+  if (!last || reply?.kind !== 'assistant') return []
+  const changes: SetupChange[] = []
+  const persona = last.personas.at(-1) ?? null
+  if (live.agent !== persona) changes.push({ key: 'persona', from: persona, to: live.agent })
+  if (live.mode !== live.effectiveMode) changes.push({ key: 'mode', from: live.effectiveMode, to: live.mode })
+  if (live.model !== null && live.model !== reply.model)
+    changes.push({ key: 'model', from: reply.model, to: live.model })
+  if (reply.thinking !== null && live.thinking !== reply.thinking)
+    changes.push({ key: 'thinking', from: reply.thinking, to: live.thinking })
+  return changes
 }
 
 export type TurnEndNotice = { kind: 'failed'; text: string } | { kind: 'stopped' } | { kind: 'note'; text: string }

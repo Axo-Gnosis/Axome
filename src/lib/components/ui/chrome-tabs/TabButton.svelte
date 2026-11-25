@@ -14,6 +14,7 @@
     position = 'top',
     color,
     leading,
+    trailing,
     onClose,
     onauxclick,
     class: className,
@@ -24,6 +25,8 @@
     position?: BeamPosition
     color?: string
     leading?: Snippet
+    /** Status shown in the close button's slot; hover swaps it for the close control. */
+    trailing?: Snippet
     onClose?: (event: CloseEvent) => void | Promise<void>
     class?: string
     children?: Snippet
@@ -64,15 +67,24 @@
   {/if}
   {#if leading}{@render leading()}{/if}
   {#if children}{@render children()}{/if}
-  {#if onClose}
-    <span
-      class="-mr-1 p-0.5 text-xs leading-none text-muted opacity-0 transition-all group-hover:opacity-100 hover:text-danger"
-      role="button"
-      tabindex="0"
-      onclick={handleClose}
-      onkeydown={(event) => event.key === 'Enter' && handleClose(event)}
-    >
-      <Icon icon={XIcon} size={12} />
+  {#if onClose || trailing}
+    <span class="relative -mr-1 flex size-4 shrink-0 items-center justify-center">
+      {#if trailing}
+        <span class={cn('flex items-center justify-center', onClose && 'group-hover:opacity-0')}
+          >{@render trailing()}</span
+        >
+      {/if}
+      {#if onClose}
+        <span
+          class="absolute inset-0 flex items-center justify-center text-xs leading-none text-muted opacity-0 transition-all group-hover:opacity-100 hover:text-danger"
+          role="button"
+          tabindex="0"
+          onclick={handleClose}
+          onkeydown={(event) => event.key === 'Enter' && handleClose(event)}
+        >
+          <Icon icon={XIcon} size={12} />
+        </span>
+      {/if}
     </span>
   {/if}
 </button>

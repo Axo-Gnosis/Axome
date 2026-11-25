@@ -1,6 +1,6 @@
 import { jobKind } from '../jobs'
 
-export type SessionSidebarView = 'jobs' | 'agents' | 'toolbox' | 'context' | 'files' | 'plan' | 'memory'
+export type SessionSidebarView = 'jobs' | 'agents' | 'toolbox' | 'session' | 'files' | 'plan' | 'memory'
 
 export class SessionSidebarState {
   view = $state<SessionSidebarView | null>(null)

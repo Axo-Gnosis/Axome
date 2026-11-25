@@ -16,8 +16,9 @@
     Navigation03Icon,
     Queue01Icon,
     SlashIcon,
-    SparklesIcon
+    BookOpen01Icon
   } from '@hugeicons/core-free-icons'
+  import { chipVariants } from '$lib/components/ui/chip'
   import { notify } from '$lib/features/notifications/state.svelte'
   import { stoppedCommandTarget } from '$lib/features/chat/extensions'
   import { openExtensionSettings, type ExtensionSettingsTarget } from '$lib/features/settings/dialog/state.svelte'
@@ -178,7 +179,7 @@
     builtin: SlashIcon,
     registered: SlashIcon,
     mode: Layers01Icon,
-    skill: SparklesIcon
+    skill: BookOpen01Icon
   }
   const items = $derived.by((): Item[] => {
     if (query?.kind === 'argument') {
@@ -560,9 +561,13 @@
         if (node.type.name === 'part')
           decorations.push(Decoration.node(pos, pos + node.nodeSize, { 'data-selected': '' }))
       })
-    // A mode's `/name` reads like a command name; keywords axo matched read as accent.
-    const invoked = onMode ? invokedCommand(documentParts(state.doc), commands, 'mode') : null
+    // A mode's `/name` reads like a command name, a skill's like the chip it becomes once sent;
+    // keywords axo matched read as accent.
+    const docParts = documentParts(state.doc)
+    const invoked = onMode ? invokedCommand(docParts, commands, 'mode') : null
     if (invoked) decorations.push(Decoration.inline(1, invoked.name.length + 2, { class: 'font-medium text-bright' }))
+    const invokedSkill = invokedCommand(docParts, commands, 'skill')
+    if (invokedSkill) decorations.push(Decoration.inline(1, invokedSkill.name.length + 2, { class: chipVariants() }))
     for (const range of keywordRanges)
       decorations.push(Decoration.inline(range.from, range.to, { class: 'font-medium text-accent' }))
     // The built-in command being typed is styled: its name, each argument as a pill, the arguments
