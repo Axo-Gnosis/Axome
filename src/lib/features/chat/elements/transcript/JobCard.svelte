@@ -1,6 +1,6 @@
 <!--
   @component
-  JobCard — every event of one subagent or team within a work block, as one card on the rail.
+  JobCard — every event of one subagent or team within a step, as one card on the rail.
   Folded: header plus one live or result line. Open: the events in order, then the result.
   A team shows its team-wide events, then one section per member.
 -->
@@ -125,7 +125,7 @@
     if (progress && activeLive(step.job)) return progressLine(progress)
     const text = firstLine(finals(step.events).at(-1)?.text)
     if (text) return text
-    return step.continues ? 'Continues in the next block' : ''
+    return step.continues ? 'Continues in a later step' : ''
   })
   const ownEvents = $derived(step.events.filter((event) => event.member === null))
   const SEND_LABEL = { steer: 'steer', followUp: 'follow-up', mail: 'mail' } as const
@@ -145,7 +145,7 @@
   <div class="grid grid-cols-[64px_1fr] gap-x-2 gap-y-1.5 text-sm">
     {#if spawnFallback && !events.some((event) => event.kind === 'spawn')}
       {@render row('spawned')}
-      <span class="text-muted">{index?.turnId === turnId ? 'Above, before the message' : 'In an earlier reply'}</span>
+      <span class="text-muted">{index?.turnId === turnId ? 'In an earlier step' : 'In an earlier reply'}</span>
     {/if}
     {#each events as event, idx (idx)}
       {#if event.kind === 'spawn'}

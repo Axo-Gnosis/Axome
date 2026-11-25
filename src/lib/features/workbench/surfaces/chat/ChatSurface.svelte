@@ -17,7 +17,7 @@
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
   import { UserBlock, AgentBlock } from '$lib/features/chat/elements/transcript'
-  import { groupSteps, segmentSteps } from '$lib/features/chat/elements/transcript/groupSteps'
+  import { groupSteps, segmentSteps, turnFoldId } from '$lib/features/chat/elements/transcript/groupSteps'
   import BackgroundBand from '$lib/features/chat/elements/transcript/BackgroundBand.svelte'
   import RetryRow from '$lib/features/chat/elements/transcript/RetryRow.svelte'
   import {
@@ -230,7 +230,7 @@
     return null
   }
 
-  /** Open the work block and tool group holding a step, then scroll to it. */
+  /** Open the turn's work, the step and the tool group holding a step, then scroll to it. */
   async function revealStep(stepId: string) {
     for (const turn of turns) {
       for (const segment of segmentSteps(groupSteps(turn.steps), jobIndex)) {
@@ -238,6 +238,7 @@
         for (const step of segment.steps) {
           const group = step.kind === 'toolGroup' && step.calls.some((call) => call.id === stepId) ? step : null
           if (step.id !== stepId && !group) continue
+          overrides[turnFoldId(turn.id)] = 'preview'
           overrides[segment.id] = 'preview'
           if (group) overrides[`tool-group:${group.id}`] = 'preview'
           overrides[stepId] = 'preview'

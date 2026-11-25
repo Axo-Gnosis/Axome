@@ -3,6 +3,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip'
   import { Separator } from '$lib/components/ui/separator'
   import * as Alert from '$lib/components/ui/alert'
+  import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
   import type { ChatController } from '$lib/features/chat/controller.svelte'
   import { chatExtensionTarget, findExtension } from '$lib/features/chat/extensions'
   import { openExtensionSettings } from '$lib/features/settings/dialog/state.svelte'
@@ -11,6 +12,7 @@
   import {
     cacheHitPercent,
     formatCost,
+    formatCount,
     formatDuration,
     formatList,
     formatTokens,
@@ -19,7 +21,8 @@
   import { compactionTokensAfter, turnDurationMs, turnEndNotice, turnSetup, type Turn } from '$lib/features/chat/turns'
   import type { CaptureRun } from '$lib/features/memory/captures.svelte'
   import { isActiveJob, type TranscriptJob } from '$lib/features/chat/jobs'
-  import type { BlockView } from '$lib/features/chat/view'
+  import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
+  import { isOpen, type BlockView } from '$lib/features/chat/view'
   import { notify } from '$lib/features/notifications/state.svelte'
   import type { ChatUsage } from '$lib/types/backend'
   import {
@@ -54,7 +57,19 @@
   import ToolGroup from './ToolGroup.svelte'
   import WorkBlock from './WorkBlock.svelte'
   import WorkingIndicator from './WorkingIndicator.svelte'
-  import { groupSteps, segmentSteps, type BandStep, type TranscriptStep } from './groupSteps'
+  import { disclose } from './disclose'
+  import {
+    groupSteps,
+    hasCalls,
+    segmentSteps,
+    splitTurn,
+    turnFoldId,
+    workCounts,
+    type BandStep,
+    type TranscriptSegment,
+    type TranscriptStep,
+    type WorkSegment
+  } from './groupSteps'
 
   let {
     turn,
@@ -112,6 +127,48 @@
   const flow = $derived(tail ? segments.slice(0, -1) : segments)
   const maintenance = $derived(turnIndex === turns.length - 1 ? (controller.state?.live.maintenance ?? null) : null)
   const liveJobs = $derived(controller.state?.live.jobs ?? [])
+  const { work, reply } = $derived(splitTurn(flow, turn.running))
+  const blocks = $derived(flow.filter((segment): segment is WorkSegment => segment.kind === 'work'))
+  const stepCount = $derived(blocks.filter(hasCalls).length)
+  // A turn with one untitled run: the summary header is that run's toggle.
+  const sole = $derived(work.length === 1 && work[0].kind === 'work' && work[0].narration === null ? work[0] : null)
+  // A finished turn that ended on a step keeps it open, outside the fold.
+  const pinned = $derived(!turn.running && reply[0]?.kind === 'work' && hasCalls(reply[0]) ? reply[0] : null)
+  const foldId = $derived(sole?.id ?? turnFoldId(turn.id))
+  const foldOpen = $derived(
+    turn.running || isOpen(overrides, foldId, !sole && turnIndex === turns.length - 1 ? 'preview' : expansion)
+  )
+  const workSummary = $derived.by(() => {
+    let calls = 0
+    let thoughts = 0
+    for (const block of blocks) {
+      const counts = workCounts(block.steps)
+      calls += counts.calls
+      thoughts += counts.thoughts
+    }
+    return [
+      stepCount > 1 ? formatCount(stepCount, 'step') : '',
+      calls ? formatCount(calls, 'tool call') : '',
+      thoughts ? formatCount(thoughts, 'thought') : ''
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  })
+  // Moved from WorkBlock: what the live line says while a `wait` call blocks the turn.
+  const waiting = $derived.by(() => {
+    const last = flow.at(-1)
+    if (
+      last?.kind !== 'work' ||
+      !last.steps.some((step) => step.kind === 'receipt' && step.call.name === 'wait' && step.call.status === 'running')
+    )
+      return ''
+    const ids = liveJobs.filter((job) => isActiveJob(job.status)).map((job) => job.id)
+    return ids.length ? `waiting on ${formatList(ids)}` : 'waiting'
+  })
+  const liveDetail = $derived([stepCount ? `step ${stepCount}` : '', waiting].filter(Boolean).join(' · '))
+  const cycleKey = $derived(chatShortcut('cycleDetails'))
+  // Consecutive steps sit flush; everything else keeps the block's gap.
+  const TIGHT = '[&>[data-slot=work-block]+[data-slot=work-block]]:-mt-3'
   const reviews = $derived(controller.state?.live.reviews ?? [])
   const canReview = $derived(controller.connection === 'live' && !controller.readOnly)
   const retry = $derived(turn.running ? (controller.state?.live.retry ?? null) : null)
@@ -288,6 +345,25 @@
   {/if}
 {/snippet}
 
+{#snippet item(segment: TranscriptSegment)}
+  {#if segment.kind === 'work'}
+    <WorkBlock
+      {segment}
+      live={turn.running && segment === flow.at(-1)}
+      pinned={segment === pinned}
+      bare={!turn.running && segment === sole}
+      {expansion}
+      {overrides}
+      {onView}
+      {render}
+      {folderPath}
+      {sessionId}
+    />
+  {:else}
+    {@render render(segment)}
+  {/if}
+{/snippet}
+
 <!-- `live`: the session's running maintenance joins this band. -->
 {#snippet band(step: BandStep | null, live: boolean)}
   {@const id = step?.id ?? `band:live:${turn.id}`}
@@ -307,30 +383,45 @@
   />
 {/snippet}
 
-<div data-slot="agent-block" class="flex min-w-0 flex-col gap-3 py-2">
-  {#each flow as segment, index (segment.id)}
-    {#if segment.kind === 'work'}
-      <WorkBlock
-        {segment}
-        running={turn.running && index === flow.length - 1}
-        {duration}
-        {liveJobs}
-        {expansion}
-        {overrides}
-        {onView}
-        {render}
-        stop={stopControl}
-      />
-    {:else}
-      {@render render(segment)}
-    {/if}
-  {/each}
+<div data-slot="agent-block" class={cn('flex min-w-0 flex-col gap-3 py-2', TIGHT)}>
+  {#if !turn.running && work.length}
+    <button
+      type="button"
+      data-slot="work-summary"
+      data-view-id={foldId}
+      aria-expanded={foldOpen}
+      title={cycleKey ? `Toggle work (${cycleKey} cycles all)` : 'Toggle work'}
+      onclick={() => onView(foldId, foldOpen ? 'collapsed' : 'preview')}
+      class="flex min-h-7 max-w-full min-w-0 cursor-pointer items-center gap-2 self-start rounded text-sm text-muted transition-colors hover:text-fg focus-visible:shadow-focus-ring focus-visible:outline-none"
+    >
+      <DisclosureChevron open={foldOpen} size={14} class="shrink-0" />
+      <span class="min-w-0 truncate tabular-nums" title={workSummary || undefined}
+        ><span class="text-fg">Worked{duration !== null ? ` for ${formatDuration(duration)}` : ''}</span>{workSummary
+          ? ` · ${workSummary}`
+          : ''}</span
+      >
+    </button>
+  {/if}
+  {#if foldOpen && work.length}
+    <div
+      data-slot="turn-work"
+      data-disclose
+      transition:disclose={{ duration: 150 }}
+      class={cn('flex min-w-0 flex-col gap-3', TIGHT, !turn.running && '-mt-3')}
+    >
+      {#each work as segment (segment.id)}{@render item(segment)}{/each}
+    </div>
+  {/if}
+  {#each reply as segment (segment.id)}{@render item(segment)}{/each}
   {#if turn.running && maintenance && flow.at(-1)?.kind !== 'band'}
     {@render band(null, true)}
   {/if}
-  {#if turn.running && segments.at(-1)?.kind !== 'work'}
-    <div class="flex min-w-0 items-center gap-3">
-      <WorkingIndicator {duration} />
+  {#if turn.running}
+    <div class="flex min-h-8 min-w-0 items-center gap-2 text-sm text-muted">
+      <span class="flex min-w-0 items-center">
+        <WorkingIndicator {duration} />
+        {#if liveDetail}<span class="min-w-0 truncate whitespace-pre tabular-nums">{` · ${liveDetail}`}</span>{/if}
+      </span>
       {@render stopControl()}
     </div>
   {/if}

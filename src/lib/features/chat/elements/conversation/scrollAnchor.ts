@@ -31,7 +31,7 @@ export function captureScrollAnchor(viewport: HTMLElement, content: HTMLElement)
 function captureExpansionAnchor(viewport: HTMLElement, content: HTMLElement): ScrollAnchor | null {
   const bounds = viewport.getBoundingClientRect()
   const blocks = content.querySelectorAll<HTMLElement>(
-    '[data-slot="user-block"], [data-slot="agent-block"] > [data-slot="message-response"], [data-slot="work-block"], [data-slot="background-band"]'
+    '[data-slot="user-block"], :is([data-slot="agent-block"], [data-slot="turn-work"]) > [data-slot="message-response"], [data-slot="work-summary"], [data-slot="work-block"], [data-slot="background-band"]'
   )
   for (const block of blocks) {
     const rect = block.getBoundingClientRect()

@@ -514,11 +514,10 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 
 **Status:** Implemented · **Evidence:** [`.axome/research/chat-ux-boards-review.md`](../../.axome/research/chat-ux-boards-review.md), boards in `.bak/board2.html`, issues in `.bak/ISSUES.md`
 
-**Shipped:** setup changes show in the answer footer instead of transcript lines; a pending-change bar above the composer; inline keyword marks; dismissing a question continues the run; the paused-wakes banner only when something is held; skill icon and chip; persona cards, the Session panel and `/persona`; the tab status dot at the end of the tab with a done-unread state; manual chat rename.
+**Shipped:** setup changes show in the answer footer instead of transcript lines; a pending-change bar above the composer; inline keyword marks; dismissing a question continues the run; the paused-wakes banner only when something is held; skill icon and chip; persona cards, the Session panel and `/persona`; the tab status dot at the end of the tab with a done-unread state; manual chat rename; steps derived from narration, with a per-turn summary.
 
 **Deferred or pinned (decide before building):**
 
-- **Steps view for long turns** (ISSUES item 1). Chosen direction: steps derived from the agent's narration lines, each with its tool calls folded under it and a live status, and a finished turn folded into one "Worked for …" header. No backend change needed. Prototype: canvas page "Turn steps", version A.
 - **Editable composer chips** (ISSUES item 5). File chips: click turns the chip back into `@path` with the picker open. Paste chips: undecided; expanding a very large paste inline is too much, and a Ctrl+G editor for the whole input (as omp has) is the idea to explore. Raising the paste-to-chip threshold to about 20 lines or 2,000 characters was agreed and belongs with this work (`PromptInputRoot.svelte:694`).
 - **Agent-generated chat titles.** axo should own generation; the host may supply a guideline prompt; extensions must be able to shape or replace the result. Open: which model writes it and when. Until then a title is the first message or a manual rename. The muted "first words while generating" tab state from board 8 + 9 depends on this.
 - **A generated icon per chat tab.** The icon set is a host concern, so the host has to hand its icon vocabulary to whatever picks one. Mechanism undecided.

@@ -1,12 +1,13 @@
 import type { ChatDeliverable } from '$lib/types/backend'
+import { firstLine } from '../../format'
 import { jobKind, resolveJob, type JobKind, type TranscriptJob } from '../../jobs'
 import { parseBashDetails } from '../tool/bashOutput'
 import { blockedToolResult } from '../tool/payload'
 import { isReceiptTool, killReceipt, sendReceipt, spawnReceipt, waitReceipt } from '../tool/receipt'
 import type { Step, ToolStep } from '../../turns'
 
-/** One or more adjacent thinking steps, already redacted, as the transcript renders them. */
-export type ThoughtStep = { kind: 'thinking'; id: string; text: string; streaming: boolean }
+/** One or more adjacent thinking steps, already redacted; `entryId` is the last one's message. */
+export type ThoughtStep = { kind: 'thinking'; id: string; entryId: string | null; text: string; streaming: boolean }
 export type ToolGroupStep = { kind: 'toolGroup'; id: string; calls: ToolStep[] }
 export type ReceiptStep = { kind: 'receipt'; id: string; call: ToolStep }
 /** What a job did inside one work block; `member` names the teammate for team jobs. */
@@ -71,14 +72,16 @@ export function groupSteps(steps: Step[]): GroupedStep[] {
       // Redaction is applied per segment so a hidden thought cannot hide its visible neighbors.
       const text = [first.redacted ? REDACTED_THINKING : first.text]
       let streaming = first.entryId === null
+      let entryId = first.entryId
       while (true) {
         const thought = steps[index + 1]
         if (thought?.kind !== 'thinking') break
         index++
         text.push(thought.redacted ? REDACTED_THINKING : thought.text)
+        entryId = thought.entryId
         if (thought.entryId === null) streaming = true
       }
-      grouped.push({ kind: 'thinking', id: first.id, text: text.join('\n\n'), streaming })
+      grouped.push({ kind: 'thinking', id: first.id, entryId, text: text.join('\n\n'), streaming })
     } else if (maintenance(first)) {
       const band: BandStep = { kind: 'band', id: `band:${first.id}`, steps: [first] }
       while (maintenance(steps[index + 1])) band.steps.push(steps[++index] as MaintenanceStep)
@@ -90,7 +93,9 @@ export function groupSteps(steps: Step[]): GroupedStep[] {
   return grouped
 }
 
-export type WorkSegment = { kind: 'work'; id: string; steps: TranscriptStep[] }
+export type TextStep = Extract<GroupedStep, { kind: 'text' }>
+/** One step of a turn: a run of work, titled by the text the agent wrote before it (`narration`). */
+export type WorkSegment = { kind: 'work'; id: string; narration: TextStep | null; steps: TranscriptStep[] }
 export type TranscriptSegment = TranscriptStep | WorkSegment
 
 /** Work that folds: calls, thoughts, coordination receipts except `yield`, and job wakes. */
@@ -108,6 +113,55 @@ function foldable(step: GroupedStep): boolean {
     default:
       return false
   }
+}
+
+/** A work run that did more than think. Only these take a narration, count as steps, and bound the reply. */
+export function hasCalls(segment: { steps: { kind: string }[] }): boolean {
+  return segment.steps.some((step) => step.kind !== 'thinking')
+}
+
+/** A narration's one-line step title: its first line without Markdown markers. */
+export function narrationTitle(text: string): string {
+  return firstLine(text)
+    .replace(/^(#{1,6}|[-*+>])\s+/, '')
+    .replace(/\*\*|`/g, '')
+}
+
+export function workCounts(steps: TranscriptStep[]): { calls: number; thoughts: number; failed: number } {
+  const counts = { calls: 0, thoughts: 0, failed: 0 }
+  for (const step of steps) {
+    if (step.kind === 'thinking') counts.thoughts++
+    const calls = step.kind === 'tool' ? [step] : step.kind === 'toolGroup' ? step.calls : []
+    counts.calls += calls.length
+    counts.failed += calls.filter((call) => call.status === 'error').length
+  }
+  return counts
+}
+
+/** The view id of a turn's summary fold. */
+export function turnFoldId(turnId: string): string {
+  return `turn-work:${turnId}`
+}
+
+/**
+ * Split a turn into the work its summary folds and the reply that stays visible.
+ * A finished turn's last text is always its answer, even when the agent meant it as a step title
+ * (stopped, failed, or more calls after the answer): it leaves that step, which follows it untitled.
+ * A finished turn with no text after its last step keeps that step in the reply.
+ */
+export function splitTurn(
+  segments: TranscriptSegment[],
+  running: boolean
+): { work: TranscriptSegment[]; reply: TranscriptSegment[] } {
+  const last = segments.findLastIndex((segment) => segment.kind === 'work' && hasCalls(segment))
+  const after = segments.slice(last + 1)
+  if (running || after.some((segment) => segment.kind === 'text'))
+    return { work: segments.slice(0, last + 1), reply: after }
+  const end = segments[last]
+  if (end?.kind === 'work' && end.narration)
+    return { work: segments.slice(0, last), reply: [end.narration, { ...end, narration: null }, ...after] }
+  const start = Math.max(last, 0)
+  return { work: segments.slice(0, start), reply: segments.slice(start) }
 }
 
 /** Merge each job's receipts and deliverables into one `JobStep`; receipts that name no job stay rows. */
@@ -182,22 +236,45 @@ function foldJobs(segmentId: string, steps: GroupedStep[], jobs: ReadonlyMap<str
 }
 
 /**
- * Fold contiguous work only. Visible messages stay in order and end the current fold, even while
- * streaming. Inside a fold, each job's coordination receipts and deliverables become one `JobStep`.
+ * Fold contiguous work into steps. The text before a step that made calls becomes its `narration`;
+ * other visible messages stay in order and end the current fold, even while streaming. Inside a fold,
+ * each job's coordination receipts and deliverables become one `JobStep`.
  */
 export function segmentSteps(steps: GroupedStep[], jobs: ReadonlyMap<string, TranscriptJob>): TranscriptSegment[] {
-  const runs: (GroupedStep | { id: string; steps: GroupedStep[] })[] = []
+  type Run = { id: string; narration: TextStep | null; steps: GroupedStep[] }
+  const isRun = (item: GroupedStep | Run | undefined): item is Run => !!item && !('kind' in item)
+  const runs: (GroupedStep | Run)[] = []
   for (const step of steps) {
     if (foldable(step)) {
       const previous = runs.at(-1)
-      if (previous && !('kind' in previous)) previous.steps.push(step)
-      else runs.push({ id: `work:${step.id}`, steps: [step] })
+      if (isRun(previous)) previous.steps.push(step)
+      else runs.push({ id: `work:${step.id}`, narration: null, steps: [step] })
     } else {
       runs.push(step)
     }
   }
-  const segments = runs.map((run): TranscriptSegment =>
-    'kind' in run ? run : { kind: 'work', id: run.id, steps: foldJobs(run.id, run.steps, jobs) }
+  // The text before a run that made calls is that step's title, not a message.
+  const titled: (GroupedStep | Run)[] = []
+  for (const item of runs) {
+    const text = titled.at(-1)
+    if (isRun(item) && hasCalls(item) && text && !isRun(text) && text.kind === 'text') {
+      titled.pop()
+      item.narration = text
+      // Thoughts the model wrote just before this narration belong to this step, not the one before.
+      const before = titled.at(-1)
+      if (isRun(before)) {
+        while (true) {
+          const last = before.steps.at(-1)
+          if (last?.kind !== 'thinking' || last.entryId !== text.entryId) break
+          item.steps.unshift(before.steps.pop()!)
+        }
+        if (!before.steps.length) titled.pop()
+      }
+    }
+    titled.push(item)
+  }
+  const segments = titled.map((run): TranscriptSegment =>
+    isRun(run) ? { kind: 'work', id: run.id, narration: run.narration, steps: foldJobs(run.id, run.steps, jobs) } : run
   )
   const later = new Set<string>()
   for (let index = segments.length - 1; index >= 0; index--) {

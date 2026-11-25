@@ -3,7 +3,18 @@ import assert from 'node:assert/strict'
 import type { ChatDeliverable, ChatNotice } from '$lib/types/backend'
 import { transcriptJobs } from '../../jobs'
 import type { Step, ToolStep, Turn } from '../../turns'
-import { groupSteps, REDACTED_THINKING, segmentSteps, type ThoughtStep, type TranscriptStep } from './groupSteps'
+import {
+  groupSteps,
+  narrationTitle,
+  REDACTED_THINKING,
+  segmentSteps,
+  splitTurn,
+  type TextStep,
+  type ThoughtStep,
+  type TranscriptSegment,
+  type TranscriptStep,
+  type WorkSegment
+} from './groupSteps'
 import { toolHeader } from '../tool/toolHeader'
 
 const none = new Map()
@@ -27,11 +38,11 @@ function tool(id: string, name = 'read', entryId: string | null = id, details: u
 function thinking(id: string, text: string, redacted = false, entryId: string | null = id): Step {
   return { id, entryId, timestamp: null, kind: 'thinking', text, redacted }
 }
-function thought(id: string, text: string, streaming = false): ThoughtStep {
-  return { kind: 'thinking', id, text, streaming }
+function thought(id: string, text: string, streaming = false, entryId: string | null = id): ThoughtStep {
+  return { kind: 'thinking', id, entryId, text, streaming }
 }
-function work(id: string, steps: TranscriptStep[]) {
-  return { kind: 'work', id, steps }
+function work(id: string, steps: TranscriptStep[], narration: TextStep | null = null): WorkSegment {
+  return { kind: 'work', id, narration, steps }
 }
 const times = { timestamp: null }
 const boundaries: Step[] = [
@@ -62,7 +73,7 @@ test('only adjacent same-name tools and adjacent thinking merge, preserving boun
         thinking('c', 'Third'),
         thinking('d', 'Fourth')
       ]),
-      [thought('a', 'First\n\nSecond'), boundary, thought('c', 'Third\n\nFourth')]
+      [thought('a', 'First\n\nSecond', false, 'b'), boundary, thought('c', 'Third\n\nFourth', false, 'd')]
     )
   }
   const read = tool('read')
@@ -94,16 +105,14 @@ test('a record-bearing send remains a normal tool step instead of a receipt or j
   assert.deepEqual(segmentSteps(grouped, none), [work('work:send', [send])])
 })
 
-test('visible messages end each work fold, preserving the entire turn sequence', () => {
+test('the text before a step that made calls becomes its narration; the text after the last step is the answer', () => {
   const intro: Step = { id: 'intro', entryId: 'intro', ...times, kind: 'text', text: 'Looking into it' }
   const update: Step = { id: 'update', entryId: 'update', ...times, kind: 'text', text: 'Found it' }
   const answer: Step = { id: 'answer', entryId: null, ...times, kind: 'text', text: 'Done' }
   const steps = groupSteps([intro, thinking('thought', 'Thinking'), tool('a'), tool('b'), update, tool('c'), answer])
   assert.deepEqual(segmentSteps(steps, none), [
-    intro,
-    work('work:thought', steps.slice(1, 3)),
-    update,
-    work('work:c', steps.slice(4, 5)),
+    work('work:thought', steps.slice(1, 3), intro as TextStep),
+    work('work:c', steps.slice(4, 5), update as TextStep),
     answer
   ])
   assert.deepEqual(segmentSteps([], none), [])
@@ -133,11 +142,13 @@ test('notices stay visible at their original positions', () => {
   for (const boundary of boundaries) {
     const first = tool('a')
     const last = tool('b')
-    assert.deepEqual(segmentSteps(groupSteps([first, boundary, last]), none), [
-      work('work:a', [first]),
-      boundary,
-      work('work:b', [last])
-    ])
+    // A text before calls is absorbed as the next step's narration; a notice stays visible.
+    assert.deepEqual(
+      segmentSteps(groupSteps([first, boundary, last]), none),
+      boundary.kind === 'text'
+        ? [work('work:a', [first]), work('work:b', [last], boundary)]
+        : [work('work:a', [first]), boundary, work('work:b', [last])]
+    )
   }
 })
 
@@ -170,19 +181,20 @@ test('merged thinking preserves visible text in order without exposing redacted 
   assert.deepEqual(merged, {
     kind: 'thinking',
     id: 'first',
+    entryId: 'last',
     text: `Visible before\n\n${REDACTED_THINKING}\n\nVisible after`,
     streaming: true
   })
   assert.equal(JSON.stringify(merged).includes('SECRET'), false)
   assert.deepEqual(groupSteps([thinking('x', 'SECRET', true)]), [thought('x', REDACTED_THINKING)])
   assert.deepEqual(groupSteps([thinking('hidden', 'SECRET', true), thinking('visible', 'Visible')]), [
-    thought('hidden', `${REDACTED_THINKING}\n\nVisible`)
+    thought('hidden', `${REDACTED_THINKING}\n\nVisible`, false, 'visible')
   ])
   assert.deepEqual(groupSteps([thinking('a', 'SECRET', true), thinking('b', 'SECRET', true)]), [
-    thought('a', `${REDACTED_THINKING}\n\n${REDACTED_THINKING}`)
+    thought('a', `${REDACTED_THINKING}\n\n${REDACTED_THINKING}`, false, 'b')
   ])
   assert.deepEqual(groupSteps([thinking('a', 'Growing', false, null), thinking('b', 'Saved')]), [
-    thought('a', 'Growing\n\nSaved', true)
+    thought('a', 'Growing\n\nSaved', true, 'b')
   ])
 })
 
@@ -305,7 +317,7 @@ test('job receipts and wakes fold into one job step per work segment', () => {
   const segments = segmentSteps(groupSteps(turn.steps), transcriptJobs([turn]))
   assert.deepEqual(
     segments.map((segment) => segment.kind),
-    ['work', 'text', 'work', 'text']
+    ['work', 'work', 'text']
   )
   const summary = (index: number) => {
     const segment = segments[index]
@@ -320,13 +332,14 @@ test('job receipts and wakes fold into one job step per work segment', () => {
     ['read', 'tool'],
     ['job:work:read:agent_7', 'child', ['spawn'], true]
   ])
-  assert.deepEqual(summary(2), [
+  assert.deepEqual(summary(1), [
     ['job:work:send:agent_7', 'child', ['send', 'wait', 'deliverable', 'deliverable', 'deliverable'], false],
     ['job:work:send:bg_31', 'command', ['spawn', 'deliverable'], false],
     ['job:work:send:bg_30', 'command', ['kill'], false]
   ])
-  const work = segments[2]
+  const work = segments[1]
   if (work.kind !== 'work' || work.steps[0].kind !== 'job') throw new Error('Expected job step')
+  assert.equal(work.narration?.text, 'intro')
   assert.deepEqual(work.steps[0].events[0], { kind: 'send', member: null, call: turn.steps[3], send: 'followUp' })
 })
 
@@ -342,4 +355,57 @@ test('a yield receipt ends work, and a note to the parent stays a receipt row in
   assert.equal(segment.kind, 'work')
   if (segment.kind !== 'work') throw new Error('Expected work segment')
   assert.deepEqual(segment.steps[1], { kind: 'receipt', id: 'note', call: note })
+})
+
+test('thoughts written just before a narration move into the step it introduces', () => {
+  const said = (id: string, entryId: string): Step => ({ id, entryId, ...times, kind: 'text', text: `Said ${id}` })
+  const x1 = said('x1', 'm1') as TextStep
+  const x2 = said('x2', 'm2') as TextStep
+  const answer = said('a', 'm3')
+  const c1 = tool('c1', 'read', 'm1')
+  const c2 = tool('c2', 'write', 'm2')
+  const steps = groupSteps([
+    thinking('t1', '…', false, 'm1'),
+    x1,
+    c1,
+    thinking('t2', '…', false, 'm2'),
+    x2,
+    c2,
+    thinking('t3', '…', false, 'm3'),
+    answer
+  ])
+  assert.deepEqual(segmentSteps(steps, none), [
+    work('work:c1', [thought('t1', '…', false, 'm1'), c1], x1),
+    work('work:c2', [thought('t2', '…', false, 'm2'), c2, thought('t3', '…', false, 'm3')], x2),
+    answer
+  ])
+})
+
+test('a thought-only run takes no narration', () => {
+  const segments = segmentSteps(groupSteps([text('p1'), thinking('t', 'Hmm'), text('p2')]), none)
+  assert.deepEqual(
+    segments.map((segment) => segment.kind),
+    ['text', 'work', 'text']
+  )
+  assert.equal((segments[1] as WorkSegment).narration, null)
+})
+
+test('the reply starts after the last step with calls, and a finished turn always ends on its last text', () => {
+  const calls = work('work:x', [tool('x')])
+  const musing = work('work:t', [thought('t', 'Hmm')])
+  const [a, b] = groupSteps([text('a'), text('b')]) as TextStep[]
+  const replyStart = (segments: TranscriptSegment[], running: boolean) => splitTurn(segments, running).work.length
+  assert.equal(replyStart([calls, a], false), 1)
+  assert.equal(replyStart([calls], false), 0)
+  assert.equal(replyStart([calls], true), 1)
+  assert.equal(replyStart([a], false), 0)
+  assert.equal(replyStart([calls, a, musing, b], false), 1)
+  // Stopped mid-step: the last step's title is the answer, and the step follows it untitled.
+  const titled = work('work:y', [tool('y')], b)
+  assert.deepEqual(splitTurn([calls, titled], false), { work: [calls], reply: [b, work('work:y', [tool('y')])] })
+  assert.deepEqual(splitTurn([calls, titled], true), { work: [calls, titled], reply: [] })
+})
+
+test('step titles drop Markdown markers', () => {
+  assert.equal(narrationTitle('## Now the **table** in `spec.ts`:\n\nmore'), 'Now the table in spec.ts:')
 })
