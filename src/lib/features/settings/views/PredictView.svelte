@@ -104,6 +104,18 @@
     })
   }
 
+  function seedFromHistory() {
+    void runAction(async () => {
+      const count = await backend.predict.seed()
+      notify.info(
+        'Predictive text seeded',
+        count > 0
+          ? `Imported ${count} ${count === 1 ? 'prompt' : 'prompts'} from local chat history.`
+          : 'No past chat prompts found to import.'
+      )
+    })
+  }
+
   function resetLearned() {
     void runAction(async () => {
       await backend.predict.reset()
@@ -188,6 +200,15 @@
   </SettingsSection>
 
   <SettingsSection title="Learned Data">
+    <SettingRow
+      label="Seed from Chat History"
+      description="Imports past prompts you typed in local Axo sessions. Runs automatically once on first enable, never after a reset."
+      as="div"
+    >
+      <Button size="sm" variant="outline" disabled={!settings?.enabled || busy} onclick={seedFromHistory}>
+        Seed from History
+      </Button>
+    </SettingRow>
     <SettingRow
       label="Reset Learned Data"
       description="Clears your personal word counts and recent-prompt memory stored under this desktop's data directory."

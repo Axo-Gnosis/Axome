@@ -277,6 +277,7 @@ pub(crate) fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + S
         predict_complete,
         predict_status,
         predict_reset,
+        predict_seed,
         axo_search_key_set,
         axo_search_key_remove,
         axo_docs_refresh,

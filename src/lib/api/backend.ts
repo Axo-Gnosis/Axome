@@ -855,6 +855,10 @@ export const backend = {
     /** Forgets everything learned. */
     reset(): Promise<void> {
       return invoke('predict_reset')
+    },
+    /** Imports past user prompts from local Axo chat history; returns prompt count. */
+    seed(): Promise<number> {
+      return invoke('predict_seed')
     }
   },
 

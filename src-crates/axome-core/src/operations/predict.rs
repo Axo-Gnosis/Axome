@@ -18,4 +18,8 @@ impl Host {
     pub fn predict_reset(&self) -> Result<(), ApiError> {
         self.predict.reset()
     }
+
+    pub fn predict_seed(&self) -> Result<u64, ApiError> {
+        self.predict.seed()
+    }
 }

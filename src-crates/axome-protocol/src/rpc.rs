@@ -699,6 +699,8 @@ macro_rules! axome_rpc_ops {
             #[route(none)]
             PredictReset => predict_reset() -> ();
             #[route(none)]
+            PredictSeed => predict_seed() -> u64;
+            #[route(none)]
             SettingsSetPredict => settings_set_predict(
                 settings: $crate::settings::PredictSettings,
             ) -> $crate::settings::PredictSettings;

@@ -5,12 +5,14 @@
 use crate::errors::ApiError;
 use crate::services::settings_resolution::resolve_effective_settings_for_folder_path;
 use crate::HostDirs;
+use axo::store::{Entry, SubmissionKind};
 use axo_models::ModelState;
 use axo_predict::{Config, ModelFiles, Options, Predictor, SMOLLM2};
 use axome_protocol::chat::ChatPart;
 use axome_protocol::predict::{PredictModelState, PredictStatus, PredictSuggestion};
 use axome_protocol::settings::PredictSettings;
 use parking_lot::Mutex;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -20,6 +22,9 @@ use tokio::task::AbortHandle;
 
 // ponytail: persist at most every 5 min and at shutdown; a crash loses that window
 const PERSIST_EVERY: Duration = Duration::from_secs(5 * 60);
+/// Marker written once initial history backfill has run (or after an explicit
+/// reset) so past sessions are imported at most once and never after a reset.
+const SEEDED_MARKER: &str = ".seeded";
 
 // ponytail: UI polls predict_status while downloading; add a host event if polling is not enough
 pub struct PredictService {
@@ -46,6 +51,10 @@ struct State {
     loading: bool,
     /// Downloading or loading the model failed; do not retry until reset.
     model_failed: bool,
+    /// Initial history backfill has completed (or was suppressed by reset).
+    seeded: bool,
+    /// Initial history backfill is currently running in the background.
+    seeding: bool,
 }
 
 impl PredictService {
@@ -53,6 +62,7 @@ impl PredictService {
         let settings = resolve_effective_settings_for_folder_path(&dirs, None)
             .settings
             .predict;
+        let seeded = seed_marker(&dirs.data.join("predict")).exists();
         Arc::new(Self {
             dirs,
             http: reqwest::Client::new(),
@@ -66,6 +76,8 @@ impl PredictService {
                 download: None,
                 loading: false,
                 model_failed: false,
+                seeded,
+                seeding: false,
             }),
             learning: Mutex::new(()),
         })
@@ -97,9 +109,14 @@ impl PredictService {
         self.dirs.data.join("models")
     }
 
+    fn sessions_dir(&self) -> PathBuf {
+        self.dirs.data.join("axo").join("sessions")
+    }
+
     pub fn complete(self: &Arc<Self>, before: &str, after: &str) -> Option<PredictSuggestion> {
         let settings = self.settings();
         self.ensure_model(&settings);
+        self.ensure_seeded(&settings);
         if !settings.enabled {
             return None;
         }
@@ -169,6 +186,7 @@ impl PredictService {
     pub fn status(self: &Arc<Self>) -> PredictStatus {
         let settings = self.settings();
         self.ensure_model(&settings);
+        self.ensure_seeded(&settings);
         let model = if !settings.enabled || !settings.model {
             PredictModelState::Off
         } else if self.state.lock().has_model() {
@@ -199,6 +217,7 @@ impl PredictService {
     }
 
     /// Forgets everything learned, and retries a model that failed.
+    /// Marks history seeding done so resetting never backfills old sessions.
     pub fn reset(self: &Arc<Self>) -> Result<(), ApiError> {
         let settings = {
             let _learning = self.learning.lock();
@@ -211,6 +230,9 @@ impl PredictService {
             state.model_failed = false;
             axo_predict::reset_dir(&self.state_dir())
                 .map_err(|error| ApiError::Io(error.to_string()))?;
+            mark_seeded(&self.state_dir());
+            state.seeded = true;
+            state.seeding = false;
             state.broken = false;
             state.settings.clone()
         };
@@ -224,6 +246,7 @@ impl PredictService {
         let settings = self.read_settings();
         self.state.lock().settings = settings.clone();
         self.ensure_model(&settings);
+        self.ensure_seeded(&settings);
         let mut state = self.state.lock();
         if settings.enabled {
             let config = predictor_config(&settings);
@@ -296,6 +319,90 @@ impl PredictService {
             }
         });
         state.download = Some(task.abort_handle());
+    }
+
+    /// Explicitly imports past human-typed prompts from local Axo chat history,
+    /// even if seeding already ran or was suppressed by `reset`. Returns the
+    /// number of prompt runs imported.
+    pub fn seed(self: &Arc<Self>) -> Result<u64, ApiError> {
+        let settings = self.settings();
+        if !settings.enabled {
+            return Ok(0);
+        }
+        self.ensure_model(&settings);
+        Ok(self.seed_from_history(true) as u64)
+    }
+
+    /// Backfills the predictor once from existing local Axo session transcripts
+    /// the first time prediction is enabled. Runs off the typing path and never
+    /// runs again after completion or after an explicit `reset`.
+    fn ensure_seeded(self: &Arc<Self>, settings: &PredictSettings) {
+        if !settings.enabled {
+            return;
+        }
+        {
+            let mut state = self.state.lock();
+            if state.seeded || state.seeding {
+                return;
+            }
+            if seed_marker(&self.state_dir()).exists() {
+                state.seeded = true;
+                return;
+            }
+            state.seeding = true;
+        }
+        let service = Arc::clone(self);
+        let run = move || {
+            service.seed_from_history(false);
+        };
+        match self.runtime() {
+            Some(runtime) => drop(runtime.spawn_blocking(run)),
+            None => run(),
+        }
+    }
+
+    fn seed_from_history(&self, force: bool) -> usize {
+        let texts = collect_session_prompts(&self.sessions_dir());
+        let count = texts.len();
+        let _learning = self.learning.lock();
+        let pending = {
+            let mut state = self.state.lock();
+            if !force {
+                state.seeding = false;
+            }
+            if !state.settings.enabled
+                || (!force && (state.seeded || seed_marker(&self.state_dir()).exists()))
+            {
+                state.seeded = true;
+                return 0;
+            }
+            let pending = if texts.is_empty() {
+                None
+            } else {
+                state
+                    .predictor(&self.state_dir())
+                    .and_then(|predictor| predictor.observe_deferred(&texts))
+            };
+            if !texts.is_empty() {
+                state.persist();
+            }
+            mark_seeded(&self.state_dir());
+            state.seeded = true;
+            pending
+        };
+        if let Some(update) = pending {
+            match update.compute() {
+                Ok(computed) => {
+                    if let Some(predictor) = self.state.lock().predictor.as_mut() {
+                        predictor.apply_head(computed);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!("predict: updating language model head after seed failed: {error}");
+                }
+            }
+        }
+        count
     }
 
     /// Loads the model into a fresh predictor opened from the just-persisted
@@ -381,4 +488,193 @@ fn open(state_dir: &Path, config: Config) -> Option<Predictor> {
     reopened
         .inspect_err(|error| tracing::warn!("predict: disabled until reset: {error}"))
         .ok()
+}
+
+fn seed_marker(state_dir: &Path) -> PathBuf {
+    state_dir.join(SEEDED_MARKER)
+}
+
+fn mark_seeded(state_dir: &Path) {
+    if let Err(error) =
+        std::fs::create_dir_all(state_dir).and_then(|()| std::fs::write(seed_marker(state_dir), b""))
+    {
+        tracing::warn!("predict: writing seed marker failed: {error}");
+    }
+}
+
+/// Scans local Axo `.jsonl` session transcripts under `sessions_dir` and
+/// returns all human-typed `PromptPart::Text` runs sorted oldest-first.
+fn collect_session_prompts(sessions_dir: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    collect_jsonl_files(sessions_dir, &mut files);
+    let mut records: Vec<(String, usize, String)> = Vec::new();
+    let mut order = 0usize;
+    for path in files {
+        let Ok(file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            // Fast prefilter before JSON parsing: only submission lines carry typed prompts.
+            if !line.contains("\"submission\"") {
+                continue;
+            }
+            let Ok(Entry::Submission {
+                base,
+                kind: SubmissionKind::Prompt | SubmissionKind::Steer | SubmissionKind::FollowUp,
+                parts,
+                provenance: None,
+                ..
+            }) = serde_json::from_str::<Entry>(&line)
+            else {
+                continue;
+            };
+            for part in parts {
+                if let axo::PromptPart::Text { text } = part {
+                    if !text.trim().is_empty() {
+                        records.push((base.timestamp.clone(), order, text));
+                        order += 1;
+                    }
+                }
+            }
+        }
+    }
+    records.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    records.into_iter().map(|(_, _, text)| text).collect()
+}
+
+fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jsonl_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "jsonl") {
+            out.push(path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axo::store::EntryBase;
+
+    fn test_dirs(root: &Path) -> HostDirs {
+        HostDirs {
+            config: root.join("config"),
+            data: root.join("data"),
+            cache: root.join("cache"),
+        }
+    }
+
+    fn write_submission(
+        file: &Path,
+        id: &str,
+        timestamp: &str,
+        kind: SubmissionKind,
+        parts: Vec<axo::PromptPart>,
+        provenance: Option<axo::SubmissionProvenance>,
+    ) {
+        let entry = Entry::Submission {
+            base: EntryBase {
+                id: id.to_owned().into(),
+                parent_id: None,
+                timestamp: timestamp.into(),
+            },
+            submission_id: id.into(),
+            kind,
+            parts,
+            keywords: vec![],
+            request_id: None,
+            provenance,
+            custom: None,
+        };
+        let mut line = serde_json::to_string(&entry).expect("serialize submission");
+        line.push('\n');
+        std::fs::create_dir_all(file.parent().expect("parent")).expect("create dir");
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
+            .expect("append submission");
+    }
+
+    #[test]
+    fn seeds_from_axo_history_once_and_not_after_reset() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dirs = test_dirs(temp.path());
+        let session = dirs
+            .data
+            .join("axo/sessions/--project--/2026-11-20T00-00-00Z_abc.jsonl");
+
+        // Invented word repeated twice in human prompts so the n-gram learns it.
+        for (i, ts) in ["2026-11-20T00:00:01.000Z", "2026-11-20T00:00:02.000Z"]
+            .into_iter()
+            .enumerate()
+        {
+            write_submission(
+                &session,
+                &format!("u{i}"),
+                ts,
+                SubmissionKind::Prompt,
+                vec![
+                    axo::PromptPart::Text {
+                        text: "please check the quuxblaster module".into(),
+                    },
+                    axo::PromptPart::Paste {
+                        text: "ignoredpastevalue ignoredpastevalue".into(),
+                    },
+                ],
+                None,
+            );
+        }
+        // Non-human / quiet entries must be ignored.
+        write_submission(
+            &session,
+            "q1",
+            "2026-11-20T00:00:03.000Z",
+            SubmissionKind::Quiet,
+            vec![axo::PromptPart::Text {
+                text: "quietonlyword quietonlyword".into(),
+            }],
+            None,
+        );
+        write_submission(
+            &session,
+            "a1",
+            "2026-11-20T00:00:04.000Z",
+            SubmissionKind::Prompt,
+            vec![axo::PromptPart::Text {
+                text: "agentonlyword agentonlyword".into(),
+            }],
+            Some(axo::SubmissionProvenance::Extension { id: "ext".into() }),
+        );
+
+        // First time on: backfills from history and suggests the learned word.
+        let service = PredictService::new(dirs.clone());
+        let first = service.complete("please check the quuxb", "");
+        assert_eq!(first.map(|s| s.text), Some("laster".into()));
+        assert!(service.complete("ignoredpaste", "").is_none());
+        assert!(service.complete("quietonly", "").is_none());
+        assert!(service.complete("agentonly", "").is_none());
+        assert!(seed_marker(&dirs.data.join("predict")).exists());
+
+        // After reset: learned data is cleared and history is NOT backfilled again.
+        service.reset().expect("reset");
+        assert!(service.complete("please check the quuxb", "").is_none());
+
+        // Even across a fresh service instance, the marker prevents re-seeding.
+        let reopened = PredictService::new(dirs);
+        assert!(reopened.complete("please check the quuxb", "").is_none());
+
+        // Explicit seed re-imports history on demand.
+        assert_eq!(reopened.seed().expect("explicit seed"), 2);
+        assert_eq!(
+            reopened.complete("please check the quuxb", "").map(|s| s.text),
+            Some("laster".into())
+        );
+    }
 }
