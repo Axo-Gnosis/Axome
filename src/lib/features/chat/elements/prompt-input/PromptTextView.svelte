@@ -17,25 +17,17 @@
   import { getErrorMessage } from '$lib/utils/client-error'
   import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
   import { getChatKeys, type KeyScope } from '$lib/features/chat/keymap/router.svelte'
-  import { isLargePaste, partsText } from '$lib/features/chat/parts/parts'
+  import { isLargePaste, partRef, partText } from '$lib/features/chat/parts/parts'
   import { openPart } from '$lib/features/chat/parts/open'
   import { KeyHint } from '../key-hint'
-  import {
-    outsideEntries,
-    outsideMentions,
-    outsidePrefix,
-    projectMentionPaths,
-    projectMentions,
-    projectPathsFor,
-    type Mention
-  } from './mentions'
+  import { listedMentions, mentionLister, outsidePrefix, projectPathsFor, type Mention } from './mentions'
   import { PROMPT_LANGUAGE, promptModels, registerPromptLanguage } from './promptLanguage'
   import { runAroundCaret, type TypedRun } from './predict'
   import { readText, writeText, type Range, type Ref } from './textForm'
 
   let {
     parts,
-    open,
+    start,
     owner,
     disabled,
     running,
@@ -48,7 +40,7 @@
     /** The draft when the view opens; later outside changes arrive through `load`. */
     parts: ChatPart[]
     /** Where the caret starts, as a text offset; `unfold` leaves the paste on that line open. */
-    open: { caret: number; unfold: boolean }
+    start: { caret: number; unfold: boolean }
     owner: { folderPath: string; sessionId: string | null }
     disabled: boolean
     running: boolean
@@ -74,22 +66,31 @@
   const trusted = new Set<string>()
   let projectLoaded = false
   let filling = false
-  let listed: { key: string; paths: string[] } | null = null
+  const listMentions = mentionLister()
 
   function hold(list: ChatPart[]) {
     for (const part of list) {
       if (part.type === 'file') trusted.add(part.path)
-      const token = part.type === 'content' ? part.name : part.type === 'saved' ? part.url : null
-      if (token !== null) attachments.set(token, [...(attachments.get(token) ?? []), part])
+      else {
+        const token = partRef(part)
+        if (token !== null) attachments.set(token, [...(attachments.get(token) ?? []), part])
+      }
     }
   }
   const pasteRanges = () => regions.getRanges().filter((range) => !range.isEmpty())
+  /** A paste region: shrinks with deletions, never grows when typing at its edges. */
+  const pasteRegion = (range: Monaco.IRange) => ({
+    range,
+    options: {
+      stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+      linesDecorationsClassName: 'axome-prompt-paste'
+    }
+  })
   /** A paste folds from its first line to the line before its last, so the caret after it stays visible and outside it. */
+  const foldable = (range: Monaco.IRange) => range.endLineNumber - 1 > range.startLineNumber
   function folds() {
     return pasteRanges().flatMap((range) =>
-      range.endLineNumber - 1 > range.startLineNumber
-        ? [{ start: range.startLineNumber, end: range.endLineNumber - 1 }]
-        : []
+      foldable(range) ? [{ start: range.startLineNumber, end: range.endLineNumber - 1 }] : []
     )
   }
   function fold(lines: number[]) {
@@ -97,20 +98,8 @@
   }
   async function mentions(text: string): Promise<Mention[]> {
     const folder = owner.folderPath
-    let found: Mention[]
-    if (outsidePrefix.test(text)) {
-      const typed = text.slice(0, text.lastIndexOf('/') + 1)
-      const entries = await outsideEntries(folder, typed, text.slice(typed.length).startsWith('.'))
-      found = outsideMentions(entries, text, folder)
-    } else {
-      const directory = text.includes('/') ? text.slice(0, text.lastIndexOf('/')) : ''
-      if (listed?.key !== directory) {
-        // A failed list isn't kept: the next keystroke asks again.
-        const paths = await projectMentionPaths(folder, directory).catch(() => null)
-        listed = paths && { key: directory, paths }
-      }
-      found = projectMentions(listed?.paths ?? [], text)
-    }
+    const listing = await listMentions(folder, text).catch(() => ({}))
+    const found = listedMentions(listing, text, folder)
     // Everything offered exists, including ignored files and paths outside the project.
     for (const mention of found) trusted.add(mention.path)
     return found
@@ -181,13 +170,9 @@
     model.setValue(text)
     filling = false
     regions.set(
-      pastes.map((paste) => ({
-        range: monaco.Range.fromPositions(model.getPositionAt(paste.from), model.getPositionAt(paste.to)),
-        options: {
-          stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          linesDecorationsClassName: 'axome-prompt-paste'
-        }
-      }))
+      pastes.map((paste) =>
+        pasteRegion(monaco.Range.fromPositions(model.getPositionAt(paste.from), model.getPositionAt(paste.to)))
+      )
     )
     const position = model.getPositionAt(Math.min(caret, text.length))
     editor!.setPosition(position)
@@ -217,11 +202,10 @@
     if (!editor) return
     hold([part])
     const selection = editor.getSelection()!
-    let text = partsText([part])
+    let text = partText(part)
     if (part.type !== 'text' && part.type !== 'paste') {
-      const { Range } = monaco
       const before = model.getValueInRange(
-        new Range(
+        new monaco.Range(
           selection.startLineNumber,
           Math.max(1, selection.startColumn - 1),
           selection.startLineNumber,
@@ -229,7 +213,7 @@
         )
       )
       const after = model.getValueInRange(
-        new Range(selection.endLineNumber, selection.endColumn, selection.endLineNumber, selection.endColumn + 1)
+        new monaco.Range(selection.endLineNumber, selection.endColumn, selection.endLineNumber, selection.endColumn + 1)
       )
       text = (before && !/\s/.test(before) ? ' ' : '') + text + (/\s/.test(after) ? '' : ' ')
     }
@@ -335,17 +319,9 @@
       created.onDidPaste(({ range }) => {
         if (!isLargePaste(model.getValueInRange(range)) || pasteRanges().some((held) => held.containsRange(range)))
           return
-        regions.append([
-          {
-            range,
-            options: {
-              stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-              linesDecorationsClassName: 'axome-prompt-paste'
-            }
-          }
-        ])
+        regions.append([pasteRegion(range)])
         sync()
-        if (range.endLineNumber - 1 > range.startLineNumber) fold([range.startLineNumber])
+        if (foldable(range)) fold([range.startLineNumber])
       })
       created.onMouseDown((event) => {
         const position = event.target.position
@@ -368,7 +344,7 @@
       observer = new ResizeObserver(fit)
       observer.observe(container)
       editor = created
-      fill(parts, open.caret, open.unfold)
+      fill(parts, start.caret, start.unfold)
       created.focus()
       void ensureProjectFiles(owner.folderPath).then(
         () => {

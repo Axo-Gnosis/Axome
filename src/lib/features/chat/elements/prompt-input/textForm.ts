@@ -1,5 +1,5 @@
 import type { ChatPart } from '$lib/types/backend'
-import { partsText } from '$lib/features/chat/parts/parts'
+import { partText } from '$lib/features/chat/parts/parts'
 
 export interface Range {
   from: number
@@ -16,7 +16,7 @@ export function writeText(parts: ChatPart[]): { text: string; pastes: Range[] } 
   let text = ''
   const pastes: Range[] = []
   for (const part of parts) {
-    const chunk = partsText([part])
+    const chunk = partText(part)
     if (part.type === 'paste' && chunk) pastes.push({ from: text.length, to: text.length + chunk.length })
     text += chunk
   }
@@ -102,7 +102,7 @@ export function readText(
 export function offsetPosition(parts: ChatPart[], offset: number): number {
   let position = 1
   for (const part of parts) {
-    const length = partsText([part]).length
+    const length = partText(part).length
     if (part.type === 'text') {
       if (offset <= length) return position + offset
       position += length

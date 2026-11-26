@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import { backend } from '$lib/api/backend'
-import type { Mention } from './mentions'
+import { partText } from '$lib/features/chat/parts/parts'
+import { mentionAt, type Mention } from './mentions'
 import type { TypedRun } from './predict'
 
 /** Markdown under its own id: providers are window-wide per language, and these belong to the composer only. */
@@ -41,7 +42,7 @@ async function register(monaco: typeof Monaco): Promise<void> {
     async provideCompletionItems(model, position) {
       const owner = promptModels.get(model)
       const before = model.getLineContent(position.lineNumber).slice(0, position.column - 1)
-      const typed = /(?:^|\s)@(\S*)$/.exec(before)?.[1]
+      const typed = mentionAt.exec(before)?.[1]
       if (!owner || typed === undefined) return { suggestions: [] }
       const range = new monaco.Range(
         position.lineNumber,
@@ -56,11 +57,10 @@ async function register(monaco: typeof Monaco): Promise<void> {
         suggestions: mentions.map((mention, index) => ({
           label: { label: mention.label, description: mention.detail },
           kind: mention.folder ? monaco.languages.CompletionItemKind.Folder : monaco.languages.CompletionItemKind.File,
+          // The `@` is typed already; a folder inserts the text that lists its contents.
           insertText: mention.folder
             ? (mention.complete ?? mention.path)
-            : /\s/.test(mention.path)
-              ? `"${mention.path}"`
-              : mention.path,
+            : partText({ type: 'file', path: mention.path }).slice(1),
           filterText: typed,
           sortText: String(index).padStart(3, '0'),
           range,

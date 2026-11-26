@@ -55,26 +55,30 @@ export function isLargePaste(text: string): boolean {
   return text.length > 2000 || text.split('\n').length > 20
 }
 
-function reference(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`
+/** What a chip's `@ref` names: a file's path, a saved attachment's url, an attachment's name; null for text. */
+export function partRef(part: ChatPart): string | null {
+  switch (part.type) {
+    case 'text':
+    case 'paste':
+      return null
+    case 'file':
+      return part.path
+    case 'saved':
+      return part.url
+    case 'content':
+      return part.name
+  }
+}
+
+/** A part as the model reads it: text as is, a chip as `@ref`, quoted when the ref holds whitespace. */
+export function partText(part: ChatPart): string {
+  if (part.type === 'text' || part.type === 'paste') return part.text
+  const ref = partRef(part)!
+  return /\s/.test(ref) ? `@"${ref}"` : `@${ref}`
 }
 
 export function partsText(parts: ChatPart[]): string {
-  return parts
-    .map((part) => {
-      switch (part.type) {
-        case 'text':
-        case 'paste':
-          return part.text
-        case 'file':
-          return reference(part.path)
-        case 'saved':
-          return reference(part.url)
-        case 'content':
-          return reference(part.name)
-      }
-    })
-    .join('')
+  return parts.map(partText).join('')
 }
 
 export function partLabel(part: ChatPart): string {

@@ -18,17 +18,6 @@ export function onHost(path: string, folderPath: string): boolean {
   return (splitRemotePath(path)?.server ?? null) === (splitRemotePath(folderPath)?.server ?? null)
 }
 
-/** `relative` (which may climb with `..`) joined onto absolute `base`, keeping an `axome://server` prefix. */
-export function joinHostPath(base: string, relative: string): string {
-  const remote = splitRemotePath(base)
-  const segments: string[] = []
-  for (const segment of `${remote?.path ?? base}/${relative}`.split('/')) {
-    if (segment === '..') segments.pop()
-    else if (segment && segment !== '.') segments.push(segment)
-  }
-  return `${remote ? `axome://${remote.server}` : ''}/${segments.join('/')}`
-}
-
 /** `name`, or `stem-2.ext`, `stem-3.ext`, … when taken: the numbering axo uses when it saves content. */
 export function uniqueName(name: string, taken: string[]): string {
   const dot = name.lastIndexOf('.')

@@ -8,7 +8,7 @@
   import type { Node } from 'prosemirror-model'
   import { Button, IconButton } from '$lib/components/ui/button'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
-  import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
+  import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart } from '$lib/types/backend'
   import {
     ArrowUp02Icon,
     Layers01Icon,
@@ -30,6 +30,7 @@
     hasContent,
     invokedCommand,
     isLargePaste,
+    partText,
     partsText
   } from '$lib/features/chat/parts/parts'
   import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
@@ -54,14 +55,12 @@
   import { promptInputDropTarget } from '$lib/features/dnd/adapters/prompt-input'
   import { getErrorMessage } from '$lib/utils/client-error'
   import { blobBase64, fileReference, onHost, readAttachment, uniqueName } from './attachments'
-  import { outsidePrefix, outsideEntries, outsideMentions, projectMentionPaths, projectMentions } from './mentions'
+  import { listedMentions, mentionAt, mentionLister, outsidePrefix, type Listing } from './mentions'
   import { cn } from '$lib/utils/cn'
   import { KeyHint } from '../key-hint'
   import PromptTextView from './PromptTextView.svelte'
   import { createPredictRequester, type TypedRun } from './predict'
   import { offsetPosition } from './textForm'
-
-  const mentionAt = /(?:^|\s)@([^\s]*)$/
 
   let {
     parts = $bindable([]),
@@ -151,10 +150,10 @@
   )
   let dismissed = ''
   let active = $state(0)
-  let files = $state.raw<string[]>([])
-  let fileFolder = ''
-  let outside = $state.raw<{ typed: string; entries: FolderEntry[] } | null>(null)
-  let outsideKey = ''
+  const listMentions = mentionLister()
+  // What file rows rank within, one listing per kind; `asked` is the request each kind last made.
+  let listings = $state.raw<Listing>({})
+  const asked: Partial<Record<'paths' | 'outside', Promise<Listing>>> = {}
   const catalog = $derived(commands.filter(offeredCommand))
   type Item = Suggestion & {
     command?: ChatCommand
@@ -190,18 +189,12 @@
         }))
     }
     if (query?.kind === 'file') {
-      const text = query.text
-      const mentions = !outsidePrefix.test(text)
-        ? projectMentions(files, text)
-        : outside?.typed === text.slice(0, text.lastIndexOf('/') + 1)
-          ? outsideMentions(outside.entries, text, owner.folderPath)
-          : []
-      return mentions.map((mention) => ({
+      return listedMentions(listings, query.text, owner.folderPath).map((mention) => ({
         key: mention.path,
         group: 'Files',
         label: mention.label,
         detail: mention.detail,
-        file: { name: mention.label.replace(/\/$/, ''), folder: mention.folder },
+        file: { name: mention.label, folder: mention.folder },
         path: mention.path,
         complete: mention.complete
       }))
@@ -269,13 +262,14 @@
     invalid = null
     updateQuery()
   }
-  function setParts(next: ChatPart[]): void {
+  /** Writes the draft. Read back: a bound $state target stores a proxy, and the sync effect compares identity. */
+  function commit(next: ChatPart[]) {
     parts = next
     lastParts = parts
-    if (view) load(next)
   }
   function clear(): void {
-    setParts([])
+    commit([])
+    if (view) load([])
   }
   export function focus(insert?: string): void {
     if (textOpen) return editor?.focus(insert)
@@ -310,10 +304,11 @@
       tr.insertText(' ', from + 1)
     view!.dispatch(tr.scrollIntoView())
   }
+  const chipText = (leaf: Node) => partText(leaf.attrs.part as ChatPart)
   function openText(position = view?.state.selection.from ?? 1, unfold = false): boolean {
     if (!textView || disabled || !view || textOpen) return false
     // The same serialization the text view shows, so the offset is the caret's place in its text.
-    const before = view.state.doc.textBetween(1, position, '', (leaf) => partsText([leaf.attrs.part as ChatPart]))
+    const before = view.state.doc.textBetween(1, position, '', chipText)
     query = null
     pasteHint = null
     textOpen = { caret: before.length, unfold }
@@ -442,31 +437,21 @@
     }
     focus()
   }
-  async function loadFiles() {
+  /** Lists the typed mention's folder; a reply lands only if its kind asked nothing newer and the chat kept its folder. */
+  async function loadFiles(text: string) {
     const folder = owner.folderPath
-    const prefix = query?.kind === 'file' ? query.text : ''
-    if (outsidePrefix.test(prefix)) {
-      const typed = prefix.slice(0, prefix.lastIndexOf('/') + 1)
-      const hidden = prefix.slice(typed.length).startsWith('.')
-      const key = `${folder}\0${typed}\0${hidden}`
-      if (outsideKey === key) return
-      outsideKey = key
-      const entries = await outsideEntries(folder, typed, hidden)
-      if (outsideKey === key) outside = { typed, entries }
-      return
-    }
-    const directory = prefix.includes('/') ? prefix.slice(0, prefix.lastIndexOf('/')) : ''
-    const key = `${folder}:${directory}`
-    if (fileFolder === key) return
-    fileFolder = key
-    let paths: string[]
+    const kind = outsidePrefix.test(text) ? 'outside' : 'paths'
+    const pending = listMentions(folder, text)
+    if (asked[kind] === pending) return
+    asked[kind] = pending
+    let next: Listing
     try {
-      paths = await projectMentionPaths(folder, directory)
+      next = await pending
     } catch {
       notify.error('File list unavailable', 'Could not load project paths.')
       return
     }
-    if (owner.folderPath === folder && fileFolder === key) files = paths
+    if (asked[kind] === pending && owner.folderPath === folder) listings = { ...listings, ...next }
   }
   // Keyword highlights: axo matches the text; offsets are document positions. Every document
   // change drops them (their positions are stale) and invalidates any match in flight.
@@ -548,7 +533,7 @@
         0,
         items.findIndex((item) => !item.blocked)
       )
-    if (query?.kind === 'file') void loadFiles()
+    if (query?.kind === 'file') void loadFiles(query.text)
     updatePredict()
   }
 
@@ -764,7 +749,7 @@
     const part = node.attrs.part as ChatPart
     if (part.type === 'paste') return openText(pos, true)
     if (part.type !== 'file') return false
-    const typed = partsText([part])
+    const typed = partText(part)
     const start = pos + typed.indexOf(part.path)
     const tr = view!.state.tr.replaceWith(pos, pos + node.nodeSize, promptSchema.text(typed))
     view!.dispatch(tr.setSelection(TextSelection.create(tr.doc, start, start + part.path.length)))
@@ -849,11 +834,7 @@
           staleKeywords()
         }
         view!.updateState(view!.state.apply(transaction))
-        if (transaction.docChanged) {
-          // Read back: a bound $state target stores a proxy, and the sync effect compares identity.
-          parts = documentParts(view!.state.doc)
-          lastParts = parts
-        }
+        if (transaction.docChanged) commit(documentParts(view!.state.doc))
         if (!transaction.getMeta('ghost') && !transaction.getMeta('keywords')) {
           updateQuery()
         }
@@ -866,8 +847,7 @@
         void receive(event.clipboardData).catch(() => notify.error('Paste failed', 'Could not read clipboard content.'))
         return true
       },
-      clipboardTextSerializer: (slice) =>
-        slice.content.textBetween(0, slice.content.size, '\n', (leaf) => partsText([leaf.attrs.part as ChatPart])),
+      clipboardTextSerializer: (slice) => slice.content.textBetween(0, slice.content.size, '\n', chipText),
       // A click on a chip puts the caret on the nearer side of it, as on a character.
       handleClickOn: (view, _pos, node, nodePos, event, direct) => {
         if (!direct || node.type.name !== 'part') return false
@@ -1024,7 +1004,7 @@
     <PromptTextView
       bind:this={editor}
       {parts}
-      open={textOpen}
+      start={textOpen}
       {owner}
       {disabled}
       {running}
@@ -1032,9 +1012,7 @@
       onParts={(next) => {
         validation = null
         invalid = null
-        // Read back: a bound $state target stores a proxy, and the sync effect compares identity.
-        parts = next
-        lastParts = parts
+        commit(next)
       }}
       onSend={(followUp) => void submit(followUp)}
       onClose={closeText}

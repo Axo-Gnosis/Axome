@@ -12,7 +12,7 @@
   import { resolveFileLocationPath } from '$lib/features/workbench/links/openLink'
   import { imageMime, isImagePart } from './image'
   import { openPart } from './open'
-  import { partLabel } from './parts'
+  import { partLabel, partRef } from './parts'
 
   let {
     part,
@@ -28,9 +28,7 @@
   let imageError = $state(false)
   const label = $derived(partLabel(part))
   // Every part that names a file takes the file tree's icon; a paste keeps the generic one.
-  const fileName = $derived(
-    part.type === 'file' ? part.path : part.type === 'saved' ? part.url : part.type === 'content' ? part.name : null
-  )
+  const fileName = $derived(partRef(part))
   const lines = $derived(part.type === 'paste' ? part.text.split('\n').length : 0)
   const chipClass = cn(chipVariants(), 'in-data-selected:bg-selection in-data-selected:text-bright')
   const inlineThumbnail = $derived(
