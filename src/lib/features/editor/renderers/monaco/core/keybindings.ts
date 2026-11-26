@@ -1,6 +1,4 @@
 import type * as Monaco from 'monaco-editor'
-import { StandaloneServices } from 'monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js'
-import { IKeybindingService } from 'monaco-editor/esm/vs/platform/keybinding/common/keybinding.js'
 import {
   getCommandsWithKeybindingOverrides,
   getUserKeybindings,
@@ -8,7 +6,8 @@ import {
 } from '$lib/features/command-palette/shortcuts/overrides.svelte'
 import { parseShortcut, type ShortcutStroke } from '$lib/features/command-palette/shortcuts/spec'
 
-type KeybindingService = {
+/** The slice of Monaco's keybinding service read here; Monaco setup hands it over. */
+export type KeybindingService = {
   getKeybindings?: () => Array<{
     command: string | null
     isDefault?: boolean
@@ -16,17 +15,12 @@ type KeybindingService = {
   }>
 }
 
+// Monaco internals are only reachable once Monaco loads, so this module takes them from setup
+// instead of importing them: it is imported by eager code (text editor actions).
 let monacoRef: typeof Monaco | null = null
+let keybindingService: KeybindingService | null = null
 let disposable: Monaco.IDisposable | null = null
 let unsubscribe: (() => void) | null = null
-
-function service(): KeybindingService | null {
-  try {
-    return StandaloneServices.get(IKeybindingService) as KeybindingService
-  } catch {
-    return null
-  }
-}
 
 function normalizeMonacoLabel(label: string | null | undefined): string | null {
   if (!label) return null
@@ -34,7 +28,6 @@ function normalizeMonacoLabel(label: string | null | undefined): string | null {
 }
 
 export function getMonacoDefaultKeybindings(commandId: string): string[] {
-  const keybindingService = service()
   const items = keybindingService?.getKeybindings?.() ?? []
   const labels = new Set<string>()
   for (const item of items) {
@@ -130,8 +123,9 @@ function applyMonacoUserKeybindings(): void {
   if (rules.length > 0) disposable = monacoRef.editor.addKeybindingRules(rules)
 }
 
-export function attachMonacoKeybindingOverrides(monaco: typeof Monaco): void {
+export function attachMonacoKeybindingOverrides(monaco: typeof Monaco, service: KeybindingService): void {
   monacoRef = monaco
+  keybindingService = service
   applyMonacoUserKeybindings()
   unsubscribe ??= onOverridesChange(applyMonacoUserKeybindings)
 }

@@ -1,5 +1,4 @@
 import type * as Monaco from 'monaco-editor'
-import { conf, language } from 'monaco-editor/esm/vs/basic-languages/markdown/markdown.js'
 import { backend } from '$lib/api/backend'
 import type { Mention } from './mentions'
 import type { TypedRun } from './predict'
@@ -17,11 +16,19 @@ export interface PromptModel {
 }
 export const promptModels = new WeakMap<Monaco.editor.ITextModel, PromptModel>()
 
-let registered = false
+let registered: Promise<void> | null = null
 
-export function registerPromptLanguage(monaco: typeof Monaco): void {
-  if (registered) return
-  registered = true
+export function registerPromptLanguage(monaco: typeof Monaco): Promise<void> {
+  registered ??= register(monaco).catch((error) => {
+    registered = null
+    throw error
+  })
+  return registered
+}
+
+async function register(monaco: typeof Monaco): Promise<void> {
+  // Monaco's markdown grammar loads with Monaco, not with the composer.
+  const { conf, language } = await import('monaco-editor/esm/vs/basic-languages/markdown/markdown.js')
   monaco.languages.register({ id: PROMPT_LANGUAGE })
   monaco.languages.setLanguageConfiguration(PROMPT_LANGUAGE, conf)
   monaco.languages.setMonarchTokensProvider(PROMPT_LANGUAGE, language)

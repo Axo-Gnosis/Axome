@@ -12,10 +12,8 @@
 //   - Models are owned by DiffModelStore; the pool only `setModel`s them.
 //   - View-state is saved before release, restored on sticky reuse.
 
-import { AXOME_THEME_NAME } from '$lib/features/editor/renderers/monaco/core/monacoTheme'
+import { loadMonaco, type Monaco } from '$lib/features/editor/renderers/monaco/core/monaco'
 import { CODE_LINE_HEIGHT, getCodeFontFamily, getCodeFontSize } from '$lib/features/settings/state/typography.svelte'
-
-type Monaco = typeof import('monaco-editor')
 type DiffEditor = import('monaco-editor').editor.IStandaloneDiffEditor
 type DiffOptions = import('monaco-editor').editor.IDiffEditorOptions & import('monaco-editor').editor.IEditorOptions
 
@@ -202,7 +200,6 @@ function scheduleIdle(callback: () => void): IdleHandle {
 }
 
 export class DiffEditorPool {
-  private monacoPromise: Promise<Monaco> | null = null
   private unused: PoolRef[] = []
   private used: Set<PoolRef> = new Set()
   private trimHandle: IdleHandle | null = null
@@ -213,26 +210,14 @@ export class DiffEditorPool {
     fontFamily: getCodeFontFamily()
   }
 
-  /** Lazy, cached Monaco module load. */
+  /** Monaco with the diff gutter's git commands registered. */
   async ready(): Promise<Monaco> {
-    if (!this.monacoPromise) {
-      this.monacoPromise = (async () => {
-        // Dynamic imports keep Monaco + the env bootstrap in a lazy chunk,
-        // matching `MonacoEditor.svelte`.
-        const [{ loadMonaco }, { ensureAxomeDiffGutterMenu }] = await Promise.all([
-          import('$lib/features/editor/renderers/monaco/core/monacoEnv'),
-          import('$lib/features/editor/renderers/monaco/diff/gitGutterMenu')
-        ])
-        const m = await loadMonaco()
-        ensureAxomeDiffGutterMenu(m)
-        // Apply the Axome theme globally so every editor we construct
-        // inherits it. `createDiffEditor` doesn't take a theme in its
-        // options; this is the standard Monaco pattern.
-        m.editor.setTheme(AXOME_THEME_NAME)
-        return m
-      })()
-    }
-    return this.monacoPromise
+    const [monaco, { ensureAxomeDiffGutterMenu }] = await Promise.all([
+      loadMonaco(),
+      import('$lib/features/editor/renderers/monaco/diff/gitGutterCommands')
+    ])
+    ensureAxomeDiffGutterMenu(monaco)
+    return monaco
   }
 
   /**

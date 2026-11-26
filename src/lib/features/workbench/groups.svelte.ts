@@ -33,6 +33,7 @@ import {
   setActiveTab
 } from './state.svelte'
 import { splitRemotePath } from '$lib/utils/paths'
+import { loadMonaco } from '$lib/features/editor/renderers/monaco/core/monaco'
 
 export type GroupState = 'attaching' | 'active' | 'busy' | 'revoked' | 'offline'
 export interface WorkbenchGroup {
@@ -540,10 +541,7 @@ async function stageGroup(handoff: GroupImport): Promise<void> {
       handoff.transferId,
       handoff.tabs.map((tab) => tab.id)
     )
-    // Monaco accesses browser globals during import; SvelteKit also evaluates modules in Node at build time.
-    const monaco = handoff.modelStates.length
-      ? await (await import('$lib/features/editor/renderers/monaco/core/monacoEnv')).loadMonaco()
-      : null
+    const monaco = handoff.modelStates.length ? await loadMonaco() : null
     if (!groupTransfers.has(handoff.transferId)) return
     for (const state of handoff.modelStates) {
       const tab = handoff.tabs.find((candidate) => candidate.id === state.tabId)

@@ -14,6 +14,7 @@
   } from '$lib/features/editor/renderers/monaco/diff/scrollContext.svelte'
   import { getDiffEditorPool } from '$lib/features/editor/renderers/monaco/diff/editorPool.svelte'
   import { getDiffHeightPreloader } from '$lib/features/editor/renderers/monaco/diff/heightPreloader.svelte'
+  import { ensureFolderLanguageSupport } from '$lib/features/editor/renderers/monaco/core/languageSupport'
   import { DiffModelStore, type DiffContentFetcher } from '$lib/features/editor/renderers/monaco/diff/diffModels.svelte'
   import { getCodeFontFamily, getCodeFontSize } from '$lib/features/settings/state/typography.svelte'
 
@@ -59,21 +60,14 @@
   const pool = getDiffEditorPool()
   const preloader = getDiffHeightPreloader()
 
-  // Load Monaco once, attach to the store, apply initial settings.
-  // `ready()` is idempotent and cached, so multiple DiffStack mounts
-  // share the single Monaco module load.
+  // Load Monaco (once, through `loadMonaco`), attach to the store, apply initial settings.
   let storeReady = $state(false)
 
   onMount(() => {
     let disposed = false
     void (async () => {
       const monaco = await pool.ready()
-      if (folderPath) {
-        const { ensureFolderLanguageSupport } = await import('$lib/features/editor/renderers/monaco/core/monacoEnv')
-        await ensureFolderLanguageSupport(monaco, folderPath).catch((error) =>
-          console.warn('Integration language support failed', error)
-        )
-      }
+      if (folderPath) await ensureFolderLanguageSupport(monaco, folderPath)
       if (disposed) return
       store.attach(monaco)
       // Reflect initial Svelte state onto the pool so already-pooled

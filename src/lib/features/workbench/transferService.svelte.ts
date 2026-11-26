@@ -23,6 +23,7 @@ import type {
 } from '$lib/platform'
 import type { Unsubscribe } from '$lib/api/transport'
 import { requestGroup } from './groups.svelte'
+import { loadMonaco } from '$lib/features/editor/renderers/monaco/core/monaco'
 
 const sourceTransfers = new Map<string, TabId>()
 const targetTransfers = new Map<string, { tab: Tab; staged: boolean }>()
@@ -136,10 +137,7 @@ async function handleTransferImport({ transferId, exportPayload, targetIndex }: 
   targetTransfers.set(transferId, { tab, staged: false })
   updateInputBlocking()
   try {
-    // Monaco is browser-only; loading it statically makes SvelteKit's SSR evaluation fail.
-    const monaco = exportPayload.modelState
-      ? await (await import('$lib/features/editor/renderers/monaco/core/monacoEnv')).loadMonaco()
-      : null
+    const monaco = exportPayload.modelState ? await loadMonaco() : null
     if (!targetTransfers.has(transferId)) {
       cleanupRegistries(tab)
       return

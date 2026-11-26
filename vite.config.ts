@@ -61,17 +61,6 @@ export default defineConfig({
     ]
   },
 
-  build: {
-    rollupOptions: {
-      output: {
-        // Isolate Monaco into its own chunk — loaded lazily on first editor tab.
-        manualChunks(id) {
-          if (id.includes('monaco-editor')) return 'monaco'
-        }
-      }
-    }
-  },
-
   server: {
     port: web ? 1430 : 1420,
     strictPort: true,

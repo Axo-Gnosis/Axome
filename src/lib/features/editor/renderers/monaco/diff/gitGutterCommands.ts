@@ -1,0 +1,223 @@
+// The diff gutter's stage/revert commands and toolbar items. Imports Monaco internals: load it only
+// once Monaco has loaded (`DiffEditorPool.ready`).
+
+import type { LineChange, LineSelectionRange } from '$lib/features/git/lineChanges'
+import { notify } from '$lib/features/notifications/state.svelte'
+import { getErrorMessage } from '$lib/utils/client-error'
+import {
+  diffLineChangesForAction,
+  stageDiffIndexContent,
+  runDiffGitLineAction,
+  titleForDiffGitLineAction,
+  type DiffGitLineAction
+} from '$lib/features/git/diffLineActions'
+import type { DiffModelEntry } from '$lib/features/editor/renderers/monaco/diff/diffModels.svelte'
+import {
+  AXOME_DIFF_GIT_ACTIONS_CONTEXT,
+  AXOME_DIFF_STAGED_CONTEXT,
+  diffGutterRegistration,
+  type DiffGutterRegistration
+} from '$lib/features/editor/renderers/monaco/diff/gitGutterMenu'
+import { Codicon } from 'monaco-editor/esm/vs/base/common/codicons.js'
+import { MenuId, MenuRegistry } from 'monaco-editor/esm/vs/platform/actions/common/actions.js'
+import { ContextKeyExpr } from 'monaco-editor/esm/vs/platform/contextkey/common/contextkey.js'
+
+type Monaco = typeof import('monaco-editor')
+type IDisposable = { dispose(): void }
+type DiffToolbarScope = 'hunk' | 'selection'
+
+interface MonacoLineRange {
+  readonly startLineNumber: number
+  readonly endLineNumberExclusive: number
+}
+
+interface MonacoDiffToolbarContext {
+  readonly mapping?: {
+    readonly original?: MonacoLineRange
+    readonly modified?: MonacoLineRange
+  }
+  readonly originalWithModifiedChanges?: string
+  readonly modifiedUri?: { toString(): string }
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __axomeDiffGutterMenuRegistration: IDisposable | undefined
+}
+
+function getRegistration(context: MonacoDiffToolbarContext | undefined): DiffGutterRegistration | null {
+  const uri = context?.modifiedUri?.toString()
+  return uri ? diffGutterRegistration(uri) : null
+}
+
+function lineRangeToSelectionRange(range: MonacoLineRange | undefined, lineCount: number): LineSelectionRange | null {
+  if (!range) return null
+  if (range.startLineNumber === range.endLineNumberExclusive) {
+    const anchor = Math.min(Math.max(1, range.startLineNumber || 1), Math.max(1, lineCount))
+    return { startLineNumber: anchor, endLineNumber: anchor }
+  }
+  return {
+    startLineNumber: Math.max(1, range.startLineNumber),
+    endLineNumber: Math.max(range.startLineNumber, range.endLineNumberExclusive - 1)
+  }
+}
+
+function lineChangeFromMapping(context: MonacoDiffToolbarContext | undefined): LineChange | null {
+  const original = context?.mapping?.original
+  const modified = context?.mapping?.modified
+  if (!original || !modified) return null
+
+  const originalEmpty = original.startLineNumber === original.endLineNumberExclusive
+  const modifiedEmpty = modified.startLineNumber === modified.endLineNumberExclusive
+
+  return {
+    originalStartLineNumber: originalEmpty ? original.startLineNumber - 1 : original.startLineNumber,
+    originalEndLineNumber: originalEmpty ? 0 : original.endLineNumberExclusive - 1,
+    modifiedStartLineNumber: modifiedEmpty ? modified.startLineNumber - 1 : modified.startLineNumber,
+    modifiedEndLineNumber: modifiedEmpty ? 0 : modified.endLineNumberExclusive - 1
+  }
+}
+
+function selectedRangesFromMapping(
+  context: MonacoDiffToolbarContext | undefined,
+  entry: DiffModelEntry
+): LineSelectionRange[] {
+  const range = lineRangeToSelectionRange(context?.mapping?.modified, entry.modified?.getLineCount() ?? 1)
+  return range ? [range] : []
+}
+
+async function runToolbarAction(
+  action: DiffGitLineAction,
+  context: MonacoDiffToolbarContext | undefined,
+  scope: DiffToolbarScope
+): Promise<void> {
+  const registration = getRegistration(context)
+  if (!registration) return
+
+  const entry = registration.store.get(registration.filePath)
+  if (!entry) return
+
+  try {
+    if (action === 'stage' && typeof context?.originalWithModifiedChanges === 'string') {
+      await stageDiffIndexContent(registration, context.originalWithModifiedChanges)
+      return
+    }
+
+    const allChanges = registration.getLineChanges()
+    const ranges = selectedRangesFromMapping(context, entry)
+
+    if (action === 'revert' && ranges.length === 0) return
+    const selected = diffLineChangesForAction(action, allChanges, ranges, entry.modified?.getLineCount() ?? 1, entry)
+    if (action === 'revert') {
+      await runDiffGitLineAction(registration, entry, action, selected)
+      return
+    }
+    const fallback = scope === 'hunk' ? lineChangeFromMapping(context) : null
+    await runDiffGitLineAction(registration, entry, action, selected.length > 0 ? selected : fallback ? [fallback] : [])
+  } catch (error) {
+    notify.error(`${titleForDiffGitLineAction(action)} failed`, getErrorMessage(error))
+  }
+}
+
+function appendGutterMenuItems(): IDisposable[] {
+  const hasActions = ContextKeyExpr.has(AXOME_DIFF_GIT_ACTIONS_CONTEXT)
+  const isStaged = ContextKeyExpr.equals(AXOME_DIFF_STAGED_CONTEXT, true)
+  const isUnstaged = ContextKeyExpr.and(hasActions, isStaged.negate())
+  const staged = ContextKeyExpr.and(hasActions, isStaged)
+
+  return [
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorHunkToolbar, {
+      command: {
+        id: 'axome.diff.stageHunk',
+        title: 'Stage Block',
+        icon: Codicon.add
+      },
+      when: isUnstaged,
+      group: 'primary@10'
+    }),
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorSelectionToolbar, {
+      command: {
+        id: 'axome.diff.stageSelection',
+        title: 'Stage Selection',
+        icon: Codicon.add
+      },
+      when: isUnstaged,
+      group: 'primary@10'
+    }),
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorHunkToolbar, {
+      command: {
+        id: 'axome.diff.revertHunk',
+        title: 'Revert Block',
+        icon: Codicon.discard
+      },
+      when: isUnstaged,
+      group: 'primary@20'
+    }),
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorSelectionToolbar, {
+      command: {
+        id: 'axome.diff.revertSelection',
+        title: 'Revert Selection',
+        icon: Codicon.discard
+      },
+      when: isUnstaged,
+      group: 'primary@20'
+    }),
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorHunkToolbar, {
+      command: {
+        id: 'axome.diff.unstageHunk',
+        title: 'Unstage Block',
+        icon: Codicon.remove
+      },
+      when: staged,
+      group: 'primary@10'
+    }),
+    MenuRegistry.appendMenuItem(MenuId.DiffEditorSelectionToolbar, {
+      command: {
+        id: 'axome.diff.unstageSelection',
+        title: 'Unstage Selection',
+        icon: Codicon.remove
+      },
+      when: staged,
+      group: 'primary@10'
+    })
+  ]
+}
+
+export function ensureAxomeDiffGutterMenu(monaco: Monaco): void {
+  if (globalThis.__axomeDiffGutterMenuRegistration) return
+
+  const disposables: IDisposable[] = [
+    monaco.editor.registerCommand('axome.diff.stageHunk', (_accessor, context) =>
+      runToolbarAction('stage', context as MonacoDiffToolbarContext | undefined, 'hunk')
+    ),
+    monaco.editor.registerCommand('axome.diff.stageSelection', (_accessor, context) =>
+      runToolbarAction('stage', context as MonacoDiffToolbarContext | undefined, 'selection')
+    ),
+    monaco.editor.registerCommand('axome.diff.revertHunk', (_accessor, context) =>
+      runToolbarAction('revert', context as MonacoDiffToolbarContext | undefined, 'hunk')
+    ),
+    monaco.editor.registerCommand('axome.diff.revertSelection', (_accessor, context) =>
+      runToolbarAction('revert', context as MonacoDiffToolbarContext | undefined, 'selection')
+    ),
+    monaco.editor.registerCommand('axome.diff.unstageHunk', (_accessor, context) =>
+      runToolbarAction('unstage', context as MonacoDiffToolbarContext | undefined, 'hunk')
+    ),
+    monaco.editor.registerCommand('axome.diff.unstageSelection', (_accessor, context) =>
+      runToolbarAction('unstage', context as MonacoDiffToolbarContext | undefined, 'selection')
+    ),
+    ...appendGutterMenuItems()
+  ]
+
+  globalThis.__axomeDiffGutterMenuRegistration = {
+    dispose: () => {
+      for (const disposable of disposables) disposable.dispose()
+    }
+  }
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    globalThis.__axomeDiffGutterMenuRegistration?.dispose()
+    globalThis.__axomeDiffGutterMenuRegistration = undefined
+  })
+}

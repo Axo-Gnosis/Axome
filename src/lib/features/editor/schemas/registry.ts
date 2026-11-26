@@ -10,7 +10,7 @@
 //    setting `schemas` would clobber each other without a coordinator.
 // <> Schemas may be registered before Monaco has been imported (app
 //    boot fetches them from the backend). The registry buffers until
-//    `attachMonaco` is called from the first editor mount.
+//    `attachMonaco` is called from the first Monaco load.
 
 export interface SchemaEntry {
   /** Stable identifier, e.g. `axome.tasks` or `settings:lsp.typescript`. */
@@ -66,7 +66,7 @@ function syncNow(): void {
 }
 
 /**
- * Called by `loadMonaco` on first Monaco load. Idempotent. Flushes
+ * Called by Monaco setup on first load. Idempotent. Flushes
  * any entries buffered before Monaco loaded.
  */
 export function attachMonaco(monaco: typeof import('monaco-editor')): void {

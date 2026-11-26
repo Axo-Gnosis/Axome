@@ -19,6 +19,7 @@ let highlighter: HighlighterCore | null = null
 let grammarsChanged = false
 let originalEditorMethods: Pick<Monaco['editor'], 'setTheme' | 'create'> | null = null
 
+/** Registers a host's languages, grammars and formatters once; a failure is logged and asked again on the next call. */
 export function ensureFolderLanguageSupport(monaco: Monaco, folderPath: string | null): Promise<void> {
   const key = integrationHostKey(folderPath)
   const existing = loads.get(key)
@@ -28,10 +29,10 @@ export function ensureFolderLanguageSupport(monaco: Monaco, folderPath: string |
     .then(() => loadFolderLanguageSupport(monaco, folderPath))
     .catch((error) => {
       loads.delete(key)
-      throw error
+      console.warn('Integration language support failed', error)
     })
   loads.set(key, load)
-  batchChain = load.catch(() => {})
+  batchChain = load
   return load
 }
 

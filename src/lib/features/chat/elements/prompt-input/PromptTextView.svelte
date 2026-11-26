@@ -9,6 +9,7 @@
   import type * as Monaco from 'monaco-editor'
   import type { ChatPart } from '$lib/types/backend'
   import { AXOME_THEME_NAME } from '$lib/features/editor/renderers/monaco/core/monacoTheme'
+  import { loadMonaco } from '$lib/features/editor/renderers/monaco/core/monaco'
   import { CODE_LINE_HEIGHT, getCodeFontFamily, getCodeFontSize } from '$lib/features/settings/state/typography.svelte'
   import { ensureProjectFiles } from '$lib/features/files/projectFiles.svelte'
   import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
@@ -261,11 +262,10 @@
     let disposed = false
     let observer: ResizeObserver | undefined
     void (async () => {
-      const { loadMonaco } = await import('$lib/features/editor/renderers/monaco/core/monacoEnv')
       const loaded = await loadMonaco()
+      await registerPromptLanguage(loaded)
       if (disposed) return
       monaco = loaded
-      registerPromptLanguage(monaco)
       model = monaco.editor.createModel('', PROMPT_LANGUAGE)
       model.setEOL(monaco.editor.EndOfLineSequence.LF)
       promptModels.set(model, {

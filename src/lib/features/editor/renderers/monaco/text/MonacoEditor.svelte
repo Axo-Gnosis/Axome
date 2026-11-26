@@ -23,6 +23,8 @@
     type MountedTextSurfaceController
   } from '$lib/features/workbench/surfaces/text/service.svelte'
   import { AXOME_THEME_NAME } from '$lib/features/editor/renderers/monaco/core/monacoTheme'
+  import { loadMonaco } from '$lib/features/editor/renderers/monaco/core/monaco'
+  import { ensureFolderLanguageSupport } from '$lib/features/editor/renderers/monaco/core/languageSupport'
   import { CODE_LINE_HEIGHT, getCodeFontFamily, getCodeFontSize } from '$lib/features/settings/state/typography.svelte'
   import { isAnyModalOpen } from '$lib/utils/modalRegistry.svelte'
   import { onMount } from 'svelte'
@@ -77,17 +79,11 @@
     let mountedController: MountedTextSurfaceController | null = null
     let disposeReady: void | (() => void)
     async function init() {
-      const { loadMonaco, ensureFolderLanguageSupport } =
-        await import('$lib/features/editor/renderers/monaco/core/monacoEnv')
       const m = await loadMonaco()
       if (disposed || !containerEl) return
 
       monaco = m
-      if (folderPath) {
-        await ensureFolderLanguageSupport(m, folderPath).catch((error) =>
-          console.warn('Integration language support failed', error)
-        )
-      }
+      if (folderPath) await ensureFolderLanguageSupport(m, folderPath)
       if (disposed || !containerEl) return
 
       modelHandle =
