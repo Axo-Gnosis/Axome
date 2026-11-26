@@ -530,7 +530,7 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 
 **Status:** Implemented · **Evidence:** [`.axome/research/composer-text-view.md`](../../.axome/research/composer-text-view.md), boards 5, 5b, 5c and 5d in `.bak/Composer/comp.html`
 
-**Shipped:** one rule, the chat input chooses things and the text view edits text. In the chat input (every composer), Backspace, Delete or a click on a file chip turns it into `@path` text with the path selected and the picker open; chips and picker rows use file-type icons; a paste chip reads "Pasted text · N lines" and appears at more than 20 lines or 2,000 characters. In the main chat composer, `Alt+G` swaps the chat input for a Monaco editor over the message's text (`partsText`), in place, and back: files and attachments are `@path` tokens, pastes are folded regions; markdown highlighting, `@` completion, a warning squiggle on a path that names nothing, `Ctrl+click` to open a file. `Enter` is a newline, `Ctrl+Enter` sends, `Alt+Enter` queues a follow-up. Backspace, Delete or a click on a paste chip opens the text view on that paste. Closing writes the draft back as one history step. The round trip `partsText(readText(text).parts) === text` is tested (`textForm.test.ts`).
+**Shipped** ([P44](design.md#decisions); behaviour in the [README](../../README.md#keep-agents-and-repositories-in-reach)): file chips that edit in place as `@path`; file-type icons on chips and picker rows; the "Pasted text · N lines" chip; the Monaco text view (`Alt+G`) in the main chat composer, with the round trip tested in `textForm.test.ts`.
 
 **Deferred or pinned (decide before building):**
 
