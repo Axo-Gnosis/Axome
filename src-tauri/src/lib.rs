@@ -15,6 +15,14 @@ use windows::{focus_window, WindowCoordinatorService};
 
 pub fn run() {
     axome_core::services::env::capture_launch_env();
+    // Cap candle's CPU matmul thread pool to 4 unless overridden: small local
+    // models (SmolLM2-135M, bge-small) lose latency to barrier overhead on
+    // high-core CPUs. Called after capture_launch_env so child shells stay clean.
+    for name in ["CANDLE_NUM_THREADS", "RAYON_NUM_THREADS"] {
+        if std::env::var_os(name).is_none_or(|value| value.is_empty()) {
+            std::env::set_var(name, "4");
+        }
+    }
     let nvidia_gl_quirk = gdk_env::configure();
 
     tracing_subscriber::fmt()

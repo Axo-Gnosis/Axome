@@ -692,6 +692,16 @@ macro_rules! axome_rpc_ops {
             MemoryRetryDownload => memory_retry_download() -> ();
             #[route(server)]
             MemoryEnsureBank => memory_ensure_bank(name: String) -> String;
+            #[route(none)]
+            PredictComplete => predict_complete(before: String, after: String) -> Option<$crate::predict::PredictSuggestion>;
+            #[route(none)]
+            PredictStatus => predict_status() -> $crate::predict::PredictStatus;
+            #[route(none)]
+            PredictReset => predict_reset() -> ();
+            #[route(none)]
+            SettingsSetPredict => settings_set_predict(
+                settings: $crate::settings::PredictSettings,
+            ) -> $crate::settings::PredictSettings;
             #[route(server)]
             AxoSearchKeySet => axo_search_key_set(provider: String, key: String) -> ();
             #[route(server)]

@@ -21,6 +21,7 @@ pub mod lsp;
 pub mod memory;
 pub mod nix;
 pub mod omp;
+pub mod predict;
 pub mod pty;
 pub(crate) mod removal;
 pub(crate) mod runs;

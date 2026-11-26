@@ -235,9 +235,11 @@ pub fn search(index: &Index, q: &SearchQuery<'_>) -> Result<Vec<SearchHit>> {
                 continue;
             }
             let score = blob
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .zip(query)
-                .map(|(b, q)| f32::from_le_bytes(b.try_into().unwrap()) * q)
+                .map(|(b, q)| f32::from_le_bytes(*b) * q)
                 .sum::<f32>();
             if !score.is_finite() || score < 0.55 {
                 continue;

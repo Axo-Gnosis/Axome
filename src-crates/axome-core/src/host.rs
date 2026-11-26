@@ -13,6 +13,7 @@ use crate::services::{
     issue_bridge::IssueBridgeService,
     issues::IssueService,
     lsp::LspService,
+    predict::PredictService,
     pty::PtyService,
     runs::{RunCoordinator, RunKind},
     session_index::SessionIndexService,
@@ -69,6 +70,7 @@ pub struct Host {
     pub(crate) session_index: Arc<SessionIndexService>,
     pub(crate) axo: Arc<AxoService>,
     pub(crate) memory: Arc<crate::services::memory::MemoryService>,
+    pub(crate) predict: Arc<PredictService>,
     pub(crate) nix_eval_locks: Mutex<HashSet<String>>,
     pub(crate) events: EventSink<HostEvent>,
 }
@@ -106,12 +108,17 @@ impl Host {
             })
         };
         let memory = Arc::clone(&axo.memory);
+        let predict = PredictService::new(dirs.clone());
         let on_global_settings: Arc<dyn Fn() + Send + Sync> = {
             let memory = Arc::downgrade(&memory);
+            let predict = Arc::downgrade(&predict);
             let axo = Arc::downgrade(&axo);
             Arc::new(move || {
                 if let Some(memory) = memory.upgrade() {
                     memory.refresh(false);
+                }
+                if let Some(predict) = predict.upgrade() {
+                    predict.refresh();
                 }
                 if let Some(axo) = axo.upgrade() {
                     axo.global_settings_changed();
@@ -142,6 +149,7 @@ impl Host {
             session_index,
             axo,
             memory,
+            predict,
             nix_eval_locks: Mutex::new(HashSet::new()),
             events,
             dirs,
@@ -327,6 +335,7 @@ impl Host {
     /// Gracefully terminate local PTYs and language servers while detaching
     /// adopted runs whose backend owns their remote lifetime.
     pub fn shutdown(&self) -> (usize, usize) {
+        self.predict.shutdown();
         self.session_index.shutdown();
         self.axo.shutdown();
         let pty_cleaned = self.runs.with_exclusive(|runs| {

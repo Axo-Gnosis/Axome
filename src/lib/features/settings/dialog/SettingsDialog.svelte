@@ -58,6 +58,7 @@
   import ToolsView from '$lib/features/settings/views/ToolsView.svelte'
   import ExtensionsView from '$lib/features/settings/views/ExtensionsView.svelte'
   import MemoryView from '$lib/features/settings/views/MemoryView.svelte'
+  import PredictView from '$lib/features/settings/views/PredictView.svelte'
   import ProjectAccessView from '$lib/features/settings/views/ProjectAccessView.svelte'
   import { getSaveStatus } from '../views/autoSaver.svelte'
   import {
@@ -178,6 +179,13 @@
           label: 'Memory',
           description: 'Long-term notes the agent keeps across sessions. Off by default.',
           icon: icon(BrainIcon)
+        },
+        {
+          id: 'predictive-text',
+          view: PredictView,
+          label: 'Predictive Text',
+          description: 'Inline ghost-text completions learned locally on this device.',
+          icon: icon(SparklesIcon)
         },
         {
           id: 'project-access',

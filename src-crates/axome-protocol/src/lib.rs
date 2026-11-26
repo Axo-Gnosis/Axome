@@ -17,6 +17,7 @@ pub mod memory;
 pub mod nix_env;
 pub mod omp;
 pub mod pairing;
+pub mod predict;
 pub mod pty;
 pub mod rpc;
 pub mod server_config;

@@ -66,6 +66,9 @@ import type {
   MemoryCaptureRun,
   MemorySettings,
   MemoryStatus,
+  PredictSettings,
+  PredictStatus,
+  PredictSuggestion,
   TypographySettings,
   WindowSettings,
   GitBrief,
@@ -840,9 +843,27 @@ export const backend = {
     }
   },
 
+  /** Always this desktop's predictor: typed text never leaves the machine. */
+  predict: {
+    /** `before` and `after` come from the one run of typed text holding the caret. */
+    complete(before: string, after: string): Promise<PredictSuggestion | null> {
+      return invoke('predict_complete', { before, after })
+    },
+    status(): Promise<PredictStatus> {
+      return invoke('predict_status')
+    },
+    /** Forgets everything learned. */
+    reset(): Promise<void> {
+      return invoke('predict_reset')
+    }
+  },
+
   settings: {
     setMemory(settings: MemorySettings, folderPath?: string): Promise<MemorySettings> {
       return invoke<MemorySettings>('settings_set_memory', { settings, folderPath: folderPath ?? null })
+    },
+    setPredict(settings: PredictSettings): Promise<PredictSettings> {
+      return invoke('settings_set_predict', { settings })
     },
     setAxo(patch: Record<string, unknown>, folderPath?: string): Promise<AxoSettings> {
       return invoke('settings_set_axo', { patch, folderPath: folderPath ?? null })

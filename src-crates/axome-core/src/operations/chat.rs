@@ -30,6 +30,7 @@ impl Host {
         parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
+        self.predict.observe(&parts);
         self.axo
             .block_on(self.axo.prompt(&folder, &session_id, request_id, parts))?
     }
@@ -41,6 +42,7 @@ impl Host {
         parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
+        self.predict.observe(&parts);
         self.axo
             .block_on(self.axo.steer(&folder, &session_id, parts))?
     }
@@ -52,6 +54,7 @@ impl Host {
         parts: Vec<ChatPart>,
     ) -> Result<(), ApiError> {
         let folder = resolve_folder(&folder_path)?;
+        self.predict.observe(&parts);
         self.axo
             .block_on(self.axo.follow_up(&folder, &session_id, parts))?
     }

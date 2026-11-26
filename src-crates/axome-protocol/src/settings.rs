@@ -351,6 +351,32 @@ impl Default for MemoryCapture {
     }
 }
 
+/// Ghost-text suggestions while typing a prompt. Learned from prompts you submit; stays on this machine.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct PredictSettings {
+    pub enabled: bool,
+    /// Adds a small language model (145 MB download, runs on the CPU) for better completions and next-word suggestions.
+    pub model: bool,
+    /// Words suggested beyond the current one. Needs `model`.
+    #[schemars(range(min = 0, max = 2))]
+    pub next_words: u8,
+    /// Minimum confidence (0.05..=0.95) to show a next-word suggestion. Lower shows more often.
+    #[schemars(range(min = 0.05, max = 0.95))]
+    pub next_word_threshold: f32,
+}
+
+impl Default for PredictSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model: false,
+            next_words: 1,
+            next_word_threshold: 0.25,
+        }
+    }
+}
+
 /// # Axome settings
 ///
 /// Project settings can override executable paths and args for harnesses and LSP servers. Only trust settings from repositories you trust.
@@ -359,6 +385,7 @@ impl Default for MemoryCapture {
 pub struct EffectiveSettings {
     pub axo: AxoSettings,
     pub memory: MemorySettings,
+    pub predict: PredictSettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -476,6 +503,7 @@ pub struct HarnessSettingsEntry {
 pub struct SettingsPayload {
     pub axo: AxoSettings,
     pub memory: MemorySettings,
+    pub predict: PredictSettings,
     pub window: WindowSettings,
     pub typography: TypographySettings,
     pub nix: NixSettings,
@@ -561,6 +589,7 @@ mod tests {
         let payload = SettingsPayload {
             axo: settings.axo,
             memory: settings.memory,
+            predict: settings.predict,
             window: settings.window,
             typography: settings.typography,
             nix: settings.nix,

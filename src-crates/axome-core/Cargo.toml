@@ -26,6 +26,8 @@ axo-ai.workspace = true
 axo-extensions.workspace = true
 axo-codex.workspace = true
 axo-anthropic-auth.workspace = true
+axo-predict.workspace = true
+axo-models.workspace = true
 async-trait.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 futures-util.workspace = true
@@ -46,10 +48,9 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 url = "2"
 tempfile = "3"
 html5ever = "0.38"
-# candle 0.11's AVX512-VNNI quantized kernels hit an LLVM intrinsic mismatch on nixpkgs rustc 1.97; 0.10 predates them.
-candle-core = "0.10"
-candle-nn = "0.10"
-candle-transformers = "0.10"
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 
 [dev-dependencies]

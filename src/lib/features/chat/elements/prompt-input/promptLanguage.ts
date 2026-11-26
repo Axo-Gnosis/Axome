@@ -1,6 +1,8 @@
 import type * as Monaco from 'monaco-editor'
 import { conf, language } from 'monaco-editor/esm/vs/basic-languages/markdown/markdown.js'
+import { backend } from '$lib/api/backend'
 import type { Mention } from './mentions'
+import type { TypedRun } from './predict'
 
 /** Markdown under its own id: providers are window-wide per language, and these belong to the composer only. */
 export const PROMPT_LANGUAGE = 'axo-prompt'
@@ -10,6 +12,8 @@ export interface PromptModel {
   /** Paste regions that can fold, as 1-based line ranges. */
   folds(): { start: number; end: number }[]
   mentions(text: string): Promise<Mention[]>
+  /** Typed run around `offset`, or null inside a paste or resolved `@ref`. */
+  predict(offset: number): TypedRun | null
 }
 export const promptModels = new WeakMap<Monaco.editor.ITextModel, PromptModel>()
 
@@ -58,5 +62,28 @@ export function registerPromptLanguage(monaco: typeof Monaco): void {
         }))
       }
     }
+  })
+  monaco.languages.registerInlineCompletionsProvider(PROMPT_LANGUAGE, {
+    async provideInlineCompletions(model, position, _context, token) {
+      const owner = promptModels.get(model)
+      if (!owner || token.isCancellationRequested) return { items: [] }
+      const run = owner.predict(model.getOffsetAt(position))
+      if (!run || !run.before) return { items: [] }
+      try {
+        const suggestion = await backend.predict.complete(run.before, run.after)
+        if (token.isCancellationRequested || !suggestion?.text) return { items: [] }
+        return {
+          items: [
+            {
+              insertText: suggestion.text,
+              range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+            }
+          ]
+        }
+      } catch {
+        return { items: [] }
+      }
+    },
+    disposeInlineCompletions() {}
   })
 }

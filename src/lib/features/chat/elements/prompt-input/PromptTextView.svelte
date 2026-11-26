@@ -29,6 +29,7 @@
     type Mention
   } from './mentions'
   import { PROMPT_LANGUAGE, promptModels, registerPromptLanguage } from './promptLanguage'
+  import { runAroundCaret, type TypedRun } from './predict'
   import { readText, writeText, type Range, type Ref } from './textForm'
 
   let {
@@ -267,7 +268,22 @@
       registerPromptLanguage(monaco)
       model = monaco.editor.createModel('', PROMPT_LANGUAGE)
       model.setEOL(monaco.editor.EndOfLineSequence.LF)
-      promptModels.set(model, { folds, mentions })
+      promptModels.set(model, {
+        folds,
+        mentions,
+        predict(offset: number): TypedRun | null {
+          if (disabled) return null
+          const pastes: Range[] = pasteRanges().map((range) => ({
+            from: model.getOffsetAt(range.getStartPosition()),
+            to: model.getOffsetAt(range.getEndPosition())
+          }))
+          const breaks: Range[] = [
+            ...pastes,
+            ...refs.filter((ref) => ref.part !== null).map((ref) => ({ from: ref.from, to: ref.to }))
+          ]
+          return runAroundCaret(model.getValue(), offset, breaks, pastes)
+        }
+      })
       const created = monaco.editor.create(container, {
         model,
         theme: AXOME_THEME_NAME,

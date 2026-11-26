@@ -58,6 +58,7 @@
   import { cn } from '$lib/utils/cn'
   import { KeyHint } from '../key-hint'
   import PromptTextView from './PromptTextView.svelte'
+  import { createPredictRequester, type TypedRun } from './predict'
   import { offsetPosition } from './textForm'
 
   const mentionAt = /(?:^|\s)@([^\s]*)$/
@@ -548,6 +549,84 @@
         items.findIndex((item) => !item.blocked)
       )
     if (query?.kind === 'file') void loadFiles()
+    updatePredict()
+  }
+
+  // Inline ghost-text prediction: requests the typed run around the caret (between `\ufffc` chip boundaries).
+  let ghost: { pos: number; text: string; before: string; after: string } | null = null
+  let ghostDismissedAt: string | null = null
+  function typedRunAtCaret(): { pos: number; run: TypedRun } | null {
+    if (!view || disabled || open || line) return null
+    const { selection, doc } = view.state
+    if (!selection.empty) return null
+    const caret = selection.from - 1
+    const full = documentText(doc)
+    const start = caret > 0 ? full.lastIndexOf('\ufffc', caret - 1) + 1 : 0
+    const endIdx = full.indexOf('\ufffc', caret)
+    const end = endIdx === -1 ? full.length : endIdx
+    return { pos: selection.from, run: { before: full.slice(start, caret), after: full.slice(caret, end) } }
+  }
+  function redrawGhost() {
+    if (view) view.dispatch(view.state.tr.setMeta('ghost', true))
+  }
+  function clearGhost(redraw = false) {
+    const had = ghost !== null
+    ghost = null
+    predictRequester.clear()
+    if (redraw && had) redrawGhost()
+  }
+  function acceptGhost(): boolean {
+    if (!ghost || !view || disabled || !view.state.selection.empty || view.state.selection.from !== ghost.pos) {
+      return false
+    }
+    const text = ghost.text
+    ghost = null
+    ghostDismissedAt = null
+    predictRequester.clear()
+    view.dispatch(view.state.tr.insertText(text))
+    return true
+  }
+  const predictRequester = createPredictRequester((run, text) => {
+    const current = typedRunAtCaret()
+    if (!current || current.run.before !== run.before || current.run.after !== run.after) return
+    const key = `${run.before}\0${run.after}`
+    if (ghostDismissedAt === key) return
+    const next = text ? { pos: current.pos, text, before: run.before, after: run.after } : null
+    if (ghost?.pos === next?.pos && ghost?.text === next?.text) return
+    ghost = next
+    redrawGhost()
+  })
+  function updatePredict() {
+    const current = typedRunAtCaret()
+    if (!current || !current.run.before) {
+      clearGhost(true)
+      return
+    }
+    const { pos, run } = current
+    const key = `${run.before}\0${run.after}`
+    if (ghostDismissedAt === key) {
+      clearGhost(true)
+      return
+    }
+    ghostDismissedAt = null
+    // Trim the active ghost locally when the user types its next character(s) so there is no flicker.
+    let changed = false
+    if (ghost && ghost.after === run.after && run.before.startsWith(ghost.before)) {
+      const typed = run.before.slice(ghost.before.length)
+      if (typed.length > 0 && ghost.text.startsWith(typed)) {
+        const rest = ghost.text.slice(typed.length)
+        ghost = rest ? { pos, text: rest, before: run.before, after: run.after } : null
+        changed = true
+      } else if (run.before !== ghost.before) {
+        ghost = null
+        changed = true
+      }
+    } else if (ghost && (ghost.before !== run.before || ghost.after !== run.after)) {
+      ghost = null
+      changed = true
+    }
+    if (changed) redrawGhost()
+    predictRequester.request(run)
   }
   function decorations(state: EditorState): DecorationSet {
     const decorations: Decoration[] = []
@@ -568,6 +647,22 @@
     if (invokedSkill) decorations.push(Decoration.inline(1, invokedSkill.name.length + 2, { class: chipVariants() }))
     for (const range of keywordRanges)
       decorations.push(Decoration.inline(range.from, range.to, { class: 'font-medium text-accent' }))
+    if (ghost && empty && from === ghost.pos && ghost.text) {
+      const ghostText = ghost.text
+      decorations.push(
+        Decoration.widget(
+          ghost.pos,
+          () => {
+            const el = document.createElement('span')
+            el.className = 'pointer-events-none select-none text-subtle/60'
+            el.setAttribute('aria-hidden', 'true')
+            el.textContent = ghostText
+            return el
+          },
+          { side: 1, key: `ghost:${ghost.pos}:${ghostText}` }
+        )
+      )
+    }
     // The built-in command being typed is styled: its name, each argument as a pill, the arguments
     // still to come as placeholders, and anything invalid in red. The text itself stays plain.
     const parsed = parseCommandLine(documentText(state.doc), state.selection.from - 1, catalog)
@@ -631,8 +726,8 @@
         choose(active)
       },
       complete: () => {
-        if (!listing()) return false
-        choose(active, true)
+        if (listing()) choose(active, true)
+        else if (!acceptGhost()) return false
       },
       previous: () => {
         if (listing()) active = (active - 1 + items.length) % items.length
@@ -647,6 +742,9 @@
         if (open && view) {
           dismissed = `${view.state.selection.from}:${documentText(view.state.doc).slice(0, view.state.selection.from - 1)}`
           query = null
+        } else if (ghost) {
+          ghostDismissedAt = `${ghost.before}\0${ghost.after}`
+          clearGhost(true)
         } else if (onCancel) onCancel()
         else return false
       },
@@ -726,7 +824,8 @@
             'Mod-y': redo,
             'Mod-a': selectAll,
             ArrowLeft: () => chipKey(-1),
-            ArrowRight: () => chipKey(1),
+            ArrowRight: () =>
+              (ghost && (ghost.after === '' || ghost.after.startsWith('\n')) && acceptGhost()) || chipKey(1),
             Backspace: (state, dispatch) => chipKey(-1, true) || deleteSelection(state, dispatch),
             Delete: (state, dispatch) => chipKey(1, true) || deleteSelection(state, dispatch)
           })
@@ -755,7 +854,9 @@
           parts = documentParts(view!.state.doc)
           lastParts = parts
         }
-        updateQuery()
+        if (!transaction.getMeta('ghost') && !transaction.getMeta('keywords')) {
+          updateQuery()
+        }
       },
       // Chat commands (send, newline, suggestions) reach `scope` through ChatKeys before ProseMirror.
       handlePaste: (_view, event) => {

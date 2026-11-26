@@ -14,8 +14,9 @@ use crate::{
 };
 use axome_protocol::settings::{
     EffectiveSettingsPayload, FormattingSettings, HarnessConfigRecord, HarnessSettingsEntry,
-    MemorySettings, NixSettings, PatchSettingsSectionInput, SettingsFileResult, SettingsLayerKind,
-    SettingsLayerPayload, SettingsPayload, ShellConfigRecord, TypographySettings, WindowSettings,
+    MemorySettings, NixSettings, PatchSettingsSectionInput, PredictSettings, SettingsFileResult,
+    SettingsLayerKind, SettingsLayerPayload, SettingsPayload, ShellConfigRecord,
+    TypographySettings, WindowSettings,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -40,6 +41,7 @@ impl Host {
         Ok(SettingsPayload {
             axo: resolved.settings.axo,
             memory: resolved.settings.memory,
+            predict: resolved.settings.predict,
             window: resolved.settings.window,
             typography: resolved.settings.typography,
             nix: resolved.settings.nix,
@@ -149,6 +151,16 @@ impl Host {
         let value = serde_json::to_value(&settings)
             .map_err(|error| ApiError::Internal(error.to_string()))?;
         self.settings_update_global_section("memory", |_| Ok(value))?;
+        Ok(settings)
+    }
+
+    pub fn settings_set_predict(
+        &self,
+        settings: PredictSettings,
+    ) -> Result<PredictSettings, ApiError> {
+        let value = serde_json::to_value(&settings)
+            .map_err(|error| ApiError::Internal(error.to_string()))?;
+        self.settings_update_global_section("predict", |_| Ok(value))?;
         Ok(settings)
     }
 

@@ -841,10 +841,10 @@ fn recovery_oid(path: &Path, label: &str) -> Result<Option<String>, ApiError> {
     )
     .map_err(ApiError::Internal)?;
     let fields: Vec<&[u8]> = bytes.split(|byte| *byte == 0).collect();
-    for pair in fields.chunks_exact(2) {
-        let subject = utf8(pair[1], "Stash reflog subject")?;
+    for [oid, subject] in fields.as_chunks::<2>().0 {
+        let subject = utf8(subject, "Stash reflog subject")?;
         if subject == label || subject.ends_with(&format!(": {label}")) {
-            return Ok(Some(utf8(pair[0], "Recovery stash OID")?));
+            return Ok(Some(utf8(oid, "Recovery stash OID")?));
         }
     }
     Ok(None)

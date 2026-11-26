@@ -392,6 +392,7 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     // trust: until Workspace Trust (design D4) exists, a repo's .axome/settings.jsonc may set memory.bank, memory.banks and memory.exclude freely; gate them on trust when it lands.
     "/memory/enabled",
     "/memory/semantic",
+    "/predict",
 ];
 
 fn is_global_only_pointer(pointer: &str) -> bool {
@@ -743,6 +744,7 @@ mod tests {
                         "bash": { "ci": false }
                     },
                     "memory": { "enabled": true, "semantic": false },
+                    "predict": { "enabled": false },
                     "window": { "tabBeamPosition": "top" },
                     "typography": { "codeFontSize": 20 },
                     "remotes": {
@@ -760,6 +762,7 @@ mod tests {
             TabBeamPosition::Bottom
         );
         assert_eq!(resolved.settings.typography.code_font_size, 15);
+        assert!(resolved.settings.predict.enabled);
         let remote = &resolved.settings.remotes["home"];
         assert_eq!(remote.address, "global.example:7420");
         assert_eq!(remote.fingerprint, "SHA256:00");

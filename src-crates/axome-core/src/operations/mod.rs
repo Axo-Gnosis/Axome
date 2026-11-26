@@ -14,6 +14,7 @@ mod issues;
 mod lsp;
 mod memory;
 mod nix;
+mod predict;
 mod session_index;
 mod sessions;
 mod settings;

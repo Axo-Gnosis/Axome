@@ -159,6 +159,7 @@ impl SettingsService {
                 | "remotes"
                 | "axo"
                 | "memory"
+                | "predict"
         ) {
             Ok(())
         } else {

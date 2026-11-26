@@ -1119,6 +1119,35 @@ export interface MemoryStatus {
   banks: { name: string; path: string; exists: boolean; notes: number; default: boolean }[]
 }
 
+/** Ghost-text suggestions while typing a prompt; global settings only. */
+export interface PredictSettings {
+  enabled: boolean
+  /** Adds the small language model (145 MB download). */
+  model: boolean
+  /** Words suggested beyond the current one, 0-2. Needs `model`. */
+  nextWords: number
+  /** Minimum confidence (0.05-0.95) for next-word suggestions. Lower shows more often. */
+  nextWordThreshold: number
+}
+
+/** Text to show after the caret. */
+export interface PredictSuggestion {
+  text: string
+  confidence: number
+}
+
+export type PredictModelState =
+  | { state: 'off' }
+  | { state: 'missing' }
+  | { state: 'downloading'; received: number; total: number }
+  | { state: 'ready' }
+  | { state: 'failed'; error: string }
+
+export interface PredictStatus {
+  enabled: boolean
+  model: PredictModelState
+}
+
 export type MemoryCaptureTrigger = 'compaction' | 'close'
 export type MemoryFactOutcome = 'new' | 'updated' | 'known'
 
@@ -1162,6 +1191,7 @@ export interface MemoryCaptureRun {
 export interface EffectiveSettings {
   axo: AxoSettings
   memory: MemorySettings
+  predict: PredictSettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings
@@ -1225,6 +1255,7 @@ export interface HarnessSettingsEntry {
 export interface SettingsPayload {
   axo: AxoSettings
   memory: MemorySettings
+  predict: PredictSettings
   window: WindowSettings
   typography: TypographySettings
   nix: NixSettings

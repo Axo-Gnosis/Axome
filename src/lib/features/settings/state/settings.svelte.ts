@@ -8,6 +8,7 @@ import type {
   LspServerConfig,
   MemorySettings,
   NixSettings,
+  PredictSettings,
   HarnessConfig,
   SettingsPayload,
   ShellConfig,
@@ -28,7 +29,7 @@ let settingsHost = $state<string | null>(null)
 let inFlightLoad: { host: string | null; promise: Promise<SettingsPayload> } | null = null
 let loadGeneration = 0
 
-type DesktopSettings = Pick<SettingsPayload, 'window' | 'typography'>
+type DesktopSettings = Pick<SettingsPayload, 'window' | 'typography' | 'predict'>
 /** This desktop's own sections, loaded apart from any remote daemon so fonts and window chrome survive its outage. */
 let desktopSettings = $state<DesktopSettings | null>(null)
 let desktopGeneration = 0
@@ -45,7 +46,9 @@ async function loadDesktopSettings(): Promise<SettingsPayload> {
   // The newest read wins, as with `loadGeneration`.
   const request = ++desktopGeneration
   const local = await backend.settings.get()
-  if (request === desktopGeneration) desktopSettings = { window: local.window, typography: local.typography }
+  if (request === desktopGeneration) {
+    desktopSettings = { window: local.window, typography: local.typography, predict: local.predict }
+  }
   return local
 }
 
@@ -100,6 +103,13 @@ export async function saveWindowSettings(nextSettings: WindowSettings) {
 export async function saveTypographySettings(nextSettings: TypographySettings) {
   const saved = await backend.settings.setTypography(nextSettings)
   if (desktopSettings) desktopSettings = { ...desktopSettings, typography: saved }
+  return saved
+}
+
+export async function savePredictSettings(nextSettings: PredictSettings) {
+  const saved = await backend.settings.setPredict(nextSettings)
+  if (desktopSettings) desktopSettings = { ...desktopSettings, predict: saved }
+  if (settings && settingsHost === null) settings = { ...settings, predict: saved }
   return saved
 }
 

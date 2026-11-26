@@ -31,9 +31,17 @@ axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd
 axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
 axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
 axo-extensions = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
-axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "fa26781443c3a7a65354191b0475aed25e42eac9" }
-axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "fa26781443c3a7a65354191b0475aed25e42eac9" }
+axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
+axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
+axo-predict = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
+axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
 playwright-rs = { version = "0.21", default-features = false, features = ["ring", "native-tls"] }
+
+# candle 0.11.1 re-reads /proc/cpuinfo on every CPU matmul when RAYON_NUM_THREADS is unset (~3-4x slower);
+# fork = 0.11.1 + https://github.com/huggingface/candle/pull/4067.
+# ponytail: drop once a candle release includes the fix.
+[patch.crates-io]
+candle-core = { git = "https://git.ryot.foo/toph/candle.git", rev = "e2af193fe630f2d86c39fd6f5c9f993d0aa60cdf" }

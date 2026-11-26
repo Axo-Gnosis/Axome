@@ -687,7 +687,7 @@ impl PtyEventSink {
         // Tokens must not restart at one when a run ID is reused: a late
         // stream from the previous incarnation must never pause the new one.
         let attachment = NEXT_ATTACHMENT
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
             })
             .expect("PTY attachment sequence overflow");
