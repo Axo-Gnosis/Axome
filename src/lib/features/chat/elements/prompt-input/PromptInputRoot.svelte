@@ -5,6 +5,7 @@
   import { keymap } from 'prosemirror-keymap'
   import { history, undo, redo } from 'prosemirror-history'
   import { deleteSelection, selectAll } from 'prosemirror-commands'
+  import type { Node } from 'prosemirror-model'
   import { Button, IconButton } from '$lib/components/ui/button'
   import Icon, { type IconData } from '$lib/icons/Icon.svelte'
   import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
@@ -28,6 +29,7 @@
     contentBytes,
     hasContent,
     invokedCommand,
+    isLargePaste,
     partsText
   } from '$lib/features/chat/parts/parts'
   import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
@@ -51,8 +53,10 @@
   import { DND_MIME, type DragPayload } from '$lib/features/dnd/payload'
   import { promptInputDropTarget } from '$lib/features/dnd/adapters/prompt-input'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { blobBase64, fileReference, onHost, readAttachment } from './attachments'
+  import { blobBase64, fileReference, onHost, readAttachment, uniqueName } from './attachments'
   import { outsidePrefix, outsideEntries, outsideMentions, projectMentionPaths, projectMentions } from './mentions'
+
+  const mentionAt = /(?:^|\s)@([^\s]*)$/
 
   let {
     parts = $bindable([]),
@@ -267,6 +271,14 @@
   }
   export function insertPart(part: ChatPart): void {
     if (!view || disabled) return
+    if (part.type === 'content')
+      part = {
+        ...part,
+        name: uniqueName(
+          part.name,
+          getParts().flatMap((held) => (held.type === 'content' ? [held.name] : []))
+        )
+      }
     if (contentBytes([...getParts(), part]) > CONTENT_LIMIT) {
       notify.error('Attachment too large', CONTENT_LIMIT_MESSAGE)
       return
@@ -460,32 +472,36 @@
     const caret = selection.from - 1
     const full = documentText(doc)
     line = parseCommandLine(full, caret, catalog)
-    if (!selection.empty) {
-      query = null
-      return
-    }
-    const text = full.slice(0, caret)
-    const slash = /^\/(\S*)$/.exec(text)
-    const mention = /(?:^|\s)@([^\s]*)$/.exec(text)
-    const slot = line?.slot
-    const choices = slot && fieldChoices(slot.field, models)
-    const key = `${selection.from}:${text}`
     const previous = query?.text
-    query =
-      key === dismissed
-        ? null
-        : slot && choices && !choices.some((choice) => choice.value === slot.text)
-          ? { kind: 'argument', text: slot.text, from: slot.from + 1, to: slot.to + 1, arg: slot }
-          : slash
-            ? {
-                kind: 'command',
-                text: slash[1],
-                from: 1,
-                to: selection.from + /^\S*/.exec(full.slice(caret))![0].length
-              }
-            : mention
-              ? { kind: 'file', text: mention[1], from: selection.from - mention[1].length - 1, to: selection.from }
-              : null
+    if (!selection.empty) {
+      // A selected mention path (a file chip opened for editing) keeps the picker on it.
+      const picked = mentionAt.exec(full.slice(0, selection.to - 1))
+      query =
+        picked && picked[1].length === selection.to - selection.from
+          ? { kind: 'file', text: picked[1], from: selection.from - 1, to: selection.to }
+          : null
+    } else {
+      const text = full.slice(0, caret)
+      const slash = /^\/(\S*)$/.exec(text)
+      const mention = mentionAt.exec(text)
+      const slot = line?.slot
+      const choices = slot && fieldChoices(slot.field, models)
+      query =
+        `${selection.from}:${text}` === dismissed
+          ? null
+          : slot && choices && !choices.some((choice) => choice.value === slot.text)
+            ? { kind: 'argument', text: slot.text, from: slot.from + 1, to: slot.to + 1, arg: slot }
+            : slash
+              ? {
+                  kind: 'command',
+                  text: slash[1],
+                  from: 1,
+                  to: selection.from + /^\S*/.exec(full.slice(caret))![0].length
+                }
+              : mention
+                ? { kind: 'file', text: mention[1], from: selection.from - mention[1].length - 1, to: selection.from }
+                : null
+    }
     if (query?.text !== previous)
       active = Math.max(
         0,
@@ -600,6 +616,21 @@
       }
     }
   }
+  /**
+   * Opens a chip for editing: a file becomes its `@path` with the path selected, so the picker lists
+   * it and typing replaces it; a paste opens in the text view. Other chips have nothing to edit.
+   */
+  function editChip(pos: number, node: Node): boolean {
+    if (disabled) return false
+    const part = node.attrs.part as ChatPart
+    if (part.type === 'paste') return false // becomes openText(pos, true) with the text view (step 9)
+    if (part.type !== 'file') return false
+    const typed = partsText([part])
+    const start = pos + typed.indexOf(part.path)
+    const tr = view!.state.tr.replaceWith(pos, pos + node.nodeSize, promptSchema.text(typed))
+    view!.dispatch(tr.setSelection(TextSelection.create(tr.doc, start, start + part.path.length)))
+    return true
+  }
   /** Steps over, or deletes, the chip beside the caret in one keypress, as with a character. */
   function chipKey(direction: -1 | 1, remove = false): boolean {
     if (!view) return false
@@ -608,6 +639,7 @@
     const node = direction < 0 ? selection.$from.nodeBefore : selection.$from.nodeAfter
     if (node?.type.name !== 'part') return false
     const from = direction < 0 ? selection.from - node.nodeSize : selection.from
+    if (remove && editChip(from, node)) return true
     view.dispatch(
       remove
         ? view.state.tr.delete(from, from + node.nodeSize)
@@ -633,7 +665,7 @@
     }
     const text = data.getData('text/plain').replace(/\r\n?/g, '\n')
     if (text) {
-      if (text.length > 1000 || text.split('\n').length > 8) insertPart({ type: 'paste', text })
+      if (isLargePaste(text)) insertPart({ type: 'paste', text })
       else focus(text)
     }
   }
@@ -694,6 +726,7 @@
       // A click on a chip puts the caret on the nearer side of it, as on a character.
       handleClickOn: (view, _pos, node, nodePos, event, direct) => {
         if (!direct || node.type.name !== 'part') return false
+        if (event.button === 0 && editChip(nodePos, node)) return true
         const box = (view.nodeDOM(nodePos) as HTMLElement).getBoundingClientRect()
         const side = event.clientX > box.left + box.width / 2 ? node.nodeSize : 0
         view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, nodePos + side)))

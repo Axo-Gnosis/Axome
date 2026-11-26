@@ -29,6 +29,16 @@ export function joinHostPath(base: string, relative: string): string {
   return `${remote ? `axome://${remote.server}` : ''}/${segments.join('/')}`
 }
 
+/** `name`, or `stem-2.ext`, `stem-3.ext`, … when taken: the numbering axo uses when it saves content. */
+export function uniqueName(name: string, taken: string[]): string {
+  const dot = name.lastIndexOf('.')
+  for (let copy = 1; ; copy++) {
+    const candidate =
+      copy === 1 ? name : dot > 0 ? `${name.slice(0, dot)}-${copy}${name.slice(dot)}` : `${name}-${copy}`
+    if (!taken.includes(candidate)) return candidate
+  }
+}
+
 export function blobBase64(blob: Blob): Promise<string> {
   const { promise, resolve, reject } = Promise.withResolvers<string>()
   const reader = new FileReader()
