@@ -80,13 +80,21 @@ function getJsonLanguageService(monaco: typeof import('monaco-editor')): JsonLan
   return (monaco.languages.json as unknown as { jsonDefaults: JsonLanguageDefaults }).jsonDefaults
 }
 
-/** One-time Monaco setup: integration language support, theme, keybinding overrides. */
-let initPromise: Promise<void> | null = null
+type Monaco = typeof import('monaco-editor')
 
-export function initMonaco(monaco: typeof import('monaco-editor')): Promise<void> {
-  if (initPromise) return initPromise
+let monacoPromise: Promise<Monaco> | null = null
 
-  initPromise = (async () => {
+/**
+ * The only way to obtain Monaco: loads it with one-time setup (service
+ * overrides, language support, theme, keybinding overrides). Service
+ * overrides only apply before the first Monaco API call, so any path that
+ * touched Monaco first would silently get the defaults.
+ */
+export function loadMonaco(): Promise<Monaco> {
+  if (monacoPromise) return monacoPromise
+
+  monacoPromise = (async () => {
+    const monaco = await import('monaco-editor')
     initializeMonacoEditorServices()
     registerAxomeTheme(monaco)
     // Monaco caches glyph metrics per font. A face that finishes loading after
@@ -141,11 +149,12 @@ export function initMonaco(monaco: typeof import('monaco-editor')): Promise<void
     // Flush any JSON schemas that were registered before Monaco
     // finished loading (bootstrap runs before the first editor mount).
     attachMonaco(monaco)
+    return monaco
   })().catch((err) => {
     // Allow retry on next editor mount if initialization fails.
-    initPromise = null
+    monacoPromise = null
     throw err
   })
 
-  return initPromise
+  return monacoPromise
 }

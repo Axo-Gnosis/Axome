@@ -66,7 +66,7 @@ function syncNow(): void {
 }
 
 /**
- * Called by `initMonaco` on first editor mount. Idempotent. Flushes
+ * Called by `loadMonaco` on first Monaco load. Idempotent. Flushes
  * any entries buffered before Monaco loaded.
  */
 export function attachMonaco(monaco: typeof import('monaco-editor')): void {

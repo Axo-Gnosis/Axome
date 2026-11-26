@@ -541,7 +541,9 @@ async function stageGroup(handoff: GroupImport): Promise<void> {
       handoff.tabs.map((tab) => tab.id)
     )
     // Monaco accesses browser globals during import; SvelteKit also evaluates modules in Node at build time.
-    const monaco = handoff.modelStates.length ? await import('monaco-editor') : null
+    const monaco = handoff.modelStates.length
+      ? await (await import('$lib/features/editor/renderers/monaco/core/monacoEnv')).loadMonaco()
+      : null
     if (!groupTransfers.has(handoff.transferId)) return
     for (const state of handoff.modelStates) {
       const tab = handoff.tabs.find((candidate) => candidate.id === state.tabId)

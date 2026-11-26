@@ -72,6 +72,20 @@
     if (viewport?.isConnected) settledTop = viewport.scrollTop
   }
 
+  /**
+   * Whether a wheel will move this viewport. Wheels it can't act on (sideways, down while already following,
+   * or taken by a nested scroller) must not pause following, or the held-back growth lands as a jump later.
+   */
+  function wheelScrolls(event: WheelEvent, scroller: HTMLElement): boolean {
+    const dy = event.deltaY
+    if (Math.abs(dy) <= Math.abs(event.deltaX) || (dy > 0 && atBottom)) return false
+    for (let el = event.target as Element | null; el && el !== scroller; el = el.parentElement) {
+      if (el.scrollHeight <= el.clientHeight + 1 || !/auto|scroll/.test(getComputedStyle(el).overflowY)) continue
+      if (dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1) return false
+    }
+    return true
+  }
+
   function beginUserScroll() {
     userScrolling = true
     revision++
@@ -245,6 +259,9 @@
    * bottom. Only the transcript scrolls; nothing around it moves.
    */
   function reveal(element: HTMLElement): void {
+    // A stop that just rendered at the bottom of a following view is measured after following catches up,
+    // so revealing it doesn't release the bottom.
+    if (atBottom) restorePosition()
     if (element.dataset.turnId) return scrollToTurn(element.dataset.turnId)
     if (!viewport?.isConnected) return
     const margin = 12
@@ -289,8 +306,13 @@
     let rows: HTMLElement[] = []
     let reported: string[] = []
     const visible = new Set<Element>()
+    const measured = new Set<Element>()
+    // A row the observer hasn't measured yet counts as visible: a new ask lands at the bottom before following
+    // scrolls to it, and reporting it hidden for that frame flashes the composer's jump note, resizing the view.
     function report() {
-      const next = rows.filter((node) => visible.has(node)).map((node) => node.dataset.askCallId!)
+      const next = rows
+        .filter((node) => visible.has(node) || !measured.has(node))
+        .map((node) => node.dataset.askCallId!)
       if (next.length === reported.length && next.every((id, index) => id === reported[index])) return
       reported = next
       onAskVisibility?.(next)
@@ -298,6 +320,7 @@
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
+          if (content.contains(entry.target)) measured.add(entry.target)
           if (entry.isIntersecting && content.contains(entry.target)) visible.add(entry.target)
           else visible.delete(entry.target)
         }
@@ -312,6 +335,7 @@
       for (const node of rows) {
         if (!seen.has(node)) {
           visible.delete(node)
+          measured.delete(node)
           observer.unobserve(node)
         }
       }
@@ -359,7 +383,13 @@
     let active = true
     const events = new AbortController()
     const options = { passive: true, capture: true, signal: events.signal }
-    scroller.addEventListener('wheel', beginUserScroll, options)
+    scroller.addEventListener(
+      'wheel',
+      (event) => {
+        if (wheelScrolls(event, scroller)) beginUserScroll()
+      },
+      options
+    )
     scroller.addEventListener(
       'pointerdown',
       (event) => {

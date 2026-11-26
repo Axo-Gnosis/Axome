@@ -137,7 +137,9 @@ async function handleTransferImport({ transferId, exportPayload, targetIndex }: 
   updateInputBlocking()
   try {
     // Monaco is browser-only; loading it statically makes SvelteKit's SSR evaluation fail.
-    const monaco = exportPayload.modelState ? await import('monaco-editor') : null
+    const monaco = exportPayload.modelState
+      ? await (await import('$lib/features/editor/renderers/monaco/core/monacoEnv')).loadMonaco()
+      : null
     if (!targetTransfers.has(transferId)) {
       cleanupRegistries(tab)
       return

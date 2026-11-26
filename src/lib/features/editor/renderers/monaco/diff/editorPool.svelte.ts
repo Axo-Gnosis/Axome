@@ -217,14 +217,13 @@ export class DiffEditorPool {
   async ready(): Promise<Monaco> {
     if (!this.monacoPromise) {
       this.monacoPromise = (async () => {
-        // Both imports are dynamic so Monaco + the env bootstrap land
-        // in a lazy chunk together, matching `MonacoEditor.svelte`.
-        const [{ initMonaco }, m, { ensureAxomeDiffGutterMenu }] = await Promise.all([
+        // Dynamic imports keep Monaco + the env bootstrap in a lazy chunk,
+        // matching `MonacoEditor.svelte`.
+        const [{ loadMonaco }, { ensureAxomeDiffGutterMenu }] = await Promise.all([
           import('$lib/features/editor/renderers/monaco/core/monacoEnv'),
-          import('monaco-editor'),
           import('$lib/features/editor/renderers/monaco/diff/gitGutterMenu')
         ])
-        await initMonaco(m)
+        const m = await loadMonaco()
         ensureAxomeDiffGutterMenu(m)
         // Apply the Axome theme globally so every editor we construct
         // inherits it. `createDiffEditor` doesn't take a theme in its
