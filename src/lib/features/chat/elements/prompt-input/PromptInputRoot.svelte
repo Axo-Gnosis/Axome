@@ -10,8 +10,6 @@
   import type { ChatCommand, ChatKeywordMatch, ChatModel, ChatPart, FolderEntry } from '$lib/types/backend'
   import {
     ArrowUp02Icon,
-    File01Icon,
-    Folder01Icon,
     Layers01Icon,
     Navigation03Icon,
     Queue01Icon,
@@ -34,10 +32,7 @@
   } from '$lib/features/chat/parts/parts'
   import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
   import { getChatKeys, type KeyScope } from '$lib/features/chat/keymap/router.svelte'
-  import { backend } from '$lib/api/backend'
-  import { ensureProjectFiles, getProjectFilePaths } from '$lib/features/files/projectFiles.svelte'
-  import { rankPaths } from '$lib/features/command-palette/commands/files.svelte'
-  import { basename, dirname, resolveProjectFile, splitRemotePath } from '$lib/utils/paths'
+  import { resolveProjectFile } from '$lib/utils/paths'
   import {
     promptSchema,
     partsDocument,
@@ -56,7 +51,8 @@
   import { DND_MIME, type DragPayload } from '$lib/features/dnd/payload'
   import { promptInputDropTarget } from '$lib/features/dnd/adapters/prompt-input'
   import { getErrorMessage } from '$lib/utils/client-error'
-  import { blobBase64, fileReference, joinHostPath, onHost, readAttachment } from './attachments'
+  import { blobBase64, fileReference, onHost, readAttachment } from './attachments'
+  import { outsidePrefix, outsideEntries, outsideMentions, projectMentionPaths, projectMentions } from './mentions'
 
   let {
     parts = $bindable([]),
@@ -140,25 +136,6 @@
   let active = $state(0)
   let files = $state.raw<string[]>([])
   let fileFolder = ''
-  type ProjectPaths = { folder: string; source: readonly string[]; known: Set<string>; paths: string[] }
-  let projectPaths: ProjectPaths | null = null
-  /** The project's files plus their ancestor folders, rebuilt only when the project file list changes. */
-  function projectPathsFor(folder: string): ProjectPaths {
-    const source = getProjectFilePaths(folder)
-    if (projectPaths?.folder === folder && projectPaths.source === source) return projectPaths
-    const known = new Set(source)
-    for (const path of source) {
-      let end = path.lastIndexOf('/')
-      while (end > 0) {
-        known.add(path.slice(0, end) + '/')
-        end = path.lastIndexOf('/', end - 1)
-      }
-    }
-    projectPaths = { folder, source, known, paths: [...known].sort() }
-    return projectPaths
-  }
-  // A mention typed as `/…`, `~/…` or `../…` lists that folder on the chat's host instead of the project.
-  const outsidePrefix = /^(\/|~\/|\.\.\/)/
   let outside = $state.raw<{ typed: string; entries: FolderEntry[] } | null>(null)
   let outsideKey = ''
   const catalog = $derived(commands.filter(offeredCommand))
@@ -195,39 +172,23 @@
           value: choice.value
         }))
     }
-    if (query?.kind === 'file' && outsidePrefix.test(query.text)) {
-      const typed = query.text.slice(0, query.text.lastIndexOf('/') + 1)
-      const leaf = query.text.slice(typed.length).toLowerCase()
-      if (outside?.typed !== typed) return []
-      return outside.entries
-        .filter((entry) => entry.name.toLowerCase().startsWith(leaf))
-        .toSorted((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name))
-        .map((entry) => ({
-          key: entry.path,
-          group: 'Files',
-          label: entry.name + (entry.is_dir ? '/' : ''),
-          detail: typed,
-          icon: entry.is_dir ? Folder01Icon : File01Icon,
-          path: fileReference(entry.path, owner.folderPath, entry.is_dir),
-          complete: entry.is_dir ? `${typed}${entry.name}/` : undefined
-        }))
+    if (query?.kind === 'file') {
+      const text = query.text
+      const mentions = !outsidePrefix.test(text)
+        ? projectMentions(files, text)
+        : outside?.typed === text.slice(0, text.lastIndexOf('/') + 1)
+          ? outsideMentions(outside.entries, text, owner.folderPath)
+          : []
+      return mentions.map((mention) => ({
+        key: mention.path,
+        group: 'Files',
+        label: mention.label,
+        detail: mention.detail,
+        file: { name: mention.label.replace(/\/$/, ''), folder: mention.folder },
+        path: mention.path,
+        complete: mention.complete
+      }))
     }
-    if (query?.kind === 'file')
-      return rankPaths(files, query.text)
-        .slice(0, 80)
-        .map(({ path }) => {
-          const bare = path.replace(/\/$/, '')
-          const directory = bare !== path
-          return {
-            key: path,
-            group: 'Files',
-            label: basename(bare) + (directory ? '/' : ''),
-            detail: dirname(bare) || undefined,
-            icon: directory ? Folder01Icon : File01Icon,
-            path,
-            complete: directory ? path : undefined
-          }
-        })
     if (query)
       return catalog
         .filter((item) => item.name.startsWith(query!.text))
@@ -431,47 +392,28 @@
   async function loadFiles() {
     const folder = owner.folderPath
     const prefix = query?.kind === 'file' ? query.text : ''
-    if (outsidePrefix.test(prefix))
-      return void listOutside(folder, prefix.slice(0, prefix.lastIndexOf('/') + 1), prefix)
+    if (outsidePrefix.test(prefix)) {
+      const typed = prefix.slice(0, prefix.lastIndexOf('/') + 1)
+      const hidden = prefix.slice(typed.length).startsWith('.')
+      const key = `${folder}\0${typed}\0${hidden}`
+      if (outsideKey === key) return
+      outsideKey = key
+      const entries = await outsideEntries(folder, typed, hidden)
+      if (outsideKey === key) outside = { typed, entries }
+      return
+    }
     const directory = prefix.includes('/') ? prefix.slice(0, prefix.lastIndexOf('/')) : ''
     const key = `${folder}:${directory}`
     if (fileFolder === key) return
     fileFolder = key
-    let base: ProjectPaths
+    let paths: string[]
     try {
-      await ensureProjectFiles(folder)
-      base = projectPathsFor(folder)
+      paths = await projectMentionPaths(folder, directory)
     } catch {
       notify.error('File list unavailable', 'Could not load project paths.')
       return
     }
-    // A folder still being typed may not exist yet; it adds nothing.
-    const entries = await backend.files.readDir(folder, directory, false).catch(() => [])
-    const extra = entries.map((entry) => entry.path + (entry.is_dir ? '/' : '')).filter((path) => !base.known.has(path))
-    if (owner.folderPath === folder && fileFolder === key) {
-      files = extra.length ? [...base.paths, ...extra.sort()].sort() : base.paths
-    }
-  }
-  async function listOutside(folder: string, typed: string, prefix: string) {
-    const hidden = prefix.slice(typed.length).startsWith('.')
-    const key = `${folder}\0${typed}\0${hidden}`
-    if (outsideKey === key) return
-    outsideKey = key
-    let entries: FolderEntry[] = []
-    try {
-      const server = splitRemotePath(folder)?.server
-      const base = typed.startsWith('~/')
-        ? await backend.folders.home(server)
-        : typed.startsWith('/')
-          ? server
-            ? `axome://${server}/`
-            : '/'
-          : folder
-      entries = await backend.folders.listEntries(joinHostPath(base, typed.replace(/^~\//, '')), hidden)
-    } catch {
-      /* A folder that doesn't exist lists nothing; the panel says "No matches". */
-    }
-    if (outsideKey === key) outside = { typed, entries }
+    if (owner.folderPath === folder && fileFolder === key) files = paths
   }
   // Keyword highlights: axo matches the text; offsets are document positions. Every document
   // change drops them (their positions are stale) and invalidates any match in flight.
