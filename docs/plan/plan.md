@@ -32,6 +32,7 @@ This is the live planning document for adopting axo in Axome; the pinned revisio
 | [T12](#t12-long-term-memory) | Native long-term memory (Basic Memory port) | Q58–Q62 (superseded) | 8 | Shipped off by default ([P31](design.md#decisions)) |
 | [T13](#t13-axo-deda8e6-extensions-definitions-service-tiers) | axo `deda8e6` + ask documents (`9c1b4ad`): Bun extensions, live definitions, service tiers, origin-bound credentials, file records, `ask` | Q63–Q79 | 9 | Implemented at `9dd6fa1` ([P39](design.md#decisions)); Workspace Trust is roadmap Phase 4 |
 | [T14](#t14-chat-ux-pass) | Setup footer, non-stopping dismiss, skill chip, Session panel, tab dot | n/a | 10 | Implemented at axo `c1b060a`; deferred items listed |
+| [T15](#t15-composer-text-view) | Editable chips, file-type icons, Monaco text view for the composer | n/a | 11 | Implemented ([P44](design.md#decisions)); deferred items listed |
 
 ```mermaid
 flowchart LR
@@ -518,10 +519,24 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 
 **Deferred or pinned (decide before building):**
 
-- **Editable composer chips** (ISSUES item 5). File chips: click turns the chip back into `@path` with the picker open. Paste chips: undecided; expanding a very large paste inline is too much, and a Ctrl+G editor for the whole input (as omp has) is the idea to explore. Raising the paste-to-chip threshold to about 20 lines or 2,000 characters was agreed and belongs with this work (`PromptInputRoot.svelte:694`).
 - **Agent-generated chat titles.** axo should own generation; the host may supply a guideline prompt; extensions must be able to shape or replace the result. Open: which model writes it and when. Until then a title is the first message or a manual rename. The muted "first words while generating" tab state from board 8 + 9 depends on this.
 - **A generated icon per chat tab.** The icon set is a host concern, so the host has to hand its icon vocabulary to whatever picks one. Mechanism undecided.
 - **Event-based pending bar.** The bar is a diff of the session's current persona, model and effort against the last committed reply, with no notion of who made a change or whether the in-flight request already uses it. While a request is in flight it can therefore name a persona, model or effort that request already uses, including changes the user did not make (a keyword's model switch on send, effort moved automatically by a model switch), and the same misattribution recurs between requests later in a turn until the next reply commits. Cancel is withheld while a turn runs so it cannot revert a running turn's setup; the text can still be wrong in that window. Proper fix: derive the bar from what is actually pending, either because axo exposes effective persona, model and effort as it does `effective_mode`, or by building it from change entries journaled after the latest request began, skipping automatic ones. Known gaps for the journal route: only `thinkingChange` carries `automatic` today (`modelChange` and `agentChange` do not), and axo's journaling order relative to request start is unverified. Needs its own plan.
 - **Keyword match offsets from the backend.** Sent-message keyword marks are fetched per message through `keywordMatches` and cached in `UserBlock.svelte` for the app's lifetime. The proper shape is for the user entry to carry its match offsets, removing the cache and the call. Open points: `keyword_matches` currently requires a live session (`services/axo/mod.rs:1499`), and the frontend strips a leading skill name from the first text part, which shifts offsets. Needs its own plan.
 - **Held teammate mail and quiet host messages** are not counted by the paused-wakes banner; axo does not expose them per session.
 - **Other ISSUES workstreams, untouched:** surprise scroll jumps in the transcript; disabling individual models and whole providers; token and context efficiency for small-window models; a local feedback tool for the model to report harness problems; the Tauri `Canceled` unhandled rejection.
+
+## T15. Composer text view
+
+**Status:** Implemented · **Evidence:** [`.axome/research/composer-text-view.md`](../../.axome/research/composer-text-view.md), boards 5, 5b, 5c and 5d in `.bak/Composer/comp.html`
+
+**Shipped:** one rule, the chat input chooses things and the text view edits text. In the chat input (every composer), Backspace, Delete or a click on a file chip turns it into `@path` text with the path selected and the picker open; chips and picker rows use file-type icons; a paste chip reads "Pasted text · N lines" and appears at more than 20 lines or 2,000 characters. In the main chat composer, `Alt+G` swaps the chat input for a Monaco editor over the message's text (`partsText`), in place, and back: files and attachments are `@path` tokens, pastes are folded regions; markdown highlighting, `@` completion, a warning squiggle on a path that names nothing, `Ctrl+click` to open a file. `Enter` is a newline, `Ctrl+Enter` sends, `Alt+Enter` queues a follow-up. Backspace, Delete or a click on a paste chip opens the text view on that paste. Closing writes the draft back as one history step. The round trip `partsText(readText(text).parts) === text` is tested (`textForm.test.ts`).
+
+**Deferred or pinned (decide before building):**
+
+- **Decided out:** hover file preview, lightbulb fixes, a paste-edge warning, sticky scroll, the overview ruler, `/` completion in the text view.
+- **The text view in the subagent composer and inline message edit.**
+- **A squiggle in the chat input** for an `@path` that did not resolve (board 5d state 6). It stays plain text there.
+- **File-type icons inside Monaco's suggest list** (it shows Monaco's file and folder glyphs) and an image thumbnail in the text view.
+- **Remembering that the text view was open** across tab switches.
+- **Known ceilings:** a paste region whose text is cut and pasted elsewhere, or deleted and restored with Undo, comes back as plain text; a single-line or two-line paste cannot fold; a path with whitespace gets no picker in the chat input; a hand-typed path outside the project (`/…`, `~/…`, `../…`) stays text unless picked from completion; an attachment and a project file with the same name can swap chip kinds across a round trip (the text is unchanged).
