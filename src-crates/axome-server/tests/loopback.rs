@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use anyhow::{bail, Context, Result};
 use axome_protocol::{
     files::DirEntry,
@@ -543,7 +543,7 @@ async fn file_read_stream_assembles_and_caps() -> Result<()> {
     let path = repo.path().join("large.txt");
     let contents = vec![b'x'; 20 * 1024 * 1024];
     fs::write(&path, &contents)?;
-    let expected_version = format!("{:x}", sha2::Sha256::digest(&contents));
+    let expected_version = axome_core::encode_hex(&sha2::Sha256::digest(&contents));
     let stat = client
         .call_as(
             &Request::FileStat {

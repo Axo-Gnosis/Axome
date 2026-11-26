@@ -1,7 +1,7 @@
 //! Remote spawn failures, workbench leases, file URIs and breadcrumb roots stay
 //! on the daemon; desktop settings and recent folders stay local.
 
-mod common;
+use crate::common;
 
 use axome_core::{
     errors::ApiError,
@@ -154,28 +154,73 @@ fn assert_routed<T>(method: &str, result: Result<T, ApiError>) {
     );
 }
 
-/// One runtime owns the daemon and all behaviors that depend on its tasks.
-#[tokio::test]
-async fn remote_spawns_leases_and_uris_stay_on_daemon() -> anyhow::Result<()> {
+async fn run_fixture(
+    test_path: &str,
+    run: impl for<'a> FnOnce(
+        &'a Fixture,
+    ) -> std::pin::Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>,
+) -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    common::isolate(root.path())?;
     let fixture = Fixture::start(root).await?;
-    let suite = tokio::time::timeout(SUITE_TIMEOUT, async {
-        lease_receives_registry_events_without_folder_claims(&fixture).await?;
-        local_leases_follow_authority_and_transfer_identity(&fixture).await?;
-        independent_servers_do_not_share_transition_gates(&fixture).await?;
-        passive_discovery_does_not_claim_remote_worktrees(&fixture).await?;
-        remote_spawn_arms_and_workspace_uris(&fixture).await?;
-        remote_file_rename_emits_desktop_file_moved(&fixture).await?;
-        remote_paste_stays_on_source_host(&fixture).await?;
-        settings_effective_merges_desktop_sections(&fixture).await?;
-        local_only_ops_stay_on_desktop(&fixture).await?;
-        anyhow::Ok(())
-    })
-    .await;
+    let outcome = tokio::time::timeout(SUITE_TIMEOUT, run(&fixture)).await;
     fixture.shutdown().await;
-    suite.unwrap_or_else(|_| panic!("the routing suite did not finish within {SUITE_TIMEOUT:?}"))
+    outcome.unwrap_or_else(|_| panic!("{test_path} did not finish within {SUITE_TIMEOUT:?}"))
 }
+
+macro_rules! matrix_test {
+    ($name:ident, $scenario:ident) => {
+        #[test]
+        fn $name() -> anyhow::Result<()> {
+            let test_path = concat!("remote_router_matrix::", stringify!($name));
+            let Some(_) = common::isolated_home(test_path) else {
+                return Ok(());
+            };
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(run_fixture(test_path, |fixture| {
+                    Box::pin($scenario(fixture))
+                }))
+        }
+    };
+}
+
+matrix_test!(
+    matrix_lease_receives_registry_events_without_folder_claims,
+    lease_receives_registry_events_without_folder_claims
+);
+matrix_test!(
+    matrix_local_leases_follow_authority_and_transfer_identity,
+    local_leases_follow_authority_and_transfer_identity
+);
+matrix_test!(
+    matrix_independent_servers_do_not_share_transition_gates,
+    independent_servers_do_not_share_transition_gates
+);
+matrix_test!(
+    matrix_passive_discovery_does_not_claim_remote_worktrees,
+    passive_discovery_does_not_claim_remote_worktrees
+);
+matrix_test!(
+    matrix_remote_spawn_arms_and_workspace_uris,
+    remote_spawn_arms_and_workspace_uris
+);
+matrix_test!(
+    matrix_remote_file_rename_emits_desktop_file_moved,
+    remote_file_rename_emits_desktop_file_moved
+);
+matrix_test!(
+    matrix_remote_paste_stays_on_source_host,
+    remote_paste_stays_on_source_host
+);
+matrix_test!(
+    matrix_settings_effective_merges_desktop_sections,
+    settings_effective_merges_desktop_sections
+);
+matrix_test!(
+    matrix_local_only_ops_stay_on_desktop,
+    local_only_ops_stay_on_desktop
+);
 
 async fn passive_discovery_does_not_claim_remote_worktrees(
     fixture: &Fixture,
@@ -1088,7 +1133,7 @@ async fn local_only_ops_stay_on_desktop(fixture: &Fixture) -> anyhow::Result<()>
         touched
     );
 
-    let home = fixture.root.path().join("home");
+    let home = PathBuf::from(std::env::var_os("HOME").expect("isolated HOME missing"));
     let local_path = home.join("local-path-root");
     fs::create_dir(&local_path)?;
     let root = bounded(

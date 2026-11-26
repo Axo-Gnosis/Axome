@@ -977,7 +977,7 @@ impl ExtensionService {
 }
 
 fn scope_key(folder: &str) -> String {
-    format!("{:x}", Sha256::digest(folder.as_bytes()))[..16].to_owned()
+    crate::encode_hex(&Sha256::digest(folder.as_bytes()))[..16].to_owned()
 }
 
 impl AxoService {

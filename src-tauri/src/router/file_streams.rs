@@ -173,7 +173,7 @@ impl FileStreams {
                     }
                     // The daemon's version is trusted only once our own hash agrees.
                     Frame::Json(FileReadDown::Complete { version }) => {
-                        if format!("{:x}", hash.finalize()) != version {
+                        if axome_core::encode_hex(&hash.finalize()) != version {
                             return Err(ApiError::Remote("File stream hash mismatch".into()));
                         }
                         break version;

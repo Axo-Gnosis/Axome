@@ -173,7 +173,12 @@ pub(crate) fn stop_process(
     if Instant::now() >= deadline {
         return Err(format!("Timed out waiting for child {pid} to exit"));
     }
-    let graceful = deadline.min(Instant::now() + Duration::from_secs(1));
+    const TERM_GRACE: Duration = if cfg!(test) {
+        Duration::from_millis(200)
+    } else {
+        Duration::from_secs(1)
+    };
+    let graceful = deadline.min(Instant::now() + TERM_GRACE);
     for signal in [libc::SIGTERM, libc::SIGKILL] {
         poll_exit();
         {

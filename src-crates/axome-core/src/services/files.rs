@@ -125,7 +125,7 @@ impl FileReadStream {
 
     /// Content hash, meaningful only after `read_chunk` successfully returns EOF.
     pub fn version(&self) -> String {
-        format!("{:x}", self.hash.clone().finalize())
+        crate::encode_hex(&self.hash.clone().finalize())
     }
 }
 
@@ -252,10 +252,19 @@ impl FileService {
         let Some((mut file, _)) = Self::open_regular_opt(abs, file_path)? else {
             return Ok(None);
         };
+        use std::io::Read;
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher)
-            .map_err(|error| ApiError::Io(format!("Failed to read {file_path}: {error}")))?;
-        Ok(Some(format!("{:x}", hasher.finalize())))
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let read = file
+                .read(&mut buf)
+                .map_err(|error| ApiError::Io(format!("Failed to read {file_path}: {error}")))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buf[..read]);
+        }
+        Ok(Some(crate::encode_hex(&hasher.finalize())))
     }
 
     /// Write content to a file inside a project, returning the version of the
@@ -597,7 +606,7 @@ fn file_content(bytes: Vec<u8>, file_path: &str) -> Result<FileContent, ApiError
 
 /// Hex SHA-256 of a file's bytes.
 fn version_of(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::encode_hex(&Sha256::digest(bytes))
 }
 
 /// Entry survivors of one directory, before compaction.

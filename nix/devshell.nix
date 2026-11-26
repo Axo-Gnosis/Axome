@@ -18,6 +18,7 @@ pkgs.mkShell {
     b2n
     pkgs.bun
     pkgs.cargo
+    pkgs.cargo-nextest
     pkgs.clippy
     pkgs.curl
     pkgs.file
@@ -30,6 +31,7 @@ pkgs.mkShell {
     pkgs.gopls
     pkgs.jq
     pkgs.biome
+    pkgs.mold
     pkgs.nixfmt
     pkgs.nil
     pkgs.openssl
@@ -38,6 +40,7 @@ pkgs.mkShell {
     pkgs.rust-analyzer
     pkgs.rustc
     pkgs.rustfmt
+    pkgs.sccache
     pkgs.shared-mime-info
     pkgs.svelte-language-server
     pkgs.tailwindcss-language-server
@@ -53,6 +56,11 @@ pkgs.mkShell {
       [ -n "''${!original+x}" ] || export "$original=''${!1-__AXOME_UNSET__}"
       export "$1=$2"
     }
+    axome_export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER "clang"
+    axome_export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS "-C link-arg=-fuse-ld=mold"
+    axome_export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER "clang"
+    axome_export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS "-C link-arg=-fuse-ld=mold"
+    axome_export RUSTC_WRAPPER "sccache"
     axome_export LD_LIBRARY_PATH "${lib.makeLibraryPath runtimeLibraries}"
     axome_export LIBCLANG_PATH "${pkgs.llvmPackages.libclang.lib}/lib"
     # Keep EGL, DRI, and GBM on this Mesa; host drivers may need a newer glibc.

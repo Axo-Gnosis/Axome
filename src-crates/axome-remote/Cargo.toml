@@ -14,7 +14,7 @@ thiserror = "2"
 quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
-sha2 = "0.10"
+sha2.workspace = true
 hex = "0.4"
 
 [dev-dependencies]

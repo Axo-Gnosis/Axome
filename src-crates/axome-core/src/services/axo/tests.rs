@@ -945,7 +945,7 @@ fn normalized_jsonl(path: &Path, root: &Path) -> Vec<Value> {
 }
 
 fn sha256(path: &Path) -> String {
-    format!("{:x}", Sha256::digest(std::fs::read(path).unwrap()))
+    crate::encode_hex(&Sha256::digest(std::fs::read(path).unwrap()))
 }
 
 fn replies() -> Vec<ScriptedTurn> {

@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use axome_core::{
     errors::ApiError,
@@ -150,12 +150,19 @@ fn count_bytes(haystack: &[u8], needle: &[u8]) -> usize {
         .count()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
-    // One test owns process-global XDG/HOME for its whole lifetime. Separate
-    // integration-test binaries run in separate processes.
+#[test]
+fn desktop_remote_router_loopback() -> anyhow::Result<()> {
+    let Some(_) = common::isolated_home("remote_router::desktop_remote_router_loopback") else {
+        return Ok(());
+    };
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(desktop_remote_router_loopback_inner())
+}
+
+async fn desktop_remote_router_loopback_inner() -> anyhow::Result<()> {
     let temporary = tempdir()?;
-    common::isolate(temporary.path())?;
 
     let repository = temporary.path().join("repository");
     common::init_repo(&repository)?;
@@ -377,7 +384,7 @@ async fn desktop_remote_router_loopback() -> anyhow::Result<()> {
         use sha2::{Digest, Sha256};
         let body = vec![b'x'; 20 * 1024 * 1024];
         fs::write(repository.join("large.txt"), &body)?;
-        let expected_hash = format!("{:x}", Sha256::digest(&body));
+        let expected_hash = axome_core::encode_hex(&Sha256::digest(&body));
         for (index, folder) in [
             remote_repository.clone(),
             repository.to_string_lossy().into_owned(),

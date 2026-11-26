@@ -1,6 +1,6 @@
 //! Real HTTP/WS daemon regressions. The test binary relaunches itself so HOME/XDG
 //! are scratch paths before Tokio, Host, or global settings are initialized.
-mod support;
+use crate::support;
 
 use anyhow::{bail, Context, Result};
 use axome_protocol::{
@@ -1246,7 +1246,7 @@ async fn file_integrity_and_shutdown(f: Fixture) -> Result<()> {
         )
         .await?;
     let mut received = Vec::new();
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let hash = axome_core::encode_hex(&Sha256::digest(&bytes));
     loop {
         match next_tagged::<FileReadDown>(&mut stream).await? {
             Tagged::Raw(chunk) => {
@@ -1285,7 +1285,7 @@ async fn file_integrity_and_shutdown(f: Fixture) -> Result<()> {
             Open::FileRead {
                 project_path: f.folder(),
                 file_path: "../outside.txt".into(),
-                version: format!("{:x}", Sha256::digest(b"outside-sentinel")),
+                version: axome_core::encode_hex(&Sha256::digest(b"outside-sentinel")),
             },
         )
         .await?;
@@ -3391,7 +3391,7 @@ async fn run(home: &Path) -> Result<()> {
 
 #[test]
 fn web_transport_contract() -> Result<()> {
-    if !support::test_support::isolated("web_transport_contract") {
+    if !support::test_support::isolated("web_transport::web_transport_contract") {
         return Ok(());
     }
     let home = PathBuf::from(std::env::var_os("HOME").context("isolated HOME missing")?);

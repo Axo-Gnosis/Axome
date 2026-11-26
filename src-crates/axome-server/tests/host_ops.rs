@@ -1,5 +1,5 @@
 //! Host operations run in scratch HOME child processes before constructing a runtime.
-mod support;
+use crate::support;
 
 use anyhow::{Context, Result};
 use axome_protocol::{
@@ -645,7 +645,7 @@ async fn activity_and_root(client: &RemoteClient, home: &Path) -> Result<()> {
 
 #[test]
 fn workbench_operations_over_paired_quic() -> Result<()> {
-    if !support::test_support::isolated("workbench_operations_over_paired_quic") {
+    if !support::test_support::isolated("host_ops::workbench_operations_over_paired_quic") {
         return Ok(());
     }
     let home = std::path::PathBuf::from(std::env::var_os("HOME").context("missing HOME")?);
@@ -685,7 +685,7 @@ fn workbench_operations_over_paired_quic() -> Result<()> {
 
 #[test]
 fn session_index_over_quic() -> Result<()> {
-    if !support::test_support::isolated("session_index_over_quic") {
+    if !support::test_support::isolated("host_ops::session_index_over_quic") {
         return Ok(());
     }
     let home = std::path::PathBuf::from(std::env::var_os("HOME").context("missing HOME")?);
@@ -797,8 +797,9 @@ fn session_index_over_quic() -> Result<()> {
 
 #[test]
 fn daemon_persists_presentation_sections_but_rejects_remotes() -> Result<()> {
-    if !support::test_support::isolated("daemon_persists_presentation_sections_but_rejects_remotes")
-    {
+    if !support::test_support::isolated(
+        "host_ops::daemon_persists_presentation_sections_but_rejects_remotes",
+    ) {
         return Ok(());
     }
     tokio::runtime::Builder::new_multi_thread()

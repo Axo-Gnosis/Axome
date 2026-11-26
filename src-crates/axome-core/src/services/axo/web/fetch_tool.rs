@@ -163,7 +163,7 @@ async fn save_spillover(
 ) -> Result<Option<String>, ToolError> {
     let mut hasher = Sha256::new();
     hasher.update(url.as_bytes());
-    let hex = format!("{:x}", hasher.finalize());
+    let hex = crate::encode_hex(&hasher.finalize());
     let host = Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))

@@ -31,7 +31,13 @@ struct Old {
     permalink: String,
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    use std::fmt::Write;
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 pub fn sync_bank(index: &mut Index, bank_dir: &Path) -> Result<SyncReport> {
     let bank_id = index.upsert_bank(bank_dir)?;

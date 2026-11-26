@@ -43,12 +43,13 @@ Plans and the user-facing reference live in dedicated files. Do not duplicate th
 
 ## Validation
 
-Use the narrowest relevant checks that exist today:
+Run Rust checks inside `nix develop` (so `mold`, `sccache`, and `cargo-nextest` are active). Use the narrowest relevant checks that exist today:
 
 - `bun run check`
 - `bun run build`
-- `cargo check`
-- `cargo test`
+- `cargo check --workspace --all-targets`
+- `cargo nextest run -p axome-core` or `cargo nextest run -p axome-server` for backend changes (avoids linking `src-tauri`, which `default-members` selects for bare `cargo test`; pass `--no-pager` to `cargo nextest list` in non-interactive shells)
+- `cargo nextest run --workspace` (or `cargo test --workspace`; `nextest` skips doctests)
 - `bun run app:build -- --debug`
 
 Do not claim lint/format/test commands exist if they are not defined in the current repo.

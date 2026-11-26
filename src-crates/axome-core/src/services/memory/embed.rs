@@ -83,7 +83,7 @@ pub async fn download(
                 );
                 if name == "model.safetensors" {
                     ensure!(
-                        format!("{:x}", hash.finalize()) == WEIGHTS_SHA256,
+                        crate::encode_hex(&hash.finalize()) == WEIGHTS_SHA256,
                         "{name}: SHA-256 mismatch"
                     );
                 }

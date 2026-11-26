@@ -16,8 +16,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 schemars = { version = "0.8", features = ["indexmap2"] }
 indexmap = { version = "2", features = ["serde"] }
-jsonc-parser = { version = "0.32", features = ["serde", "cst"] }
+jsonc-parser = { version = "0.34", features = ["serde", "cst"] }
+jsonschema = { version = "0.59.0", default-features = false }
 anyhow = "1"
+base64 = "0.23.1"
+sha2 = "0.11.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
@@ -38,7 +41,35 @@ axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
-playwright-rs = { version = "0.21", default-features = false, features = ["ring", "native-tls"] }
+playwright-rs = { version = "0.21", default-features = false, features = ["ring", "rustls-tls-webpki-roots"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = 0
+
+[profile.dev.package.candle-core]
+opt-level = 2
+
+[profile.dev.package.candle-nn]
+opt-level = 2
+
+[profile.dev.package.candle-transformers]
+opt-level = 2
+
+[profile.dev.package.gemm]
+opt-level = 2
+
+[profile.dev.package.tokenizers]
+opt-level = 2
+
+[profile.dev.package.ring]
+opt-level = 2
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 2
 
 # candle 0.11.1 re-reads /proc/cpuinfo on every CPU matmul when RAYON_NUM_THREADS is unset (~3-4x slower);
 # fork = 0.11.1 + https://github.com/huggingface/candle/pull/4067.

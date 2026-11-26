@@ -1,4 +1,4 @@
-mod common;
+use crate::common;
 
 use axome_core::{events::EventSink, Host};
 use axome_lib::host_events::DesktopEvent;
@@ -11,8 +11,12 @@ use tempfile::tempdir;
 /// stay runtime-free. Deliberately not a `#[tokio::test]`.
 #[test]
 fn router_constructs_without_a_tokio_runtime() -> anyhow::Result<()> {
+    let Some(_) =
+        common::isolated_home("router_startup::router_constructs_without_a_tokio_runtime")
+    else {
+        return Ok(());
+    };
     let temporary = tempdir()?;
-    common::isolate(temporary.path())?;
 
     let events: EventSink<DesktopEvent> = Arc::new(|_| Ok(()));
     let desktop = Arc::clone(&events);

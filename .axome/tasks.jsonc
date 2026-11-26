@@ -34,6 +34,20 @@
       "command": "bun run check",
       "icon": "check",
       "group": "build"
+    },
+    {
+      "id": "rust-check",
+      "label": "Rust Check",
+      "command": "cargo check --workspace --all-targets",
+      "icon": "check",
+      "group": "build"
+    },
+    {
+      "id": "rust-test",
+      "label": "Rust Test",
+      "command": "cargo nextest run --workspace",
+      "icon": "check",
+      "group": "test"
     }
   ]
 }

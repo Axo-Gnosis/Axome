@@ -1148,7 +1148,7 @@ fn compute_files_fingerprint(files: &[PathBuf]) -> Result<String> {
         hasher.update(mtime.to_string().as_bytes());
         hasher.update(b"\n");
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::encode_hex(&hasher.finalize()))
 }
 
 fn drop_source(conn: &Connection, pages: &Path, key: &str, slug: Option<&str>) -> Result<()> {
@@ -1274,7 +1274,7 @@ fn sanitize_slug(raw: &str) -> String {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::encode_hex(&Sha256::digest(bytes))
 }
 
 fn now_ms() -> i64 {

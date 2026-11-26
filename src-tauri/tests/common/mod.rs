@@ -5,16 +5,35 @@ use axome_server::{auth::append_authorized, serve, ServeOptions, ServerHandle};
 use serde_json::{json, Value};
 use std::{fs, path::Path, process::Command};
 
-// Each binary has one test: HOME/git remain isolated for its whole lifetime.
-pub fn isolate(root: &Path) -> anyhow::Result<()> {
-    let home = root.join("home");
-    let git_config = root.join("gitconfig");
-    fs::create_dir_all(&home)?;
-    fs::write(&git_config, "")?;
-    std::env::set_var("HOME", home);
-    std::env::set_var("GIT_CONFIG_GLOBAL", git_config);
-    std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
-    Ok(())
+// Each isolated test spawns its own subprocess so HOME/git remain isolated for its lifetime.
+pub fn isolated_home(test_path: &str) -> Option<std::path::PathBuf> {
+    const MARKER: &str = "AXOME_ISOLATED_TEST";
+    if std::env::var(MARKER).as_deref() == Ok(test_path) {
+        return Some(std::path::PathBuf::from(
+            std::env::var_os("HOME").expect("isolated HOME missing"),
+        ));
+    }
+    let root = tempfile::tempdir().expect("scratch home");
+    let home = root.path().join("home");
+    let git_config = root.path().join("gitconfig");
+    fs::create_dir_all(&home).expect("create scratch home");
+    fs::write(&git_config, "").expect("scratch git config");
+    let status = Command::new(std::env::current_exe().expect("test executable"))
+        .args(["--exact", test_path, "--nocapture"])
+        .env(MARKER, test_path)
+        .env("HOME", &home)
+        .env("GIT_CONFIG_GLOBAL", &git_config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("XDG_CACHE_HOME")
+        .status()
+        .expect("launch isolated test");
+    assert!(
+        status.success(),
+        "isolated test {test_path} failed: {status}"
+    );
+    None
 }
 
 pub fn init_repo(path: &Path) -> anyhow::Result<()> {
