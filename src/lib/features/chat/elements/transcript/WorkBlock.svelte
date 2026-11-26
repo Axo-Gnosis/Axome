@@ -4,51 +4,33 @@
   import Icon from '$lib/icons/Icon.svelte'
   import { Spinner } from '$lib/components/ui/progress'
   import { DisclosureChevron } from '$lib/components/ui/disclosure-chevron'
-  import * as Message from '$lib/features/chat/elements/message'
   import { formatCount } from '$lib/features/chat/format'
   import { chatShortcut } from '$lib/features/chat/keymap/bindings.svelte'
-  import { isOpen, type BlockView } from '$lib/features/chat/view'
+  import type { BlockView } from '$lib/features/chat/view'
   import { cn } from '$lib/utils/cn'
   import { disclose } from './disclose'
-  import { narrationTitle, workCounts, type TranscriptStep, type WorkSegment } from './groupSteps'
+  import { countsLabel, narrationTitle, workCounts, type TranscriptStep, type WorkSegment } from './groupSteps'
 
   let {
     segment,
     live,
-    pinned = false,
     bare = false,
-    expansion,
-    overrides,
+    open,
     onView,
-    render,
-    folderPath,
-    sessionId
+    render
   }: {
     segment: WorkSegment
-    /** The step being worked on: open, with a spinner. */
+    /** The step being worked on: drawn with a spinner. */
     live: boolean
-    /** A finished turn ended on this step: open by default so its narration is readable. */
-    pinned?: boolean
     /** The turn's summary header is this step's toggle; render the body only. */
     bare?: boolean
-    expansion: BlockView
-    overrides: Record<string, BlockView>
+    open: boolean
     onView: (id: string, view: BlockView) => void
     render: Snippet<[TranscriptStep]>
-    folderPath: string
-    sessionId: string | null
   } = $props()
 
-  const open = $derived(isOpen(overrides, segment.id, live || pinned ? 'preview' : expansion))
   const counts = $derived(workCounts(segment.steps))
-  const summary = $derived(
-    [
-      counts.calls ? formatCount(counts.calls, 'tool call') : '',
-      counts.thoughts ? formatCount(counts.thoughts, 'thought') : ''
-    ]
-      .filter(Boolean)
-      .join(' · ')
-  )
+  const summary = $derived(countsLabel(counts))
   const narration = $derived(segment.narration?.text ?? null)
   const title = $derived(narration === null ? null : narrationTitle(narration))
   // A one-line narration is fully shown by the wrapped title; a longer one renders in the body.
@@ -57,13 +39,6 @@
   const heading = $derived(open && long ? null : title)
   const cycleKey = $derived(chatShortcut('cycleDetails'))
 </script>
-
-{#snippet rail(steps: TranscriptStep[])}
-  <div class="relative flex min-w-0 flex-col gap-0.5">
-    <div aria-hidden="true" class="absolute inset-y-0 left-1.75 w-px bg-edge"></div>
-    {#each steps as step (step.id)}{@render render(step)}{/each}
-  </div>
-{/snippet}
 
 <div data-slot="work-block" data-view-id={bare ? undefined : segment.id} class="flex min-w-0 flex-col">
   {#if !bare}
@@ -95,10 +70,13 @@
   {/if}
   {#if open}
     <div data-disclose transition:disclose={{ duration: 150 }} class={cn('min-w-0 pb-1.5', !bare && 'pt-0.5')}>
-      {#if long && narration !== null}
-        <Message.Response text={narration} streaming={false} {folderPath} {sessionId} class="pb-2" />
+      {#if long && segment.narration}
+        <div class="pb-2">{@render render(segment.narration)}</div>
       {/if}
-      {@render rail(segment.steps)}
+      <div class="relative flex min-w-0 flex-col gap-0.5">
+        <div aria-hidden="true" class="absolute inset-y-0 left-1.75 w-px bg-edge"></div>
+        {#each segment.steps as step (step.id)}{@render render(step)}{/each}
+      </div>
     </div>
   {/if}
 </div>

@@ -59,6 +59,7 @@
   import WorkingIndicator from './WorkingIndicator.svelte'
   import { disclose } from './disclose'
   import {
+    countsLabel,
     groupSteps,
     hasCalls,
     segmentSteps,
@@ -138,23 +139,15 @@
   const foldOpen = $derived(
     turn.running || isOpen(overrides, foldId, !sole && turnIndex === turns.length - 1 ? 'preview' : expansion)
   )
-  const workSummary = $derived.by(() => {
-    let calls = 0
-    let thoughts = 0
-    for (const block of blocks) {
-      const counts = workCounts(block.steps)
-      calls += counts.calls
-      thoughts += counts.thoughts
-    }
-    return [
+  const workSummary = $derived(
+    [
       stepCount > 1 ? formatCount(stepCount, 'step') : '',
-      calls ? formatCount(calls, 'tool call') : '',
-      thoughts ? formatCount(thoughts, 'thought') : ''
+      countsLabel(workCounts(blocks.flatMap((block) => block.steps)))
     ]
       .filter(Boolean)
       .join(' · ')
-  })
-  // Moved from WorkBlock: what the live line says while a `wait` call blocks the turn.
+  )
+  // What the live line says while a `wait` call blocks the turn.
   const waiting = $derived.by(() => {
     const last = flow.at(-1)
     if (
@@ -347,17 +340,15 @@
 
 {#snippet item(segment: TranscriptSegment)}
   {#if segment.kind === 'work'}
+    {@const live = turn.running && segment === flow.at(-1)}
+    <!-- The live step, and the step a finished turn ended on, open by default. -->
     <WorkBlock
       {segment}
-      live={turn.running && segment === flow.at(-1)}
-      pinned={segment === pinned}
+      {live}
       bare={!turn.running && segment === sole}
-      {expansion}
-      {overrides}
+      open={isOpen(overrides, segment.id, live || segment === pinned ? 'preview' : expansion)}
       {onView}
       {render}
-      {folderPath}
-      {sessionId}
     />
   {:else}
     {@render render(segment)}

@@ -4,7 +4,7 @@
   import { firstLine } from '$lib/features/chat/format'
   import type { BlockView } from '$lib/features/chat/view'
   import { groupVerb, toolHeader, toolIcon } from '../tool/toolHeader'
-  import type { ToolGroupStep } from './groupSteps'
+  import { toolGroupFoldId, type ToolGroupStep } from './groupSteps'
   import RailRow from './RailRow.svelte'
   import ToolBlock from './ToolBlock.svelte'
 
@@ -30,8 +30,7 @@
     onOpenJob?: (ref?: string) => void
   } = $props()
 
-  // Group folding must not overwrite the first call's individual view.
-  const viewId = $derived(`tool-group:${group.id}`)
+  const viewId = $derived(toolGroupFoldId(group))
   const name = $derived(group.calls[0].name)
   const headers = $derived(group.calls.map((call) => toolHeader(call, folderPath)))
   const failed = $derived(group.calls.filter((call) => call.status === 'error').length)

@@ -17,7 +17,12 @@
   import type { BlockView } from '$lib/features/chat/view'
   import { Conversation } from '$lib/features/chat/elements/conversation'
   import { UserBlock, AgentBlock } from '$lib/features/chat/elements/transcript'
-  import { groupSteps, segmentSteps, turnFoldId } from '$lib/features/chat/elements/transcript/groupSteps'
+  import {
+    groupSteps,
+    segmentSteps,
+    toolGroupFoldId,
+    turnFoldId
+  } from '$lib/features/chat/elements/transcript/groupSteps'
   import BackgroundBand from '$lib/features/chat/elements/transcript/BackgroundBand.svelte'
   import RetryRow from '$lib/features/chat/elements/transcript/RetryRow.svelte'
   import {
@@ -240,7 +245,7 @@
           if (step.id !== stepId && !group) continue
           overrides[turnFoldId(turn.id)] = 'preview'
           overrides[segment.id] = 'preview'
-          if (group) overrides[`tool-group:${group.id}`] = 'preview'
+          if (group) overrides[toolGroupFoldId(group)] = 'preview'
           overrides[stepId] = 'preview'
           await tick()
           conversation?.jumpToView(stepId)

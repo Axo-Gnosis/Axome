@@ -1,5 +1,5 @@
 import type { ChatDeliverable } from '$lib/types/backend'
-import { firstLine } from '../../format'
+import { firstLine, formatCount } from '../../format'
 import { jobKind, resolveJob, type JobKind, type TranscriptJob } from '../../jobs'
 import { parseBashDetails } from '../tool/bashOutput'
 import { blockedToolResult } from '../tool/payload'
@@ -10,7 +10,7 @@ import type { Step, ToolStep } from '../../turns'
 export type ThoughtStep = { kind: 'thinking'; id: string; entryId: string | null; text: string; streaming: boolean }
 export type ToolGroupStep = { kind: 'toolGroup'; id: string; calls: ToolStep[] }
 export type ReceiptStep = { kind: 'receipt'; id: string; call: ToolStep }
-/** What a job did inside one work block; `member` names the teammate for team jobs. */
+/** What a job did inside one step; `member` names the teammate for team jobs. */
 export type JobEvent = { member: string | null } & (
   | { kind: 'spawn'; call: ToolStep }
   | { kind: 'send'; call: ToolStep; send: 'steer' | 'followUp' | 'mail' }
@@ -18,14 +18,14 @@ export type JobEvent = { member: string | null } & (
   | { kind: 'kill'; call: ToolStep; stopping: boolean }
   | { kind: 'deliverable'; item: ChatDeliverable }
 )
-/** Every event of one job within one work block, at the position of its first event. */
+/** Every event of one job within one step, at the position of its first event. */
 export type JobStep = {
   kind: 'job'
   id: string
   job: string
   target: JobKind
   events: JobEvent[]
-  /** A later work block of the same turn has events for this job too. */
+  /** A later step of the same turn has events for this job too. */
   continues: boolean
 }
 /** Background work the host did between model calls; adjacent ones share one band. */
@@ -138,9 +138,21 @@ export function workCounts(steps: TranscriptStep[]): { calls: number; thoughts: 
   return counts
 }
 
+/** "3 tool calls · 1 thought": what a stretch of work did; empty when it did neither. */
+export function countsLabel({ calls, thoughts }: { calls: number; thoughts: number }): string {
+  return [calls ? formatCount(calls, 'tool call') : '', thoughts ? formatCount(thoughts, 'thought') : '']
+    .filter(Boolean)
+    .join(' · ')
+}
+
 /** The view id of a turn's summary fold. */
 export function turnFoldId(turnId: string): string {
   return `turn-work:${turnId}`
+}
+
+/** The view id of a tool group's fold: the group shares its first call's id, and folding it must not overwrite that call's view. */
+export function toolGroupFoldId(group: ToolGroupStep): string {
+  return `tool-group:${group.id}`
 }
 
 /**
