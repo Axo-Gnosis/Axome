@@ -50,6 +50,11 @@ export function invokedCommand<K extends ChatCommand['kind']>(
   return command?.kind === kind ? (command as Extract<ChatCommand, { kind: K }>) : null
 }
 
+/** Whether pasted text is drawn collapsed (a chip, a folded region) rather than inline. */
+export function isLargePaste(text: string): boolean {
+  return text.length > 2000 || text.split('\n').length > 20
+}
+
 function reference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`
 }
@@ -75,8 +80,9 @@ export function partsText(parts: ChatPart[]): string {
 export function partLabel(part: ChatPart): string {
   switch (part.type) {
     case 'text':
+      return part.text.split('\n', 1)[0]
     case 'paste':
-      return part.text.split('\n', 1)[0] || 'Pasted text'
+      return 'Pasted text'
     case 'file':
       return part.path.replace(/\/+$/, '').split('/').pop() || part.path
     case 'saved':

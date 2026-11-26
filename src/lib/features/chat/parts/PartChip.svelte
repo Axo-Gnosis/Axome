@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { File01Icon, Folder01Icon, Image01Icon } from '@hugeicons/core-free-icons'
+  import { File01Icon } from '@hugeicons/core-free-icons'
   import Icon from '$lib/icons/Icon.svelte'
+  import FileIcon from '$lib/icons/FileIcon.svelte'
   import { Button } from '$lib/components/ui/button'
   import { cn } from '$lib/utils/cn'
   import { chipVariants } from '$lib/components/ui/chip'
@@ -8,13 +9,9 @@
   import { backend } from '$lib/api/backend'
   import { platform, type AssetHandle } from '$lib/platform'
   import { basename, dirname, splitRemotePath } from '$lib/utils/paths'
-  import {
-    openFileLocation,
-    openLink as openChatLink,
-    resolveFileLocationPath
-  } from '$lib/features/workbench/links/openLink'
-  import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
+  import { resolveFileLocationPath } from '$lib/features/workbench/links/openLink'
   import { imageMime, isImagePart } from './image'
+  import { openPart } from './open'
   import { partLabel } from './parts'
 
   let {
@@ -30,8 +27,9 @@
   let thumbnail = $state<string | null>(null)
   let imageError = $state(false)
   const label = $derived(partLabel(part))
-  const icon = $derived(
-    isImagePart(part) ? Image01Icon : part.type === 'file' && part.path.endsWith('/') ? Folder01Icon : File01Icon
+  // Every part that names a file takes the file tree's icon; a paste keeps the generic one.
+  const fileName = $derived(
+    part.type === 'file' ? part.path : part.type === 'saved' ? part.url : part.type === 'content' ? part.name : null
   )
   const lines = $derived(part.type === 'paste' ? part.text.split('\n').length : 0)
   const chipClass = cn(chipVariants(), 'in-data-selected:bg-selection in-data-selected:text-bright')
@@ -73,11 +71,7 @@
 
   function activate() {
     if (part.type === 'paste') expanded = !expanded
-    else if (part.type === 'file')
-      void (isSchemeUrl(part.path)
-        ? openChatLink(part.path, owner)
-        : openFileLocation(part.path, null, owner.folderPath))
-    else if (part.type === 'saved') void openChatLink(part.url, owner)
+    else openPart(part, owner)
   }
 </script>
 
@@ -91,9 +85,16 @@
       class="me-1 inline-block size-4 rounded-sm object-cover align-text-bottom"
       onerror={() => (imageError = true)}
     />
+  {:else if fileName !== null}
+    <FileIcon
+      filename={fileName}
+      folder={part.type === 'file' && part.path.endsWith('/')}
+      size={12}
+      class="me-1 inline-block align-middle"
+    />
   {:else}
-    <Icon {icon} size={12} class="me-1 inline-block align-middle" />
-  {/if}{label}{#if lines}<span class="ms-1 text-subtle">{lines} lines</span>{/if}
+    <Icon icon={File01Icon} size={12} class="me-1 inline-block align-middle" />
+  {/if}{label}{#if lines}<span class="ms-1 text-subtle">· {lines} lines</span>{/if}
 {/snippet}
 
 {#if interactive}

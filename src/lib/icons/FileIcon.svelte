@@ -14,16 +14,18 @@
     filename,
     folder = false,
     expanded = false,
-    size = 14
+    size = 14,
+    class: className = ''
   }: {
     filename: string
     folder?: boolean
     expanded?: boolean
     size?: number
+    class?: string
   } = $props()
 
   let name = $derived(folder ? (expanded ? 'folder_open' : 'folder') : resolveFileIcon(filename))
   let src = $derived(iconUrls[`../assets/bearded/${name}.svg`] ?? iconUrls['../assets/bearded/file.svg'])
 </script>
 
-<img {src} width={size} height={size} alt="" class="shrink-0" style="min-width: {size}px" />
+<img {src} width={size} height={size} alt="" class="shrink-0 {className}" style="min-width: {size}px" />

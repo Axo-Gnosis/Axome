@@ -7,6 +7,8 @@
     group: string
     label: string
     icon?: IconData
+    /** A file row: drawn with the file tree's icon instead of `icon`. */
+    file?: { name: string; folder: boolean }
     /** Field names shown as pills after the label. */
     fields?: string[]
     detail?: string
@@ -21,6 +23,7 @@
 
 <script lang="ts">
   import Icon from '$lib/icons/Icon.svelte'
+  import FileIcon from '$lib/icons/FileIcon.svelte'
   import {
     PaletteFooter,
     commandGroupHeadingVariants,
@@ -91,7 +94,11 @@
             }}
             onclick={() => onPick(index)}
           >
-            {#if item.icon}<Icon icon={item.icon} />{/if}
+            {#if item.file}<FileIcon
+                filename={item.file.name}
+                folder={item.file.folder}
+                size={14}
+              />{:else if item.icon}<Icon icon={item.icon} />{/if}
             <span class="shrink-0">{item.label}</span>
             {#if item.origin}<span class="shrink-0 font-mono text-xs text-muted">{item.origin}</span>{/if}
             {#each item.fields ?? [] as field (field)}
