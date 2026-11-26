@@ -460,6 +460,7 @@
             <PromptInput
               bind:this={composer}
               bind:parts={controller.draft}
+              textView
               {owner}
               models={available}
               extensions={controller.extensions}

@@ -19,6 +19,8 @@ export interface KeyScope {
   /** Also receive strokes a focused text field keeps; the handlers decide what typing still owns. */
   text?: boolean
   commands?: Partial<Record<ChatCommandId, KeyHandler>>
+  /** Commands whose keys this scope's own widget handles: dispatch ends here and the key stays native. */
+  native?: readonly ChatCommandId[]
   /** Printable keys no command claimed, typed outside any text field. */
   type?: (key: string) => boolean | void
   /** Where dispatch starts while focus rests on the scope element itself (the transcript's highlight). */
@@ -68,6 +70,7 @@ export class ChatKeys {
     for (const scope of chain) {
       if (context.reserved && !scope.text) continue
       for (const name of commands) {
+        if (scope.native?.includes(name)) return
         const handler = scope.commands?.[name]
         if (handler && handler(event, context) !== false) return consume(event)
       }

@@ -27,6 +27,8 @@ export const CHAT_COMMANDS = {
   newline: { label: 'Insert Newline', context: 'input', keys: ['Shift+Enter'] },
   complete: { label: 'Complete Suggestion', context: 'input', keys: ['Tab'] },
   stop: { label: 'Stop the Run', context: 'input', keys: ['Escape'] },
+  textView: { label: 'Toggle Text View', context: 'input', keys: ['Alt+G'] },
+  textSend: { label: 'Send From Text View', context: 'input', keys: ['Ctrl+Enter'] },
 
   previous: { label: 'Previous Item', context: 'nav', keys: ['ArrowUp'] },
   next: { label: 'Next Item', context: 'nav', keys: ['ArrowDown'] },

@@ -30,3 +30,8 @@ declare module 'monaco-editor/esm/vs/editor/standalone/browser/standaloneService
 declare module 'monaco-editor/esm/vs/platform/keybinding/common/keybinding.js' {
   export const IKeybindingService: unknown
 }
+
+declare module 'monaco-editor/esm/vs/basic-languages/markdown/markdown.js' {
+  export const conf: import('monaco-editor').languages.LanguageConfiguration
+  export const language: import('monaco-editor').languages.IMonarchLanguage
+}

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { mount, unmount, onMount, untrack, type Snippet } from 'svelte'
+  import { mount, unmount, onMount, tick, untrack, type Snippet } from 'svelte'
   import { EditorState, Plugin, TextSelection } from 'prosemirror-state'
   import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
   import { keymap } from 'prosemirror-keymap'
-  import { history, undo, redo } from 'prosemirror-history'
+  import { closeHistory, history, undo, redo } from 'prosemirror-history'
   import { deleteSelection, selectAll } from 'prosemirror-commands'
   import type { Node } from 'prosemirror-model'
   import { Button, IconButton } from '$lib/components/ui/button'
@@ -55,6 +55,10 @@
   import { getErrorMessage } from '$lib/utils/client-error'
   import { blobBase64, fileReference, onHost, readAttachment, uniqueName } from './attachments'
   import { outsidePrefix, outsideEntries, outsideMentions, projectMentionPaths, projectMentions } from './mentions'
+  import { cn } from '$lib/utils/cn'
+  import { KeyHint } from '../key-hint'
+  import PromptTextView from './PromptTextView.svelte'
+  import { offsetPosition } from './textForm'
 
   const mentionAt = /(?:^|\s)@([^\s]*)$/
 
@@ -79,7 +83,8 @@
     keywordMatches,
     start,
     end,
-    hint = null
+    hint = null,
+    textView = false
   }: {
     parts?: ChatPart[]
     disabled?: boolean
@@ -108,11 +113,18 @@
     end?: Snippet
     /** Shown above the input as the last fallback while the draft has content. */
     hint?: { title: string; text: string } | null
+    /** Offer the Monaco text view (Toggle Text View) for this composer. */
+    textView?: boolean
   } = $props()
   const id = $props.id()
   const keys = getChatKeys()
   let host: HTMLDivElement
   let view: EditorView | undefined
+  // The open text view: where its caret starts, and whether the paste there opens unfolded.
+  let textOpen = $state.raw<{ caret: number; unfold: boolean } | null>(null)
+  let editor = $state<PromptTextView>()
+  // Lines of the paste that just became a chip; the next edit clears it.
+  let pasteHint = $state<number | null>(null)
   let lastParts: ChatPart[] = []
   let validation = $state.raw<{ message: string; link?: ExtensionSettingsTarget } | null>(null)
   const alertMessage = $derived(validation?.message || blocked)
@@ -220,7 +232,7 @@
         })
     return []
   })
-  const open = $derived(!disabled && !!query)
+  const open = $derived(!disabled && !textOpen && !!query)
   // What the line above the input explains: the argument under the caret or the command being typed.
   const context = $derived.by(() => {
     if (line?.slot) {
@@ -244,7 +256,7 @@
     return null
   })
   function getParts(): ChatPart[] {
-    return view ? documentParts(view.state.doc) : parts
+    return view && !textOpen ? documentParts(view.state.doc) : parts
   }
   // A new draft starts a new history, so a sent message's attachments aren't kept for undo.
   function load(next: ChatPart[]) {
@@ -265,6 +277,7 @@
     setParts([])
   }
   export function focus(insert?: string): void {
+    if (textOpen) return editor?.focus(insert)
     if (disabled || !view) return
     view.focus()
     if (insert) view.dispatch(view.state.tr.insertText(insert))
@@ -283,6 +296,7 @@
       notify.error('Attachment too large', CONTENT_LIMIT_MESSAGE)
       return
     }
+    if (textOpen) return editor?.insertPart(part)
     const { from, to } = view.state.selection
     if (part.type === 'text') view.dispatch(view.state.tr.insertText(part.text, from, to).scrollIntoView())
     else placeChip(part, from, to)
@@ -295,8 +309,34 @@
       tr.insertText(' ', from + 1)
     view!.dispatch(tr.scrollIntoView())
   }
+  function openText(position = view?.state.selection.from ?? 1, unfold = false): boolean {
+    if (!textView || disabled || !view || textOpen) return false
+    // The same serialization the text view shows, so the offset is the caret's place in its text.
+    const before = view.state.doc.textBetween(1, position, '', (leaf) => partsText([leaf.attrs.part as ChatPart]))
+    query = null
+    pasteHint = null
+    textOpen = { caret: before.length, unfold }
+    return true
+  }
+  /** Back to the chat input: the session's edits land as one history step, so one Undo reverts them all. */
+  function closeText() {
+    if (!textOpen || !view) return
+    const caret = editor?.caret() ?? textOpen.caret
+    textOpen = null
+    const next = partsDocument(parts)
+    const tr = view.state.tr
+    if (!next.eq(view.state.doc))
+      closeHistory(tr.replaceWith(1, view.state.doc.content.size - 1, next.firstChild!.content))
+    tr.setSelection(TextSelection.create(tr.doc, Math.min(offsetPosition(parts, caret), tr.doc.content.size - 1)))
+    view.dispatch(tr.scrollIntoView())
+    // Close the step after it too, so text typed right away is its own Undo.
+    view.dispatch(closeHistory(view.state.tr))
+    // The chat input is hidden until this state change renders.
+    void tick().then(() => view?.focus())
+  }
   async function submit(followUp = false): Promise<void> {
     if (disabled || submitting) return
+    closeText()
     validation = null
     const fail = (message: string, name: string | null, caret: number, link?: ExtensionSettingsTarget) => {
       validation = link ? { message, link } : { message }
@@ -613,7 +653,8 @@
       stop: () => {
         if (open || !onStop) return false
         onStop()
-      }
+      },
+      textView: () => openText() || false
     }
   }
   /**
@@ -623,7 +664,7 @@
   function editChip(pos: number, node: Node): boolean {
     if (disabled) return false
     const part = node.attrs.part as ChatPart
-    if (part.type === 'paste') return false // becomes openText(pos, true) with the text view (step 9)
+    if (part.type === 'paste') return openText(pos, true)
     if (part.type !== 'file') return false
     const typed = partsText([part])
     const start = pos + typed.indexOf(part.path)
@@ -665,8 +706,10 @@
     }
     const text = data.getData('text/plain').replace(/\r\n?/g, '\n')
     if (text) {
-      if (isLargePaste(text)) insertPart({ type: 'paste', text })
-      else focus(text)
+      if (isLargePaste(text)) {
+        insertPart({ type: 'paste', text })
+        if (textView) pasteHint = text.split('\n').length
+      } else focus(text)
     }
   }
   onMount(() => {
@@ -701,6 +744,7 @@
       editable: () => !disabled,
       dispatchTransaction(transaction) {
         if (transaction.docChanged) {
+          pasteHint = null
           validation = null
           invalid = null
           staleKeywords()
@@ -807,6 +851,7 @@
     if (view && next !== lastParts) {
       lastParts = next
       if (!partsDocument(next).eq(view.state.doc)) load(next)
+      editor?.load(next)
     }
   })
   $effect(() => {
@@ -854,7 +899,7 @@
       onPick={(index) => choose(index)}
     />
   {/if}
-  {#if context || alertMessage}
+  {#if context || alertMessage || pasteHint}
     <div class="flex min-w-0 items-baseline gap-2 border-b border-edge px-4 py-2 text-sm">
       {#if alertMessage}
         <span role="alert" class="truncate text-danger">{alertMessage}</span>
@@ -862,6 +907,11 @@
           {@const link = validation.link}
           <Button variant="text" size="xs" onclick={() => openExtensionSettings(link)}>Open Extensions</Button>
         {/if}
+      {:else if pasteHint}
+        <span class="min-w-0 truncate text-muted">{pasteHint} lines pasted as a chip</span>
+        <span class="flex shrink-0 items-center gap-1.5 text-muted"
+          ><KeyHint keys={chatShortcut('textView')} /> edit as text</span
+        >
       {:else if context}
         <span class="shrink-0 font-medium text-bright">{context.title}</span>
         {#if context.note}<span class="shrink-0 text-xs text-subtle">{context.note}</span>{/if}
@@ -869,7 +919,29 @@
       {/if}
     </div>
   {/if}
-  <div class="relative">
+  {#if textOpen}
+    <PromptTextView
+      bind:this={editor}
+      {parts}
+      open={textOpen}
+      {owner}
+      {disabled}
+      {running}
+      canFollowUp={!!onFollowUp}
+      onParts={(next) => {
+        validation = null
+        invalid = null
+        // Read back: a bound $state target stores a proxy, and the sync effect compares identity.
+        parts = next
+        lastParts = parts
+      }}
+      onSend={(followUp) => void submit(followUp)}
+      onClose={closeText}
+      onFiles={(data) =>
+        void receive(data).catch(() => notify.error('Paste failed', 'Could not read clipboard content.'))}
+    />
+  {/if}
+  <div class={cn('relative', textOpen && 'hidden')}>
     <div bind:this={host} {@attach keys.scope(() => scope)}></div>
     {#if !parts.length}<span class="pointer-events-none absolute top-3 left-4 text-base text-subtle">{placeholder}</span
       >{/if}
@@ -881,7 +953,7 @@
       <IconButton
         size="md"
         tooltip={sendMode === 'send' ? 'Send' : sendMode === 'steer' ? 'Steer' : 'Follow-up'}
-        shortcut={chatShortcut(sendMode === 'followUp' ? 'followUp' : 'send')}
+        shortcut={chatShortcut(sendMode === 'followUp' ? 'followUp' : textOpen ? 'textSend' : 'send')}
         tooltipSide="top"
         disabled={!canSend}
         class={canSend ? 'bg-accent-dim text-ground hover:bg-accent hover:text-ground' : ''}

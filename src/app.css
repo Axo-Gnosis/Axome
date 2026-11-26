@@ -358,6 +358,28 @@
   min-height: 80px;
 }
 
+/* Composer text view (PromptTextView): it sits on the composer's surface, not the editor ground. */
+[data-slot='prompt-text-view'] .monaco-editor {
+  --vscode-editor-background: var(--color-surface);
+  --vscode-editorGutter-background: var(--color-surface);
+}
+
+.monaco-editor .axome-prompt-ref {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.monaco-editor .axome-prompt-paste {
+  margin-left: 5px;
+  border-left: 2px solid var(--color-edge-strong);
+}
+
+.monaco-editor .axome-prompt-paste-label {
+  color: var(--color-subtle);
+  font-family: var(--font-sans);
+}
+
 /* Monaco's built-in diff hunk toolbar uses VS Code workbench variables that
    standalone Monaco does not provide. Define them here and tighten the action
    bar so the gutter divider breaks cleanly around the buttons. */
