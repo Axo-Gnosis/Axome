@@ -103,9 +103,11 @@ impl WebTools {
         }
         if cfg.docs.enabled {
             let shared = Arc::clone(self);
-            tools.push(HostTool::direct(Arc::new(move |st: &Arc<SessionTools>| {
-                Arc::new(SearchDocsTool::new(Arc::clone(&shared), Arc::clone(st)))
-            })));
+            tools.push(HostTool::deferred(Arc::new(
+                move |st: &Arc<SessionTools>| {
+                    Arc::new(SearchDocsTool::new(Arc::clone(&shared), Arc::clone(st)))
+                },
+            )));
         }
         tools
     }

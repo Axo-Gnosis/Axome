@@ -977,7 +977,18 @@ export type AxoQueueMode = 'all' | 'one-at-a-time'
 export type AxoDevShellMode = 'off' | 'direnv' | 'nix'
 export type AxoProjectAccess = 'ignore' | 'read' | 'trust'
 export type AxoSummaryRequest = 'live' | 'separate'
-export type AxoContextFiles = boolean | Record<string, boolean>
+export type AxoContextFiles = boolean | Record<string, boolean> | 'nested'
+export type AxoCacheTtl = '5m' | '1h'
+export type AxoCacheWarming = 'off' | 'streaming' | 'idle'
+
+export interface AxoCacheTtlSettings {
+  root: AxoCacheTtl | null
+  child: AxoCacheTtl
+}
+
+export interface AxoReadSettings {
+  outlineMinBytes: number
+}
 
 export interface AxoBashSettings {
   devShell: AxoDevShellMode
@@ -986,6 +997,7 @@ export interface AxoBashSettings {
   devShellTimeoutMs: number
   ci: boolean
   promoteAfterMs: number
+  blockToolViews: boolean
 }
 
 export interface AxoAskSettings {
@@ -1071,6 +1083,8 @@ export interface AxoSettings {
   modelRoles: Record<string, string>
   defaultThinkingLevel: ChatThinking
   serviceTier: AxoServiceTierSettings
+  cacheTtl: AxoCacheTtlSettings
+  cacheWarming: AxoCacheWarming
   homeAgentsDir: boolean
   steeringMode: AxoQueueMode
   followUpMode: AxoQueueMode
@@ -1079,6 +1093,7 @@ export interface AxoSettings {
   extendedContext: boolean
   bash: AxoBashSettings
   ask: AxoAskSettings
+  read: AxoReadSettings
   project: AxoProjectSettings
   compaction: AxoCompactionSettings
   retry: AxoRetrySettings

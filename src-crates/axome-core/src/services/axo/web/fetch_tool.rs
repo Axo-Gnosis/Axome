@@ -63,7 +63,7 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Read a web page as clean Markdown via extraction proxies. Optional focus narrows extraction to a specific question; oversized pages save full text to local://web/ for follow-up read or grep."
+        "Read a web page as clean Markdown via extraction proxies. Optional focus narrows extraction to a specific question and may return excerpts only; oversized or excerpted pages save full text to local://web/ for follow-up read or grep."
     }
 
     fn parameters(&self) -> &Value {
@@ -115,25 +115,30 @@ impl Tool for WebFetchTool {
         .await
         .map_err(ToolError)?;
 
-        let total_chars = extracted.markdown.chars().count();
-        let total_lines = extracted.markdown.lines().count();
-        let total_bytes = extracted.markdown.len();
+        // A focused Parallel fetch inlines excerpts and keeps the full page for the spill file.
+        let focused = extracted.full.is_some();
+        let page = extracted.full.as_deref().unwrap_or(&extracted.markdown);
+        let total_lines = page.lines().count();
+        let total_bytes = page.len();
+        let truncated = focused || extracted.markdown.chars().count() > INLINE_CHAR_LIMIT;
 
-        let (text, saved_local_url, truncated) = if total_chars > INLINE_CHAR_LIMIT {
-            let local_url =
-                save_spillover(&self.session_tools, parsed.as_str(), &extracted.markdown).await?;
+        let (text, saved_local_url) = if truncated {
+            let saved = save_spillover(&self.session_tools, parsed.as_str(), page).await;
             let preview: String = extracted.markdown.chars().take(INLINE_CHAR_LIMIT).collect();
-            let note = match &local_url {
-                Some(u) => format!(
-                    "{preview}\n\n…\n[Full page saved to {u} ({total_lines} lines, {total_bytes} bytes); use read with offset/limit or grep to inspect more.]"
-                ),
-                None => format!(
-                    "{preview}\n\n…\n[Truncated at {INLINE_CHAR_LIMIT} characters ({total_lines} lines total).]"
-                ),
+            let lead = if focused {
+                "Focused excerpts only".to_owned()
+            } else {
+                format!("Truncated at {INLINE_CHAR_LIMIT} characters")
             };
-            (note, local_url, true)
+            let note = match &saved {
+                Ok(u) => format!(
+                    "[{lead}. Full page saved to {u} ({total_lines} lines, {total_bytes} bytes); read ranges with a line selector (path:N-M) or grep to inspect more.]"
+                ),
+                Err(reason) => format!("[{lead}; the full page could not be saved: {reason}.]"),
+            };
+            (format!("{preview}\n\n…\n{note}"), saved.ok())
         } else {
-            (extracted.markdown, None, false)
+            (extracted.markdown, None)
         };
 
         let details = json!({
@@ -156,11 +161,8 @@ impl Tool for WebFetchTool {
     }
 }
 
-async fn save_spillover(
-    tools: &SessionTools,
-    url: &str,
-    markdown: &str,
-) -> Result<Option<String>, ToolError> {
+/// Saves the full page to `local://web/`; the error explains why it could not be saved.
+async fn save_spillover(tools: &SessionTools, url: &str, markdown: &str) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(url.as_bytes());
     let hex = crate::encode_hex(&hasher.finalize());
@@ -180,24 +182,25 @@ async fn save_spillover(
         .collect::<String>();
     let slug = format!("{}-{}", host.trim_matches('-'), &hex[..10]);
     let local_url = format!("local://web/{slug}.md");
+    const NOT_WRITABLE: &str = "local:// is not a writable file scheme";
     let Some(parsed) = tools.schemes.exact(&local_url) else {
-        return Ok(None);
+        return Err(NOT_WRITABLE.into());
     };
-    match tools.schemes.resolve(&parsed).await? {
+    match tools.schemes.resolve(&parsed).await.map_err(|e| e.0)? {
         Target::File {
             path,
             writable: true,
         } => {
             if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    ToolError(format!("failed to create {}: {e}", parent.display()))
-                })?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
             }
             tokio::fs::write(&path, markdown.as_bytes())
                 .await
-                .map_err(|e| ToolError(format!("failed to write {}: {e}", path.display())))?;
-            Ok(Some(local_url))
+                .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+            Ok(local_url)
         }
-        _ => Ok(None),
+        _ => Err(NOT_WRITABLE.into()),
     }
 }

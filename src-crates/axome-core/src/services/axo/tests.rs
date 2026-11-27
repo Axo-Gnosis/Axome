@@ -1380,10 +1380,31 @@ async fn stale_stream_detach_keeps_replacement_subscriber() {
     wait_until(|| fixture.service.loaded() == 0).await;
 }
 
+/// Paths of keys in `axo` (an `axo::Settings` JSON value) that `mirror` lacks; Axome-only keys are allowed.
+fn missing_keys(axo: &Value, mirror: &Value, path: &str, out: &mut Vec<String>) {
+    let (Value::Object(axo), Value::Object(mirror)) = (axo, mirror) else {
+        return;
+    };
+    for (key, value) in axo {
+        let path = format!("{path}.{key}");
+        match mirror.get(key) {
+            Some(m) => missing_keys(value, m, &path, out),
+            None => out.push(path),
+        }
+    }
+}
+
 #[test]
 fn settings_mirror_defaults_match_axo() {
     let mirrored = serde_json::to_value(axome_protocol::axo_settings::AxoSettings::default())
         .expect("Axome settings serialize");
+    let axo_value = serde_json::to_value(axo::Settings::default()).expect("axo settings serialize");
+    let mut missing = Vec::new();
+    missing_keys(&axo_value, &mirrored, "", &mut missing);
+    assert!(
+        missing.is_empty(),
+        "axo settings missing from AxoSettings: {missing:?}"
+    );
     let settings = serde_json::from_value::<axo::Settings>(mirrored)
         .expect("Axome settings deserialize as axo settings");
     assert_eq!(settings, axo::Settings::default());
@@ -2505,8 +2526,8 @@ async fn search_docs_indexes_llms_txt_and_doc_scheme_resolves_live_and_closed() 
     let fixture = Fixture::new(vec![
         ScriptedTurn::Reply(reply_tool_calls(&[(
             "docs_1",
-            "search_docs",
-            json!({"query": "ClientBuilder timeout", "source": llms_url}),
+            "call",
+            json!({"tool": "search_docs", "args": {"query": "ClientBuilder timeout", "source": llms_url}}),
         )])),
         ScriptedTurn::Reply(reply_text("found timeout docs")),
     ])

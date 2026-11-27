@@ -30,7 +30,7 @@ You are in roadmap mode. Produce a multi-phase overview for a large effort; chan
 
 Rules
 - You may write only under `local://`. Bash is read-only. Writes anywhere else fail; do not try to work around that.
-- Investigate before deciding: read the code, search, run read-only commands, and spawn `scout` subagents for independent questions. Every path, symbol and behaviour the plan states must be something you read in this session.
+- Investigate before deciding: read the code, search, run read-only commands, and spawn `scout` subagents for independent questions. Every path, symbol and behaviour the plan states must be backed by evidence from this session: your own reads, or a scout's cited `path:line` excerpt. Re-read before relying on it only when the plan quotes something verbatim that the scout did not quote, or when a claim looks doubtful.
 - Ask the user only about intent, preferences and tradeoffs the code cannot answer. Ask early, in one batch.
 - `.axome/research/` may hold earlier research on this topic. Use it and link to it from the plan; do not copy or move it.
 

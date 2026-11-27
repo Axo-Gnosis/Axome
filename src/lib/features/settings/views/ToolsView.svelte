@@ -125,6 +125,15 @@
   />
 {/snippet}
 
+<SettingsSection title="Read">
+  <AxoNumberRow
+    {fields}
+    path={['read', 'outlineMinBytes']}
+    label={'Outline code files from (bytes, 0 = off)'}
+    value={settings?.read.outlineMinBytes ?? null}
+  />
+</SettingsSection>
+
 <SettingsSection title="Bash">
   <AxoChoiceRow
     {fields}
@@ -169,6 +178,13 @@
     label={'Background after (ms)'}
     value={settings?.bash.promoteAfterMs ?? null}
   />
+  <AxoToggleRow
+    {fields}
+    path={['bash', 'blockToolViews']}
+    label={'Block tool-equivalent views'}
+    description="Refuse a bash command that only views or searches files; the error names the read or grep call to use."
+    checked={settings?.bash.blockToolViews ?? false}
+  />
 </SettingsSection>
 
 <SettingsSection title="Subagents">
@@ -212,17 +228,23 @@
   </SettingRow>
   <SettingRow
     label="Context files"
-    description={settings && typeof settings.subagents.contextFiles !== 'boolean'
-      ? 'A file-specific map is configured. Choosing Off or On replaces it.'
+    description={settings && typeof settings.subagents.contextFiles === 'object'
+      ? 'A file-specific map is configured. Choosing an option replaces it.'
       : undefined}
   >
     <Select
-      value={settings?.subagents.contextFiles === false ? 'off' : 'on'}
+      aria-label="Subagent context files"
+      value={settings?.subagents.contextFiles === false
+        ? 'off'
+        : (settings?.subagents.contextFiles ?? 'nested') === 'nested'
+          ? 'nested'
+          : 'on'}
       disabled={!settings}
-      onValueChange={(next) => fields.save(['subagents', 'contextFiles'], next === 'on')}
+      onValueChange={(next) => fields.save(['subagents', 'contextFiles'], next === 'nested' ? 'nested' : next === 'on')}
       items={[
         { value: 'off', label: 'Off' },
-        { value: 'on', label: 'On' }
+        { value: 'nested', label: 'Nested only' },
+        { value: 'on', label: 'Same as parent' }
       ]}
     />
   </SettingRow>

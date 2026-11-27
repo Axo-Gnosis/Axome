@@ -29,11 +29,15 @@ const FRONTMATTER_SCHEMA: Readonly<Record<FrontmatterKind, Readonly<Record<strin
       description: 'Root persona, spawned agent, or both (the default).',
       values: ['root', 'subagent', 'any']
     },
+    hidden: {
+      description: "Leaves the agent out of the spawn tool's listing; spawning by name and team membership still work.",
+      boolean: true
+    },
     model: { description: 'A model selector (`[@role | provider/model][:thinking]`).' },
     tools: { description: 'Tool allowlist over built-in and host tools; absent keeps every tool.' },
     contextFiles: {
       description:
-        '`false` disables context files and a map overrides names in `settings.contextFiles`; absent keeps the setting.'
+        '`"nested"` loads no startup files and attaches files below the project root on first touch; `false` disables context files; a map overrides names in `settings.contextFiles`; absent keeps the setting (`subagents.contextFiles`, default `"nested"`, for spawned agents).'
     },
     sections: { description: 'Prompt sections by name: `false` removes the section, `true` changes nothing.' },
     output: {

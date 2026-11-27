@@ -20,6 +20,8 @@ pub struct AxoSettings {
     pub model_roles: IndexMap<String, String>,
     pub default_thinking_level: ChatThinking,
     pub service_tier: AxoServiceTierSettings,
+    pub cache_ttl: AxoCacheTtlSettings,
+    pub cache_warming: AxoCacheWarming,
     pub home_agents_dir: bool,
     pub steering_mode: AxoQueueMode,
     pub follow_up_mode: AxoQueueMode,
@@ -28,6 +30,7 @@ pub struct AxoSettings {
     pub extended_context: bool,
     pub bash: AxoBashSettings,
     pub ask: AxoAskSettings,
+    pub read: AxoReadSettings,
     pub project: AxoProjectSettings,
     pub compaction: AxoCompactionSettings,
     pub retry: AxoRetrySettings,
@@ -49,6 +52,8 @@ impl Default for AxoSettings {
             model_roles: IndexMap::new(),
             default_thinking_level: ChatThinking::Medium,
             service_tier: AxoServiceTierSettings::default(),
+            cache_ttl: AxoCacheTtlSettings::default(),
+            cache_warming: AxoCacheWarming::default(),
             home_agents_dir: false,
             steering_mode: AxoQueueMode::All,
             follow_up_mode: AxoQueueMode::OneAtATime,
@@ -66,6 +71,7 @@ impl Default for AxoSettings {
             extended_context: false,
             bash: AxoBashSettings::default(),
             ask: AxoAskSettings::default(),
+            read: AxoReadSettings::default(),
             project: AxoProjectSettings::default(),
             compaction: AxoCompactionSettings::default(),
             retry: AxoRetrySettings::default(),
@@ -82,6 +88,32 @@ impl Default for AxoSettings {
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct AxoServiceTierSettings {
     pub on_model_change: AxoTierOnModelChange,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoCacheTtlSettings {
+    /// `None` picks 1h on subscription Anthropic routes, 5m otherwise.
+    pub root: Option<AxoCacheTtl>,
+    pub child: AxoCacheTtl,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AxoCacheTtl {
+    #[default]
+    #[serde(rename = "5m")]
+    Short,
+    #[serde(rename = "1h")]
+    Long,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AxoCacheWarming {
+    Off,
+    Streaming,
+    #[default]
+    Idle,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -135,6 +167,14 @@ pub enum AxoSummaryRequest {
 pub enum AxoContextFiles {
     Switch(bool),
     Names(IndexMap<String, bool>),
+    Nested(AxoNestedTag),
+}
+
+/// The wire spelling of axo's `ContextFiles::Nested`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum AxoNestedTag {
+    #[serde(rename = "nested")]
+    Nested,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -146,6 +186,7 @@ pub struct AxoBashSettings {
     pub dev_shell_timeout_ms: u64,
     pub ci: bool,
     pub promote_after_ms: u64,
+    pub block_tool_views: bool,
 }
 
 impl Default for AxoBashSettings {
@@ -157,6 +198,7 @@ impl Default for AxoBashSettings {
             dev_shell_timeout_ms: 600_000,
             ci: true,
             promote_after_ms: 60_000,
+            block_tool_views: false,
         }
     }
 }
@@ -165,6 +207,20 @@ impl Default for AxoBashSettings {
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct AxoAskSettings {
     pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct AxoReadSettings {
+    pub outline_min_bytes: u64,
+}
+
+impl Default for AxoReadSettings {
+    fn default() -> Self {
+        Self {
+            outline_min_bytes: 24_000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -262,7 +318,7 @@ impl Default for AxoSubagentSettings {
             default_model: None,
             models: IndexMap::new(),
             service_tier: AxoSubagentTier::default(),
-            context_files: AxoContextFiles::Switch(false),
+            context_files: AxoContextFiles::Nested(AxoNestedTag::Nested),
         }
     }
 }

@@ -380,6 +380,8 @@ const GLOBAL_ONLY_POINTERS: &[&str] = &[
     "/axo/homeAgentsDir",
     "/axo/modelRoles",
     "/axo/serviceTier",
+    "/axo/cacheTtl",
+    "/axo/cacheWarming",
     "/axo/extensions",
     "/axo/projectExtensions",
     "/axo/subagents",
@@ -706,7 +708,7 @@ mod tests {
 
     #[test]
     fn folder_layer_rejects_global_only_settings() {
-        let resolved = resolve(
+        let global = || {
             loaded(
                 SettingsLayerKind::Global,
                 "global",
@@ -720,7 +722,10 @@ mod tests {
                         }
                     }
                 }),
-            ),
+            )
+        };
+        let resolved = resolve(
+            global(),
             Some(loaded(
                 SettingsLayerKind::Folder,
                 "folder",
@@ -730,6 +735,8 @@ mod tests {
                         "homeAgentsDir": true,
                         "modelRoles": { "work": "provider/model" },
                         "serviceTier": { "onModelChange": "keep" },
+                        "cacheTtl": { "root": "1h" },
+                        "cacheWarming": "off",
                         "extensions": [{ "id": "scratch" }],
                         "projectExtensions": { "/project": [{ "id": "scratch" }] },
                         "subagents": { "maxDepth": 9, "serviceTier": "inherit" },
@@ -756,6 +763,19 @@ mod tests {
                 }),
             )),
         );
+        let allowed = resolve(
+            global(),
+            Some(loaded(
+                SettingsLayerKind::Folder,
+                "folder",
+                json!({
+                    "axo": {
+                        "bash": { "ci": false },
+                        "docs": { "sources": ["https://example.com/docs"] }
+                    }
+                }),
+            )),
+        );
 
         assert_eq!(
             resolved.settings.window.tab_beam_position,
@@ -767,29 +787,7 @@ mod tests {
         assert_eq!(remote.address, "global.example:7420");
         assert_eq!(remote.fingerprint, "SHA256:00");
         assert!(!resolved.settings.axo.bash.ci);
-        assert_eq!(
-            resolved.settings.axo.project,
-            axome_protocol::axo_settings::AxoProjectSettings::default()
-        );
-        assert!(!resolved.settings.axo.home_agents_dir);
-        assert!(resolved.settings.axo.model_roles.is_empty());
-        assert!(resolved.settings.axo.extensions.is_empty());
-        assert!(resolved.settings.axo.project_extensions.is_empty());
-        assert_eq!(
-            resolved.settings.axo.service_tier.on_model_change,
-            axome_protocol::axo_settings::AxoTierOnModelChange::Reset
-        );
-        assert_eq!(resolved.settings.axo.subagents.max_depth, 1);
-        assert_eq!(
-            resolved.settings.axo.subagents.service_tier,
-            axome_protocol::axo_settings::AxoSubagentTier::Standard
-        );
-        assert!(!resolved.settings.axo.extended_context);
-        assert!(resolved.settings.axo.web_search.enabled);
-        assert!(resolved.settings.axo.browser.enabled);
-        assert!(resolved.settings.axo.browser.executable_path.is_none());
-        assert_eq!(resolved.settings.axo.docs.ttl_hours, 24);
-        assert_eq!(resolved.settings.axo.docs.retention_days, 30);
+        assert_eq!(resolved.settings.axo, allowed.settings.axo);
         assert_eq!(
             resolved.settings.axo.docs.sources,
             vec!["https://example.com/docs".to_owned()]
@@ -803,6 +801,9 @@ mod tests {
                         .message
                         .contains("can only be configured in global settings")
             }));
+        }
+        for key in axo::USER_ONLY_KEYS {
+            assert!(GLOBAL_ONLY_POINTERS.contains(&format!("/axo/{key}").as_str()), "{key}");
         }
     }
 

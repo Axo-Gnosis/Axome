@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
+  import { Select } from '$lib/components/ui/select'
   import { Switch } from '$lib/components/ui/switch'
   import { backend } from '$lib/api/backend'
   import type { AxoKeywordInfo } from '$lib/types/backend'
@@ -138,6 +139,36 @@
     label={'Extended context'}
     description="May incur premium pricing. Off keeps context windows at the standard-price size."
     checked={settings?.extendedContext ?? false}
+  />
+  <SettingRow
+    label="Root cache lifetime"
+    description="Anthropic prompt cache for main chats. Automatic uses 1 hour on subscriptions, 5 minutes on priced routes."
+  >
+    <Select
+      aria-label="Root cache lifetime"
+      value={settings?.cacheTtl.root ?? 'auto'}
+      disabled={!settings}
+      onValueChange={(next) => fields.save(['cacheTtl', 'root'], next === 'auto' ? null : next)}
+      items={[
+        { value: 'auto', label: 'Automatic' },
+        { value: '5m', label: '5 minutes' },
+        { value: '1h', label: '1 hour' }
+      ]}
+    />
+  </SettingRow>
+  <AxoChoiceRow
+    {fields}
+    path={['cacheTtl', 'child']}
+    label={'Subagent cache lifetime'}
+    value={settings?.cacheTtl.child ?? '5m'}
+    choices={['5m', '1h']}
+  />
+  <AxoChoiceRow
+    {fields}
+    path={['cacheWarming']}
+    label={'Cache warming'}
+    value={settings?.cacheWarming ?? 'idle'}
+    choices={['off', 'streaming', 'idle']}
   />
 </SettingsSection>
 

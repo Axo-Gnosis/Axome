@@ -321,6 +321,8 @@ Axome's 35-point request for a typed host surface (made against axo `6cdaeb4`) c
 
 **Decisions:** [D24](design.md#decisions) — 12 items batched for axo in [`handoff/axo-pre-adoption-batch.md`](handoff/axo-pre-adoption-batch.md); remaining rows accepted/handled in Axome. [P17](design.md#decisions) — the Phase 3 batch (W, K) gated Stage B; [`handoff/axo-phase-3-batch.md`](handoff/axo-phase-3-batch.md) is fulfilled by `b9610666`; both Phase 3 stages are implemented and verified. [P18](design.md#decisions) records the accepted native bash scratch-space exception.
 
+- To watch on first live use: Parallel returning excerpts next to the full page for focused `web_fetch` (`web/providers.rs`).
+
 ---
 
 ## T11. axo `614089b`: providers, login and the live catalog

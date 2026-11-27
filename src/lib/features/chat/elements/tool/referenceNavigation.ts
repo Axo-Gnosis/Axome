@@ -4,10 +4,9 @@ import { notify } from '$lib/features/notifications/state.svelte'
 import { openOwnedPath, resolveFileLocationPath } from '$lib/features/workbench/links/openLink'
 import { isSchemeUrl } from '$lib/features/workbench/links/parseLink'
 import { getErrorMessage } from '$lib/utils/client-error'
-import { basename } from '$lib/utils/paths'
 import { record } from './payload'
 
-/** Search output paths are relative to the tool root, except single-file grep's basename. */
+/** find paths are relative to the tool root; grep headers are relative to the chat folder, absolute, or URLs. */
 export async function openReferenceResult(
   call: ToolStep,
   owner: { folderPath: string; sessionId: string | null },
@@ -17,6 +16,13 @@ export async function openReferenceResult(
   try {
     if (isSchemeUrl(resultPath)) {
       await openOwnedPath(resultPath, line, owner)
+      return
+    }
+    if (call.name === 'grep') {
+      const target = resultPath.startsWith('/')
+        ? resultPath
+        : await resolveFileLocationPath(resultPath, owner.folderPath)
+      await openOwnedPath(target, isSchemeUrl(target) ? undefined : line, owner)
       return
     }
     const args = record(call.arguments)
@@ -30,13 +36,7 @@ export async function openReferenceResult(
       return
     }
     const root = await resolveFileLocationPath(rootPath, owner.folderPath)
-    // Single-file grep reports the file's own basename; any other root is a directory holding the result.
-    const fileRoot =
-      call.name === 'grep' &&
-      !resultPath.includes('/') &&
-      basename(root) === resultPath &&
-      !(await backend.folders.resolve(root).catch(() => null))
-    const target = fileRoot ? root : `${root.replace(/\/+$/, '')}/${resultPath}`
+    const target = `${root.replace(/\/+$/, '')}/${resultPath}`
     await openOwnedPath(target, isSchemeUrl(target) ? undefined : line, owner)
   } catch (error) {
     notify.error('Cannot open reference', getErrorMessage(error))

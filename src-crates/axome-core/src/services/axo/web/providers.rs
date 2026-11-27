@@ -65,6 +65,8 @@ pub(crate) struct ExtractResponse {
     pub final_url: Option<String>,
     pub title: Option<String>,
     pub markdown: String,
+    /// The full page when `markdown` holds only focused excerpts of it.
+    pub full: Option<String>,
     pub fallback_from: Vec<ProviderFailure>,
 }
 
@@ -466,24 +468,31 @@ async fn extract_parallel(
                 .unwrap_or("no content")
                 .to_owned()
         })?;
-    let markdown = item["full_content"]
-        .as_str()
-        .map(str::to_owned)
-        .or_else(|| {
-            item["excerpts"].as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            })
+    let excerpts = item["excerpts"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n\n")
         })
         .unwrap_or_default();
+    let full_content = item["full_content"].as_str();
+    // With a focus, short excerpts go inline and the full page is kept for the spill file.
+    let (markdown, full) = match full_content {
+        Some(page) if focus.is_some() && !excerpts.is_empty() && excerpts.len() < page.len() => {
+            (excerpts, Some(page.to_owned()))
+        }
+        Some(page) => (page.to_owned(), None),
+        None => (excerpts, None),
+    };
     Ok(ExtractResponse {
         provider: "parallel".into(),
         url: url.to_owned(),
         final_url: item["url"].as_str().map(str::to_owned),
         title: item["title"].as_str().map(str::to_owned),
         markdown,
+        full,
         fallback_from: Vec::new(),
     })
 }
@@ -601,6 +610,7 @@ async fn extract_tavily(
         final_url: item["url"].as_str().map(str::to_owned),
         title: None,
         markdown,
+        full: None,
         fallback_from: Vec::new(),
     })
 }
@@ -703,6 +713,7 @@ async fn extract_exa(
         final_url: item["url"].as_str().map(str::to_owned),
         title: item["title"].as_str().map(str::to_owned),
         markdown,
+        full: None,
         fallback_from: Vec::new(),
     })
 }

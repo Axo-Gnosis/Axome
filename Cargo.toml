@@ -30,14 +30,14 @@ parking_lot = "0.12"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
-axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
-axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
-axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
-axo-extensions = { git = "https://git.ryot.foo/toph/axo.git", rev = "c1b060a5e22e64e84313dd68b99e7eb16dcc2999" }
-axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
-axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
-axo-predict = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
-axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "5ca71f87e5c95fd713695a33c447939b1fbb0f2a" }
+axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
+axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
+axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
+axo-extensions = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
+axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
+axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
+axo-predict = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
+axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"

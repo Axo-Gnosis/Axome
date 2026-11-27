@@ -22,9 +22,9 @@ import { memoryNote } from '$lib/features/memory/notes'
 import { parseMemorySearch } from './memoryOutput'
 import { parseAskBlocks } from '../ask/askDocument'
 import { formatCommandExit, parseBashDetails } from './bashOutput'
-import { readOutput, readPath, readStartLine } from './readOutput'
+import { readArgPath, readOutput, readPath, readSelector, renderRanges } from './readOutput'
 import { blockedToolResult, displayFilePath, fileRecords, record, type ToolFileRecord } from './payload'
-import { searchOutput } from './searchOutput'
+import { grepMode, searchOutput } from './searchOutput'
 import { browserHeaderSummary } from './browserOutput'
 import { parseSearchDocs, parseWebFetch, parseWebSearch, urlDisplay } from './webOutput'
 
@@ -75,13 +75,15 @@ export function groupVerb(name: string, count: number): string {
   return `${verb} ${formatCount(count, tools[name]?.noun ?? 'time')}`
 }
 
-/** Result rows that name a match (grep, skipping context rows) or a file (find); null when none were recognized. */
+/** Matches (grep content and count modes, skipping context rows) or files (find, grep files mode); null when none were recognized. */
 function searchCount(call: ToolStep): number | null {
+  const mode = call.name === 'grep' ? grepMode(record(call.arguments)) : null
   let count = 0
   for (const part of searchOutput(call).parts) {
     if (part.type !== 'text') continue
     for (const row of part.lines) {
-      if (row.link && (call.name === 'find' || row.text[row.link.length] === ':')) count++
+      if (!row.link) continue
+      count += call.name === 'find' || mode === 'files' ? 1 : (row.link.matches ?? 0)
     }
   }
   return count || null
@@ -94,6 +96,10 @@ function callPath(call: ToolStep, records: ToolFileRecord[]): string | null {
   if (records.length === 1) return records[0].change?.url ?? records[0].ledger.path
   const path = record(call.arguments).path
   const search = call.name === 'grep' || call.name === 'find'
+  if (search && Array.isArray(path)) {
+    const roots = path.filter((entry): entry is string => typeof entry === 'string' && !entry.startsWith('!'))
+    return roots.length === 0 ? '.' : roots.length === 1 ? roots[0] : null
+  }
   return typeof path === 'string' && (!search || path) ? path : search ? '.' : null
 }
 
@@ -176,13 +182,19 @@ export function toolHeader(
       break
     }
     case 'read': {
-      const source = readOutput(call, records)
-      if (path !== null && source?.endLine !== undefined) {
-        line = source.startLine
-        pathLabel += `:${line}${source.endLine !== line ? `-${source.endLine}` : ''}`
-      } else if (path !== null && !source && line === undefined) {
-        line = readStartLine(args)
-        if (line !== undefined && args.offset != null) pathLabel += `:${line}`
+      if (Array.isArray(args.path) && args.path.length > 1 && !multi) summary = formatCount(args.path.length, 'file')
+      const read = readOutput(call)
+      const only = read?.sources.length === 1 ? read.sources[0] : null
+      if (path !== null && only?.ranges.length) {
+        line = only.ranges[0][0]
+        pathLabel += `:${renderRanges(only.ranges)}`
+      } else if (path !== null && !read && line === undefined) {
+        const raw = readArgPath(args)
+        const selector = raw === null ? null : readSelector(raw)
+        if (selector) {
+          line = selector.line
+          pathLabel += `:${selector.selector}`
+        }
       }
       break
     }
@@ -197,7 +209,10 @@ export function toolHeader(
       summary = typeof args.pattern === 'string' ? JSON.stringify(args.pattern) : ''
       const count = call.status === 'done' ? searchCount(call) : null
       if (count !== null)
-        detail = call.name === 'grep' ? `${count} ${count === 1 ? 'match' : 'matches'}` : formatCount(count, 'file')
+        detail =
+          call.name === 'grep' && grepMode(args) !== 'files'
+            ? `${count} ${count === 1 ? 'match' : 'matches'}`
+            : formatCount(count, 'file')
       break
     }
     case 'memory_search': {

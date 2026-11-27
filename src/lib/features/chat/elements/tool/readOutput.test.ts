@@ -3,9 +3,10 @@ import assert from 'node:assert/strict'
 import type { ChatContent } from '$lib/types/backend'
 import type { ToolStep } from '../../turns'
 import { toolHeader } from './toolHeader'
-import { readOutput, readPath, readStartLine } from './readOutput'
+import { readOutput, readPath, readSelector } from './readOutput'
 
 const text = (text: string): ChatContent => ({ type: 'text', text })
+const image: ChatContent = { type: 'image', mimeType: 'image/png', data: 'AA==' }
 const ledger = { path: '/actual/source.ts', access: 'read', sha256: 'recorded' }
 const files = [{ ledger }]
 function call(args: Record<string, unknown>, output: string | ChatContent[], details: unknown = null): ToolStep {
@@ -34,142 +35,192 @@ function call(args: Record<string, unknown>, output: string | ChatContent[], det
     }
   }
 }
-function cut(body: string, overrides: Record<string, unknown> = {}) {
-  return {
-    truncated: true,
-    truncatedBy: 'bytes',
-    totalLines: 3000,
-    totalBytes: 60000,
-    outputLines: body === '' ? 0 : body.split('\n').length,
-    outputBytes: new TextEncoder().encode(body).length,
-    maxLines: 2000,
-    maxBytes: 51200,
-    firstLineExceedsLimit: false,
-    ...overrides
-  }
-}
+const E = (path: string, totalLines: number, lines: [number, number][], extra: Record<string, unknown> = {}) => ({
+  path,
+  totalLines,
+  lines,
+  outline: false,
+  truncated: false,
+  notice: null,
+  ...extra
+})
+const ctx = (text: string, lineNumber: number | null) => ({ kind: 'ctx', text, lineNumber })
+const gap = { kind: 'gap' }
 
-test('read exposes exact source separately from its verified footer and attached context', () => {
-  const body = '\tfirst  \n second'
-  const notice = '[12 more lines in file. Use offset=6 to continue.]'
+test('read exposes exact numbered source separately from attached context', () => {
   const attachment = text('Attached project instructions\nnot source\nnot source')
-  const step = call({ path: 'requested.ts', offset: 4.8, limit: 2.9 }, [text(`${body}\n\n${notice}`), attachment], {
-    files
+  const step = call({ path: 'requested.ts' }, [text('requested.ts (2 lines)\n1\t\tfirst  \n2\t second'), attachment], {
+    files,
+    reads: [E('requested.ts', 2, [[1, 2]])]
   })
   const output = step.output
-  assert.deepEqual(readOutput(step), {
-    path: ledger.path,
-    body,
-    startLine: 4,
-    endLine: 5,
-    lineCount: 2,
-    notice,
-    attachments: [attachment]
-  })
+  const read = readOutput(step)!
+  assert.deepEqual(read.leading, [])
+  assert.equal(read.sources.length, 1)
+  assert.deepEqual(read.sources[0].rows, [ctx('\tfirst  ', 1), ctx(' second', 2)])
+  assert.equal(read.sources[0].notice, null)
+  assert.deepEqual(read.sources[0].attachments, [attachment])
   assert.strictEqual(step.output, output)
-  assert.equal(step.output[0].type === 'text' && step.output[0].text, `${body}\n\n${notice}`)
   const header = toolHeader(step, '/actual')
   assert.equal(header.path, ledger.path)
-  assert.equal(header.line, 4)
-  assert.equal(header.pathLabel, 'source.ts:4-5')
+  assert.equal(header.line, 1)
+  assert.equal(header.pathLabel, 'source.ts:1-2')
 })
 
-test('read preserves trailing blank source rows and never invents a range for zero returned lines', () => {
-  const trailing = readOutput(call({ path: 'a', offset: -4 }, 'one\ntwo\n'))!
-  assert.equal(trailing.body, 'one\ntwo\n')
-  assert.equal(trailing.startLine, 1)
-  assert.equal(trailing.endLine, 3)
-  for (const limit of [0, -2, 0.9]) {
-    const source = readOutput(
-      call({ path: 'a', limit }, '\n\n[10 more lines in file. Use offset=1 to continue.]', { files })
-    )!
-    assert.equal(source.body, '')
-    assert.equal(source.lineCount, 0)
-    assert.equal(source.endLine, undefined)
-  }
-  const blankLine = readOutput(
-    call({ path: 'a', limit: 1 }, '\n\n[9 more lines in file. Use offset=2 to continue.]', { files })
-  )!
-  assert.equal(blankLine.body, '')
-  assert.equal(blankLine.lineCount, 1)
-  assert.equal(blankLine.endLine, 1)
-  assert.equal(readOutput(call({ path: 'a' }, ''))!.endLine, undefined)
-})
-
-test('truncated ranges require exact recorded source bytes, line counts, and continuation footer', () => {
-  for (const by of ['bytes', 'lines']) {
-    const body = by === 'bytes' ? '\tfirst\n second' : Array.from({ length: 2000 }, (_, i) => `line ${i}`).join('\n')
-    const end = by === 'bytes' ? 21 : 2019
-    const suffix = by === 'bytes' ? ' (50.0KB limit)' : ''
-    const notice = `[Showing lines 20-${end} of 3000${suffix}. Use offset=${end + 1} to continue.]`
-    const recorded = `${body}\n\n${notice}`
-    const details = { files, truncation: cut(body, { truncatedBy: by }) }
-    const source = readOutput(call({ path: 'a', offset: 20, limit: 2500 }, recorded, details))!
-    assert.equal(source.body, body)
-    assert.equal(source.notice, notice)
-    assert.equal(source.startLine, 20)
-    assert.equal(source.endLine, end)
-    assert.equal(source.lineCount, body.split('\n').length)
-    assert.equal(
-      readOutput(call({ path: 'a', offset: 20 }, recorded.replace(`20-${end}`, `20-${end + 1}`), details)),
-      null
-    )
-    assert.equal(
-      readOutput(
-        call({ path: 'a', offset: 20 }, recorded, {
-          files,
-          truncation: cut(body, { truncatedBy: by, outputBytes: 1 })
-        })
-      ),
-      null
-    )
-    assert.equal(readOutput(call({ path: 'a', offset: 20 }, recorded)), null)
-  }
-})
-
-test('unverified notices, special results, and errors retain original-output fallback', () => {
-  const image: ChatContent = { type: 'image', mimeType: 'image/png', data: 'image' }
-  for (const output of [
-    [text('Read image file [image/png]'), image],
-    [text('Read image file [image/png]\nprocessing failed')],
-    [text('Binary file: a (123 bytes)')],
-    [text('[Line 1 is 70.0KB, exceeds 50.0KB limit. Use bash to inspect]')]
-  ])
-    assert.equal(readOutput(call({ path: 'a' }, output, { files })), null)
-  const lookalike = 'source\n\n[9 more lines in file. Use offset=2 to continue.]'
-  assert.equal(readOutput(call({ path: 'a' }, lookalike, { files })), null)
-  assert.equal(readOutput(call({ path: 'a', limit: 1 }, lookalike)), null)
-  const bracketedSource = 'source\n[an ordinary source line]'
-  assert.equal(readOutput(call({ path: 'a' }, bracketedSource))!.body, bracketedSource)
-  const step = call({ path: 'a', offset: 8.9 }, 'error', { files })
-  step.status = 'error'
-  step.result!.isError = true
-  assert.equal(readOutput(step), null)
-  assert.equal(toolHeader(step, '/actual').path, ledger.path)
-  assert.equal(toolHeader(step, '/actual').line, 8)
-  step.result = null
-  step.status = 'running'
-  step.output = []
-  assert.equal(readOutput(step), null)
-  assert.equal(toolHeader(step, '/actual').line, 8)
-  step.output = [text('partial output')]
-  assert.equal(readOutput(step), null)
-  for (const offset of [NaN, Infinity, '3', Number.MAX_SAFE_INTEGER + 1])
-    assert.equal(readStartLine({ offset }), undefined)
-})
-
-test('only an unambiguous read record can prove source identity or authorize stripping a limit footer', () => {
-  const notice = 'source\n\n[9 more lines in file. Use offset=2 to continue.]'
-  const args = { path: 'requested.ts', limit: 1 }
-  const legacy = call(args, notice, { ledger })
-  assert.equal(readPath(legacy), args.path)
-  assert.equal(readOutput(legacy), null)
-  const multiple = call(args, 'raw output', {
-    files: [{ ledger }, { ledger: { ...ledger, path: '/actual/other.ts' } }]
+test('ranged reads keep their own line numbers with gaps between ranges', () => {
+  const step = call({ path: 'a.ts:5-6,9' }, 'a.ts:5-6,9 (10 lines)\n5\tx\n6\ty\n9\tz', {
+    files,
+    reads: [
+      E('a.ts', 10, [
+        [5, 6],
+        [9, 9]
+      ])
+    ]
   })
-  assert.equal(readPath(multiple), args.path)
-  assert.equal(readOutput(multiple), null)
-  assert.equal(readPath(call({ path: 'local://source.ts' }, 'one', { files })), 'local://source.ts')
+  assert.deepEqual(readOutput(step)!.sources[0].rows, [ctx('x', 5), ctx('y', 6), gap, ctx('z', 9)])
+  const header = toolHeader(step, '/actual')
+  assert.equal(header.line, 5)
+  assert.equal(header.pathLabel, 'source.ts:5-6,9')
+})
+
+test('read separates the recorded notice from numbered rows', () => {
+  const footer = '[Showing lines 1-2 of 3000. Continue with a.ts:3-]'
+  const source = `a.ts (3000 lines)\n1\ta\n2\tb\n\n${footer}`
+  const cut = readOutput(
+    call({ path: 'a.ts' }, source, { reads: [E('a.ts', 3000, [[1, 2]], { truncated: true, notice: footer })] })
+  )!
+  assert.equal(cut.sources[0].notice, footer)
+  assert.deepEqual(cut.sources[0].rows, [ctx('a', 1), ctx('b', 2)])
+  for (const notice of [
+    '[Output limit reached before line 1. Continue with b.ts:1-5]',
+    "[Line 1 is 60.0KB, exceeds 50.0KB limit. Use bash: sed -n '1p' b.ts | head -c 51200]"
+  ]) {
+    const empty = readOutput(
+      call({ path: 'b.ts' }, `b.ts (5 lines)\n\n${notice}`, { reads: [E('b.ts', 5, [], { truncated: true, notice })] })
+    )!
+    assert.equal(empty.sources[0].notice, notice)
+    assert.deepEqual(empty.sources[0].rows, [])
+  }
+})
+
+test('read falls back when a truncation notice is missing or does not match', () => {
+  const body = 'a.ts (3000 lines)\n1\ta\n2\tb'
+  const args = { path: 'a.ts' }
+  assert.equal(
+    readOutput(
+      call(args, `${body}\n\n[An unexpected footer]`, {
+        reads: [
+          E('a.ts', 3000, [[1, 2]], { truncated: true, notice: '[Showing lines 1-2 of 3000. Continue with a.ts:3-]' })
+        ]
+      })
+    ),
+    null
+  )
+  assert.equal(readOutput(call(args, body, { reads: [E('a.ts', 3000, [[1, 2]], { truncated: true })] })), null)
+})
+
+test('outlines fold bodies into gap rows', () => {
+  const footer = '[Outline: 38 of 40 lines folded. Read what you need with a selector, e.g. big.rs:2-39]'
+  const step = call({ path: 'big.rs' }, `big.rs (40 lines, outline)\n1\timpl X {\n… 2-39\n40\t}\n\n${footer}`, {
+    files,
+    reads: [E('big.rs', 40, [], { outline: true, notice: footer })]
+  })
+  const source = readOutput(step)!.sources[0]
+  assert.deepEqual(source.rows, [ctx('impl X {', 1), gap, ctx('}', 40)])
+  assert.equal(source.notice, footer)
+  assert.equal(toolHeader(step, '/actual').pathLabel, 'source.ts')
+})
+
+test('several paths become sections that own the errors, skipped paths and images after them', () => {
+  const enoent = text('b.ts: ENOENT: no such file or directory')
+  const skipped = text('[d.ts: not read, output limit reached; read it in another call]')
+  const step = call(
+    { path: ['a.ts', 'b.ts', 'c.ts', 'd.ts'] },
+    [text('a.ts (1 line)\n1\tx'), enoent, image, text('c.ts (1 line)\n1\ty'), skipped],
+    { reads: [E('a.ts', 1, [[1, 1]]), E('c.ts', 1, [[1, 1]])] }
+  )
+  const read = readOutput(step)!
+  assert.equal(read.sources.length, 2)
+  assert.deepEqual(read.sources[0].attachments, [enoent, image])
+  assert.deepEqual(read.sources[1].rows, [ctx('y', 1)])
+  assert.deepEqual(read.sources[1].attachments, [skipped])
+  const header = toolHeader(step, '/repo')
+  assert.equal(header.summary, '4 files')
+  assert.equal(header.path, null)
+})
+
+test('directories list entries without line numbers', () => {
+  const listed = readOutput(
+    call({ path: 'src' }, 'src/ (2 entries)\nsub/\nx', {
+      reads: [{ path: 'src', directory: true, entries: 2, notice: null }]
+    })
+  )!
+  assert.equal(listed.sources[0].directory, true)
+  assert.deepEqual(listed.sources[0].rows, [ctx('sub/', null), ctx('x', null)])
+  const more = '[1 more entries; use find to search]'
+  const capped = readOutput(
+    call({ path: 'src' }, `src/ (3 entries)\na/\nb\n\n${more}`, {
+      reads: [{ path: 'src', directory: true, entries: 3, notice: more }]
+    })
+  )!
+  assert.equal(capped.sources[0].notice, more)
+  assert.deepEqual(capped.sources[0].rows, [ctx('a/', null), ctx('b', null)])
+  assert.equal(
+    readOutput(
+      call({ path: 'src' }, 'src/ (3 entries)\na/\nb', {
+        reads: [{ path: 'src', directory: true, entries: 3, notice: null }]
+      })
+    ),
+    null
+  )
+  assert.ok(
+    readOutput(
+      call({ path: 'one' }, 'one/ (1 entry)\nx', {
+        reads: [{ path: 'one', directory: true, entries: 1, notice: null }]
+      })
+    )
+  )
+})
+
+test('anything the entries do not prove falls back to raw output', () => {
+  const one = [E('a.ts', 1, [[1, 1]])]
+  assert.equal(readOutput(call({ path: 'a.ts' }, 'a.ts (1 line)\n1\tx', { files })), null)
+  assert.equal(readOutput(call({ path: 'a.ts' }, 'a.ts (1 line)\nx', { reads: one })), null)
+  assert.equal(
+    readOutput(call({ path: 'a.ts' }, 'a.ts (3 lines)\n1\tx\n2\ty', { reads: [E('a.ts', 2, [[1, 2]])] })),
+    null
+  )
+  assert.equal(
+    readOutput(call({ path: 'a.ts' }, 'a.ts (1 line)\n1\tx', { reads: [...one, E('b.ts', 1, [[1, 1]])] })),
+    null
+  )
+  const failed = call({ path: 'a.ts' }, 'a.ts (1 line)\n1\tx', { reads: one })
+  failed.status = 'error'
+  assert.equal(readOutput(failed), null)
+  assert.equal(readOutput(call({ path: 'p.png' }, [text('Read image file [image/png]'), image], { reads: [] })), null)
+  assert.equal(
+    readOutput(
+      call({ path: 'a.ts' }, 'a.ts (1 line)\n1\tx\n\n[9 more lines in file. Use offset=2 to continue.]', { reads: one })
+    ),
+    null
+  )
+})
+
+test('selectors split at the last colon only when the suffix is a line selector', () => {
+  assert.deepEqual(readSelector('src/a.rs:5-16,960-973'), { base: 'src/a.rs', selector: '5-16,960-973', line: 5 })
+  assert.equal(readSelector('x.log:-60')?.line, undefined)
+  for (const literal of ['C:\\x', 'a:b', 'a.ts:']) assert.equal(readSelector(literal), null)
+  assert.equal(readSelector('agent://a/transcript:1+5')?.base, 'agent://a/transcript')
+  assert.equal(readPath(call({ path: 'local://s.ts:3' }, 'one')), 'local://s.ts')
+})
+
+test('a running ranged read labels its requested selector', () => {
+  const step = call({ path: 'a.ts:20-30' }, [])
+  step.status = 'running'
+  step.result = null
+  const header = toolHeader(step, '/repo')
+  assert.equal(header.line, 20)
+  assert.equal(header.pathLabel, 'a.ts:20-30')
 })
 
 test('tool headers count all recorded mutations without guessing partial totals or cancellation', () => {

@@ -6,6 +6,10 @@ model: "@memory"
 tools: []
 writes: []
 bash: readOnly
+contextFiles: false
+sections:
+  work: false
+  prose: false
 ---
 You maintain a long-term notebook for a software developer and their coding agent.
 You read excerpts of their past sessions and answer narrow questions about what is worth remembering.
