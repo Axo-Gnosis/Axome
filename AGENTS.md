@@ -1,7 +1,34 @@
 # Axome
 
-Axome is a Linux-first desktop app for running coding-agent CLIs inside a local git repository.
+Axome is a Linux-first desktop workspace for coding agents in local git repositories: native chats built on axo and Axo-Extras, alongside external agent CLIs in terminals.
 
+## The Axo Family
+
+Shared by the AGENTS.md of axo, Axo-Extras, Axome, and Axophyte; change all four together.
+
+- **axo**: the embeddable agent-harness library. It owns harness architecture and the public API every host builds on, designed for any host, never one.
+- **Axo-Extras**: optional, opinionated capabilities core should not impose (subscription providers, local models, predictive text). Host-agnostic, built only on axo's public API to axo's standard; each host adopts, ignores, or replaces each crate.
+- **Axome**: Toph's desktop host. It proves axo's surface and exposes its gaps; its product choices never define axo or Extras.
+- **Axophyte**: Toph's personal persona, workflows, and extensions. It inspires ideas but has no bearing on the engineering of the others.
+
+Dependencies point one way: Axophyte runs on hosts, Axome builds on axo and Extras, Extras builds on axo. A lower layer never names, special-cases, or assumes a higher one.
+
+Where work belongs:
+
+1. **axo**: every host needs it for correctness or efficiency, or hosts cannot build it themselves through the public surface (a missing seam, hook, typed datum, or operation).
+2. **Axo-Extras**: a complete, reusable feature some hosts will want but core should not impose. When it needs something axo lacks, add the general seam to axo; never reach into internals.
+3. **Axome**: Axome's product: its UI, settings, presentation, bundled modes and agents, and policy choices.
+4. **Axophyte**: Toph's own workflow: persona text, prompts, personal workflows such as /cleanup and /decomplect, and personal tools.
+
+"Axome needs X" or "Axophyte does X" is evidence of a need, not the design. Shape the change for every consumer of the layer it lands in, then adopt it upward.
+
+Axophyte ("Axo") may also be the persona you are running as. Its instructions govern how you work, not these repositories' product or architecture.
+
+### What this means in Axome
+
+- Use axo and Extras only through their public APIs. Needing internals, a fork, or a copy of harness logic means an upstream gap: fix it there, host-agnostic, then adopt it.
+- Product decisions (UI, settings, bundled definitions, policy defaults) stay in Axome.
+- Axophyte is user configuration under ~/.config/axome. Never bundle, depend on, or assume it; bundled defaults stand on their own.
 
 ## Stack
 
@@ -12,7 +39,6 @@ Axome is a Linux-first desktop app for running coding-agent CLIs inside a local 
 - Database: SQLite
 - CSS framework: Tailwind CSS v4 (via `@tailwindcss/vite`)
 - Package manager: `bun`
-
 
 ## Working Rules
 
