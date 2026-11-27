@@ -5,7 +5,6 @@ members = [
   "src-crates/axome-protocol",
   "src-crates/axome-core",
   "src-crates/axome-browser",
-  "src-crates/axome-memory",
   "src-crates/axome-remote",
   "src-crates/axome-server",
 ]
@@ -34,10 +33,11 @@ axo = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6
 axo-agent = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
 axo-ai = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
 axo-extensions = { git = "https://git.ryot.foo/toph/axo.git", rev = "d740a348741d4ae42df6c6bfe4d616103a0a58d9" }
-axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
-axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
-axo-predict = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
-axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "79a33a90a9617dbc3fc03b067fc36a96f3c49d1a" }
+axo-codex = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "ab555671629d80210efccc662b252419225e8ec7" }
+axo-anthropic-auth = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "ab555671629d80210efccc662b252419225e8ec7" }
+axo-predict = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "ab555671629d80210efccc662b252419225e8ec7" }
+axo-models = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "ab555671629d80210efccc662b252419225e8ec7" }
+axo-memory = { git = "https://git.ryot.foo/toph/Axo-Extras.git", rev = "ab555671629d80210efccc662b252419225e8ec7" }
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"

@@ -6,16 +6,14 @@ use crate::{errors::ApiError, Host};
 
 impl Host {
     pub fn memory_status(&self) -> Result<MemoryStatus, ApiError> {
-        self.axo
-            .block_on(self.memory.status(None))?
-            .map_err(Into::into)
+        self.axo.block_on(self.memory.status())?.map_err(Into::into)
     }
 
     pub fn memory_captures(
         &self,
         query: MemoryCaptureQuery,
     ) -> Result<Vec<MemoryCaptureRun>, ApiError> {
-        crate::services::memory::captures::list(&self.db, &query).map_err(Into::into)
+        self.memory.captures(query).map_err(Into::into)
     }
 
     pub fn memory_capture_revert(&self, fact_id: i64) -> Result<MemoryCaptureRun, ApiError> {
@@ -28,7 +26,7 @@ impl Host {
         Ok(self
             .memory
             .active(Path::new(&scope_folder))
-            .map(|fm| fm.bank.name))
+            .map(|banks| banks.default_bank().name().to_owned()))
     }
 
     pub fn memory_retry_download(&self) -> Result<(), ApiError> {

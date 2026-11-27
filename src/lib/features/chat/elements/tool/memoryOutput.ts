@@ -3,7 +3,6 @@ import { record } from './payload'
 
 export interface MemoryHit {
   rowType: string
-  entityId: number
   title: string
   category: string | null
   snippet: string
@@ -17,18 +16,19 @@ export function parseMemorySearch(call: ToolStep): { hits: MemoryHit[]; notes: n
   if (!Array.isArray(rows)) return null
   const hits: MemoryHit[] = []
   for (const row of rows) {
-    const { row_type, entity_id, title, category, snippet, url, line, links } = record(row)
+    const fields = record(row)
+    // Saved chats carry snake_case hits; axo-memory writes camelCase.
+    const rowType = fields.rowType ?? fields.row_type
+    const { title, category, snippet, url, line, links } = fields
     if (
-      typeof row_type !== 'string' ||
-      typeof entity_id !== 'number' ||
+      typeof rowType !== 'string' ||
       typeof title !== 'string' ||
       typeof snippet !== 'string' ||
       typeof url !== 'string'
     )
       continue
     hits.push({
-      rowType: row_type,
-      entityId: entity_id,
+      rowType,
       title,
       category: typeof category === 'string' ? category : null,
       snippet,
@@ -42,5 +42,5 @@ export function parseMemorySearch(call: ToolStep): { hits: MemoryHit[]; notes: n
         : []
     })
   }
-  return { hits, notes: new Set(hits.map((hit) => hit.entityId)).size }
+  return { hits, notes: new Set(hits.map((hit) => hit.url)).size }
 }

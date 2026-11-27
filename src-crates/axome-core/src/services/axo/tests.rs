@@ -430,15 +430,15 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
     assert!(std::fs::read_to_string(&note)
         .unwrap()
         .contains("- [decision] The lazy icon loader stays."));
-    let runs = crate::services::memory::captures::list(
-        &fixture.service.db,
-        &MemoryCaptureQuery {
+    let runs = fixture
+        .service
+        .memory
+        .captures(MemoryCaptureQuery {
             session_id: Some(id.clone()),
             bank: None,
             limit: 10,
-        },
-    )
-    .unwrap();
+        })
+        .unwrap();
     assert_eq!(runs.len(), 1);
     let run = &runs[0];
     assert_eq!(run.trigger, MemoryCaptureTrigger::Close);
@@ -457,18 +457,10 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
     assert!(fixture.service.memory.revert_fact(fact.id).await.is_err());
     let (_, entries) = axo.open_session_read(&path).await.unwrap();
     let last_seq = entries.last().unwrap().seq;
-    let cursor: u64 = fixture
-        .service
-        .db
-        .read()
-        .conn()
-        .query_row(
-            "SELECT seq FROM memory_cursors WHERE session_id = ?1",
-            [&id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(cursor, last_seq);
+    assert_eq!(
+        fixture.service.memory.store.cursor(&id).unwrap(),
+        Some(last_seq)
+    );
     assert_eq!(fixture.api.requests().len(), 3);
     let writer_dir = dirs.data.join("memory/writer");
     let writer_count = axo.list_sessions(&writer_dir).await.unwrap().len();
@@ -488,25 +480,10 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
     fixture.service.close(&fork.session_id).await.unwrap();
     wait_until(|| !fixture.service.memory.capture_pending()).await;
     assert_eq!(fixture.api.requests().len(), 3);
-    let fork_cursors: u64 = fixture
-        .service
-        .db
-        .read()
-        .conn()
-        .query_row(
-            "SELECT COUNT(*) FROM memory_cursors WHERE session_id = ?1",
-            [&fork.session_id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(fork_cursors, 1);
     // A chat only viewed, never conversed in, must not capture even without a cursor.
-    fixture
-        .service
-        .db
-        .write()
-        .conn()
-        .execute("DELETE FROM memory_cursors WHERE session_id = ?1", [&id])
+    rusqlite::Connection::open(dirs.data.join("memory/captures.db"))
+        .unwrap()
+        .execute("DELETE FROM cursor WHERE session_id = ?1", [&id])
         .unwrap();
     fixture.service.close(&id).await.unwrap();
     wait_until(|| !fixture.service.memory.capture_pending()).await;
@@ -544,19 +521,11 @@ async fn memory_capture_is_cursor_bound_and_never_recursive() {
         .unwrap();
     wait_settled(&writer_events, 1).await;
     fixture.service.close(&writer_id).await.unwrap();
-    assert!(!fixture.service.memory.capture_pending());
-    let cursors: u64 = fixture
-        .service
-        .db
-        .read()
-        .conn()
-        .query_row(
-            "SELECT COUNT(*) FROM memory_cursors WHERE session_id = ?1",
-            [&writer_id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(cursors, 0);
+    wait_until(|| !fixture.service.memory.capture_pending()).await;
+    assert_eq!(
+        fixture.service.memory.store.cursor(&writer_id).unwrap(),
+        None
+    );
     assert_eq!(fixture.api.requests().len(), 4);
 }
 

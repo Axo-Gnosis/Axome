@@ -61,6 +61,11 @@ impl HostDirs {
     pub fn shortcuts_path(&self) -> PathBuf {
         self.config.join(SHORTCUTS_FILE)
     }
+
+    /// Downloaded model files, shared by memory and predictive text.
+    pub fn local_models_dir(&self) -> PathBuf {
+        self.data.join("models")
+    }
 }
 
 fn directory(xdg: Option<&OsStr>, home: Option<&OsStr>, fallback: &str) -> Result<PathBuf, String> {

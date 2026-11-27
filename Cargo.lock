@@ -444,7 +444,7 @@ dependencies = [
 [[package]]
 name = "axo-anthropic-auth"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=79a33a90a9617dbc3fc03b067fc36a96f3c49d1a#79a33a90a9617dbc3fc03b067fc36a96f3c49d1a"
+source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=ab555671629d80210efccc662b252419225e8ec7#ab555671629d80210efccc662b252419225e8ec7"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -462,7 +462,7 @@ dependencies = [
 [[package]]
 name = "axo-codex"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=79a33a90a9617dbc3fc03b067fc36a96f3c49d1a#79a33a90a9617dbc3fc03b067fc36a96f3c49d1a"
+source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=ab555671629d80210efccc662b252419225e8ec7#ab555671629d80210efccc662b252419225e8ec7"
 dependencies = [
  "async-trait",
  "axo-ai",
@@ -517,9 +517,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "axo-memory"
+version = "0.0.0"
+source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=ab555671629d80210efccc662b252419225e8ec7#ab555671629d80210efccc662b252419225e8ec7"
+dependencies = [
+ "async-trait",
+ "axo",
+ "axo-agent",
+ "axo-ai",
+ "axo-models",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "chrono",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokenizers",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-normalization",
+ "walkdir",
+]
+
+[[package]]
 name = "axo-models"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=79a33a90a9617dbc3fc03b067fc36a96f3c49d1a#79a33a90a9617dbc3fc03b067fc36a96f3c49d1a"
+source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=ab555671629d80210efccc662b252419225e8ec7#ab555671629d80210efccc662b252419225e8ec7"
 dependencies = [
  "reqwest",
  "sha2 0.11.1",
@@ -529,7 +559,7 @@ dependencies = [
 [[package]]
 name = "axo-predict"
 version = "0.0.0"
-source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=79a33a90a9617dbc3fc03b067fc36a96f3c49d1a#79a33a90a9617dbc3fc03b067fc36a96f3c49d1a"
+source = "git+https://git.ryot.foo/toph/Axo-Extras.git?rev=ab555671629d80210efccc662b252419225e8ec7#ab555671629d80210efccc662b252419225e8ec7"
 dependencies = [
  "anyhow",
  "axo-models",
@@ -608,15 +638,12 @@ dependencies = [
  "axo-anthropic-auth",
  "axo-codex",
  "axo-extensions",
+ "axo-memory",
  "axo-models",
  "axo-predict",
  "axome-browser",
- "axome-memory",
  "axome-protocol",
  "base64 0.23.1",
- "candle-core",
- "candle-nn",
- "candle-transformers",
  "chrono",
  "futures-util",
  "globset",
@@ -629,7 +656,6 @@ dependencies = [
  "parking_lot 0.12.5",
  "portable-pty",
  "refinery",
- "regex",
  "reqwest",
  "rusqlite",
  "schemars 0.8.22",
@@ -638,7 +664,6 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
- "tokenizers",
  "tokio",
  "tokio-util",
  "tracing",
@@ -646,24 +671,6 @@ dependencies = [
  "url",
  "uuid",
  "which",
-]
-
-[[package]]
-name = "axome-memory"
-version = "0.0.0"
-dependencies = [
- "chrono",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_norway",
- "sha2 0.11.1",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "unicode-normalization",
- "walkdir",
 ]
 
 [[package]]

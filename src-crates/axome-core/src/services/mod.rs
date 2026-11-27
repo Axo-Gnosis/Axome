@@ -18,7 +18,7 @@ pub mod integrations;
 pub mod issue_bridge;
 pub mod issues;
 pub mod lsp;
-pub mod memory;
+pub(crate) mod memory;
 pub mod nix;
 pub mod omp;
 pub mod predict;

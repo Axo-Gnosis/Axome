@@ -368,7 +368,7 @@ Slices 1–7 run on `614089b`; slice 8 waits for the handoff.
 
 ## T12. Long-term memory
 
-**Status:** Shipped as native memory, off by default ([P31](design.md#decisions), superseding P28–P30). The Hindsight research below stays as evidence; its gates Q58–Q62 applied to a remote backend that Axome no longer uses. Workspace Trust gating of folder-level bank settings is tracked in `TODO.md`.
+**Status:** Shipped as native memory, off by default ([P31](design.md#decisions), superseding P28–P30), provided by Axo-Extras `axo-memory` since [P45](design.md#decisions). The Hindsight research below stays as evidence; its gates Q58–Q62 applied to a remote backend that Axome no longer uses. Workspace Trust gating of folder-level bank settings is tracked in `TODO.md`.
 
 **Open questions / gates before enabling remote memory**
 

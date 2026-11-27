@@ -105,10 +105,6 @@ impl PredictService {
         self.dirs.data.join("predict")
     }
 
-    fn models_root(&self) -> PathBuf {
-        self.dirs.data.join("models")
-    }
-
     fn sessions_dir(&self) -> PathBuf {
         self.dirs.data.join("axo").join("sessions")
     }
@@ -286,7 +282,7 @@ impl PredictService {
         if state.has_model() || state.download.is_some() || state.loading || state.model_failed {
             return;
         }
-        let root = self.models_root();
+        let root = self.dirs.local_models_dir();
         if SMOLLM2.is_complete(&root) {
             self.model_state.send_replace(ModelState::Ready);
             state.loading = true;
@@ -398,7 +394,9 @@ impl PredictService {
                     }
                 }
                 Err(error) => {
-                    tracing::warn!("predict: updating language model head after seed failed: {error}");
+                    tracing::warn!(
+                        "predict: updating language model head after seed failed: {error}"
+                    );
                 }
             }
         }
@@ -415,7 +413,7 @@ impl PredictService {
             state.persist();
             predictor_config(&state.settings)
         };
-        let files = ModelFiles::smollm2(&SMOLLM2.path(&self.models_root()));
+        let files = ModelFiles::smollm2(&SMOLLM2.path(&self.dirs.local_models_dir()));
         let loaded = Predictor::open(Options {
             state_dir: self.state_dir(),
             config: initial_config,
@@ -495,8 +493,8 @@ fn seed_marker(state_dir: &Path) -> PathBuf {
 }
 
 fn mark_seeded(state_dir: &Path) {
-    if let Err(error) =
-        std::fs::create_dir_all(state_dir).and_then(|()| std::fs::write(seed_marker(state_dir), b""))
+    if let Err(error) = std::fs::create_dir_all(state_dir)
+        .and_then(|()| std::fs::write(seed_marker(state_dir), b""))
     {
         tracing::warn!("predict: writing seed marker failed: {error}");
     }
@@ -673,7 +671,9 @@ mod tests {
         // Explicit seed re-imports history on demand.
         assert_eq!(reopened.seed().expect("explicit seed"), 2);
         assert_eq!(
-            reopened.complete("please check the quuxb", "").map(|s| s.text),
+            reopened
+                .complete("please check the quuxb", "")
+                .map(|s| s.text),
             Some("laster".into())
         );
     }

@@ -803,7 +803,10 @@ mod tests {
             }));
         }
         for key in axo::USER_ONLY_KEYS {
-            assert!(GLOBAL_ONLY_POINTERS.contains(&format!("/axo/{key}").as_str()), "{key}");
+            assert!(
+                GLOBAL_ONLY_POINTERS.contains(&format!("/axo/{key}").as_str()),
+                "{key}"
+            );
         }
     }
 

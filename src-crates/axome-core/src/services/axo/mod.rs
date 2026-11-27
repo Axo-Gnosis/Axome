@@ -269,7 +269,6 @@ impl AxoService {
             let memory = crate::services::memory::MemoryService::new(
                 dirs.clone(),
                 web.http.clone(),
-                Arc::clone(&db),
                 Arc::clone(&events),
             );
             Self {
@@ -498,10 +497,7 @@ impl AxoService {
             self.browser
                 .host_tools(config::browser_config(&self.dirs, folder)),
         );
-        tools.extend(crate::services::memory::tools::host_tools(
-            &self.memory,
-            folder,
-        ));
+        tools.extend(self.memory.host_tools(folder));
         let options = owner.compose(SessionOptions {
             cwd: folder.to_owned(),
             model,
@@ -528,11 +524,7 @@ impl AxoService {
 
     fn host_schemes(&self, folder: &Path) -> Vec<Arc<dyn axo::Scheme>> {
         let mut schemes = self.web.host_schemes();
-        if let Some(fm) = self.memory.active(folder) {
-            schemes.push(Arc::new(
-                crate::services::memory::scheme::MemoryScheme::new(Arc::clone(&self.memory), fm),
-            ));
-        }
+        schemes.extend(self.memory.scheme(folder));
         schemes
     }
 
@@ -844,23 +836,21 @@ impl AxoService {
         trigger: MemoryCaptureTrigger,
         anchor_entry_id: Option<String>,
     ) {
-        if self.closed.load(Ordering::Acquire)
-            || live.root_id.is_some()
-            || !live.session.path().is_file()
-        {
+        if self.closed.load(Ordering::Acquire) || live.root_id.is_some() {
             return;
         }
         self.memory.capture(
-            crate::services::memory::writer::CaptureJob {
+            crate::services::memory::capture::CaptureJob {
                 folder: live.folder.clone(),
                 session_path: live.session.path().to_owned(),
                 session_id: live.id.clone(),
-                trigger,
-                anchor_entry_id,
-                title: live.title(),
+                host: crate::services::memory::capture::CaptureHost {
+                    title: live.title(),
+                    trigger,
+                    anchor_entry_id,
+                },
             },
             live.engine.axo.clone(),
-            vec![bundled::memory_writer().clone()],
         );
     }
 
@@ -2037,30 +2027,6 @@ impl AxoService {
             )
             .await?;
         drop(state);
-        // The copied history belongs to the parent's capture; the fork captures only what follows.
-        match live
-            .engine
-            .axo
-            .open_session_read(session.session.path())
-            .await
-        {
-            Ok((_, entries)) => {
-                if let Some(last) = entries.last() {
-                    if let Err(error) = crate::services::memory::writer::save_cursor(
-                        self.db.clone(),
-                        session.id.clone(),
-                        last.seq,
-                    )
-                    .await
-                    {
-                        tracing::warn!(%error, "Could not seed the fork's memory cursor");
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "Could not read the fork to seed its memory cursor")
-            }
-        }
         self.schedule_refresh(folder);
         Ok(ChatForkInfo {
             session_id: session.id.clone(),
@@ -2385,7 +2351,7 @@ async fn build_readonly_state(
     })
 }
 
-pub(crate) fn message_text(message: &axo_ai::Message) -> impl Iterator<Item = &str> {
+fn message_text(message: &axo_ai::Message) -> impl Iterator<Item = &str> {
     let (user, assistant) = match message {
         axo_ai::Message::User(user) => (Some(user), None),
         axo_ai::Message::Assistant(assistant) => (None, Some(assistant)),

@@ -4,10 +4,11 @@ import { memoryNote } from '$lib/features/memory/notes'
 import type { ToolStep } from '../../turns'
 import { parseMemorySearch } from './memoryOutput'
 
-test('memory search reads flattened snake_case hits and linked note URLs', () => {
+test('memory search reads flattened hits in both casings and counts notes by URL', () => {
   const url = 'memory://main/Axome/Pause menu.md'
   const links = [{ url: 'memory://main/Axome/HUD.md' }]
   const row = { title: 'Pause menu', category: 'decision', snippet: 'The pause menu overlays the HUD.', url, line: 4 }
+  const other = { ...row, title: 'HUD', url: 'memory://main/Axome/HUD.md' }
   const call: ToolStep = {
     id: 'tool',
     entryId: 'entry',
@@ -20,11 +21,21 @@ test('memory search reads flattened snake_case hits and linked note URLs', () =>
     status: 'done',
     output: [],
     result: null,
-    details: { hits: [{ row_type: 'observation', entity_id: 9, ...row, links }] }
+    details: {
+      hits: [
+        { row_type: 'observation', entity_id: 9, ...row, links },
+        { rowType: 'entity', entityId: 9, ...row, links },
+        { rowType: 'entity', entityId: 10, ...other, links: [] }
+      ]
+    }
   }
   assert.deepEqual(parseMemorySearch(call), {
-    hits: [{ rowType: 'observation', entityId: 9, ...row, links }],
-    notes: 1
+    hits: [
+      { rowType: 'observation', ...row, links },
+      { rowType: 'entity', ...row, links },
+      { rowType: 'entity', ...other, links: [] }
+    ],
+    notes: 2
   })
   assert.equal(parseMemorySearch({ ...call, details: {} }), null)
 })

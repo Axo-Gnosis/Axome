@@ -8,7 +8,6 @@ publish = false
 [dependencies]
 axome-protocol = { path = "../axome-protocol" }
 axome-browser = { path = "../axome-browser" }
-axome-memory = { path = "../axome-memory" }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -28,6 +27,7 @@ axo-codex.workspace = true
 axo-anthropic-auth.workspace = true
 axo-predict.workspace = true
 axo-models.workspace = true
+axo-memory.workspace = true
 async-trait.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 futures-util.workspace = true
@@ -41,17 +41,12 @@ portable-pty = "0.9"
 refinery = { version = "0.8", features = ["rusqlite"] }
 which = "8"
 sha2.workspace = true
-regex = "1"
 base64.workspace = true
 jsonschema.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 url = "2"
 tempfile = "3"
 html5ever = "0.38"
-candle-core = "0.11"
-candle-nn = "0.11"
-candle-transformers = "0.11"
-tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 
 [dev-dependencies]
 axo-ai = { workspace = true, features = ["testing"] }
